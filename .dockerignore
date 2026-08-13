@@ -1,0 +1,11 @@
+.env
+.env.*
+tmp/
+vendor/
+.git/
+.gitignore
+*.md
+*.log
+docker-compose*.yml
+.idea/
+.vscode/

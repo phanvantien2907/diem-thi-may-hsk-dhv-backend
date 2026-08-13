@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hsk_vinh_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hsk_vinh
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_create_tables.sql:/docker-entrypoint-initdb.d/001_create_tables.sql
+      - ./migrations/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hsk_vinh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hsk_net
+
+  adminer:
+    image: adminer:latest
+    container_name: hsk_vinh_adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hsk_net
+
+  # Placeholder service – uncomment and configure when adding Redis
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: hsk_vinh_redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - hsk_net
+
+volumes:
+  postgres_data:
+    driver: local
+  # redis_data:
+  #   driver: local
+
+networks:
+  hsk_net:
+    driver: bridge
