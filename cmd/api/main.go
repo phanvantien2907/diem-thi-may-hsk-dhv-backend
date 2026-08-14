@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/audit"
 	"github.com/hskvinh/backend/internal/auth"
 	"github.com/hskvinh/backend/internal/candidate"
 	"github.com/hskvinh/backend/internal/certificate"
@@ -42,18 +43,22 @@ func main() {
 	}
 	defer database.Close(db)
 
+	// ── Audit Service (shared dependency) ─────────────────────────────────
+	auditSvc := audit.NewService(db)
+
 	// ── Services ──────────────────────────────────────────────────────────
-	authSvc := auth.NewService(db, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	candSvc := candidate.NewService(db)
-	examSvc := exam.NewService(db)
-	regSvc := registration.NewService(db)
-	paySvc := payment.NewService(db, regSvc)
-	resSvc := result.NewService(db)
-	certSvc := certificate.NewService(db)
+	authSvc := auth.NewService(db, auditSvc, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
+	candSvc := candidate.NewService(db, auditSvc)
+	examSvc := exam.NewService(db, auditSvc)
+	regSvc := registration.NewService(db, auditSvc)
+	paySvc := payment.NewService(db, auditSvc, regSvc)
+	resSvc := result.NewService(db, auditSvc)
+	certSvc := certificate.NewService(db, auditSvc)
 	notifSvc := notification.NewService(db)
 	locSvc := location.NewService(db)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
+	auditH := audit.NewHandler(auditSvc)
 	authH := auth.NewHandler(authSvc)
 	candH := candidate.NewHandler(candSvc)
 	examH := exam.NewHandler(examSvc)
@@ -86,6 +91,7 @@ func main() {
 	// ── Feature Routes ────────────────────────────────────────────────────
 	api := engine.Group("/api/v1")
 
+	audit.RegisterRoutes(api, auditH, cfg.JWTSecret)
 	auth.RegisterRoutes(api, authH, cfg.JWTSecret)
 	candidate.RegisterRoutes(api, candH, cfg.JWTSecret)
 	exam.RegisterRoutes(api, examH, cfg.JWTSecret)

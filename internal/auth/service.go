@@ -3,11 +3,15 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/auth/dto/response"
 	"github.com/hskvinh/backend/internal/auth/enum"
@@ -17,20 +21,27 @@ import (
 // Service handles account management and JWT issuance.
 type Service struct {
 	db         *sql.DB
+	auditSvc   audit.Service
 	jwtSecret  string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 }
 
 // NewService creates an auth Service.
-func NewService(db *sql.DB, jwtSecret string, accessTTL, refreshTTL time.Duration) *Service {
-	return &Service{db: db, jwtSecret: jwtSecret, accessTTL: accessTTL, refreshTTL: refreshTTL}
+func NewService(db *sql.DB, auditSvc audit.Service, jwtSecret string, accessTTL, refreshTTL time.Duration) *Service {
+	return &Service{db: db, auditSvc: auditSvc, jwtSecret: jwtSecret, accessTTL: accessTTL, refreshTTL: refreshTTL}
 }
 
 // Register creates a new account and returns its public DTO.
 func (s *Service) Register(ctx context.Context, req request.CreateAccountRequestDTO) (response.AccountResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var roleID int64
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		`SELECT role_id FROM roles WHERE role_code = $1 AND role_is_deleted = FALSE`,
 		req.RoleCode,
 	).Scan(&roleID); errors.Is(err, sql.ErrNoRows) {
@@ -45,7 +56,7 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 	}
 
 	var e AccountEntity
-	err = s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO accounts
 		       (account_role_id, account_username, account_password_hash,
 		        account_email, account_phone, account_status)
@@ -63,6 +74,20 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 	)
 	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: create account: %w", err)
+	}
+
+	// Audit: record account creation inside the same transaction.
+	newVal, _ := json.Marshal(map[string]any{"username": e.AccountUsername, "email": e.AccountEmail, "role_id": e.AccountRoleID})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &e.AccountID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       e.AccountID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: commit: %w", err)
 	}
 	return ToAccountResponseDTO(e), nil
 }
@@ -100,6 +125,14 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (respo
 		`UPDATE accounts SET account_last_login_at = NOW() WHERE account_id = $1`,
 		e.AccountID,
 	)
+
+	// Audit: login event (standalone, no transaction needed).
+	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &e.AccountID,
+		Action:         auditenum.AuditActionLogin.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       e.AccountID,
+	})
 
 	accessToken, err := s.issueToken(e.AccountID, s.accessTTL)
 	if err != nil {
@@ -141,8 +174,14 @@ func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.Acc
 
 // UpdateAccount applies partial updates and returns the updated public DTO.
 func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req request.UpdateAccountRequestDTO) (response.AccountResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e AccountEntity
-	if err := s.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		UPDATE accounts
 		SET account_email      = COALESCE(NULLIF($1,''), account_email),
 		    account_phone      = COALESCE(NULLIF($2,''), account_phone),
@@ -163,12 +202,32 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	} else if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
 	}
+
+	// Audit: record update inside the same transaction.
+	newVal, _ := json.Marshal(map[string]any{"email": e.AccountEmail, "phone": e.AccountPhone})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionUpdate.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: commit: %w", err)
+	}
 	return ToAccountResponseDTO(e), nil
 }
 
 // SoftDeleteAccount marks an account as deleted.
 func (s *Service) SoftDeleteAccount(ctx context.Context, accountID int64) error {
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
 		UPDATE accounts
 		SET account_is_deleted = TRUE, account_deleted_at = NOW(), account_updated_at = NOW()
 		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID)
@@ -178,7 +237,16 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, accountID int64) error 
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New("account not found")
 	}
-	return nil
+
+	// Audit: soft-delete inside the same transaction.
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionSoftDelete.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+	})
+
+	return tx.Commit()
 }
 
 // issueToken generates a signed JWT for the given accountID and TTL.

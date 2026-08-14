@@ -3,9 +3,13 @@ package payment
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/payment/dto/request"
 	"github.com/hskvinh/backend/internal/payment/dto/response"
 	payenum "github.com/hskvinh/backend/internal/payment/enum"
@@ -15,13 +19,14 @@ import (
 
 // Service handles payment creation and confirmation.
 type Service struct {
-	db     *sql.DB
-	regSvc *registration.Service
+	db       *sql.DB
+	auditSvc audit.Service
+	regSvc   *registration.Service
 }
 
 // NewService creates a payment Service.
-func NewService(db *sql.DB, regSvc *registration.Service) *Service {
-	return &Service{db: db, regSvc: regSvc}
+func NewService(db *sql.DB, auditSvc audit.Service, regSvc *registration.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc, regSvc: regSvc}
 }
 
 // CreatePayment inserts a pending payment and returns its public DTO.
@@ -44,8 +49,14 @@ func (s *Service) CreatePayment(ctx context.Context, req request.CreatePaymentRe
 		return response.PaymentResponseDTO{}, errors.New("cannot pay for a cancelled registration")
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e PaymentEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO payments
 		       (payment_exam_registration_id, payment_amount, payment_method, payment_status)
 		VALUES ($1,$2,$3,'pending')
@@ -60,6 +71,18 @@ func (s *Service) CreatePayment(ctx context.Context, req request.CreatePaymentRe
 	)
 	if err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: insert: %w", err)
+	}
+
+	newVal, _ := json.Marshal(map[string]any{"registration_id": req.ExamRegistrationID, "amount": req.Amount, "method": req.Method})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		Action:      auditenum.AuditActionPayment.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(),
+		EntityID:    e.PaymentID,
+		NewValue:    newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: commit: %w", err)
 	}
 	return ToPaymentResponseDTO(e), nil
 }
@@ -110,6 +133,21 @@ func (s *Service) ProcessCallback(ctx context.Context, req request.PaymentCallba
 	); err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: update: %w", err)
 	}
+
+	action := auditenum.AuditActionPayment
+	if payenum.PaymentStatus(req.Status) == payenum.PayStatusRefunded {
+		action = auditenum.AuditActionRefund
+	}
+	newVal, _ := json.Marshal(map[string]any{"status": req.Status, "transaction_ref": req.TransactionRef})
+	oldVal, _ := json.Marshal(map[string]any{"status": "pending"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		Action:      action.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(),
+		EntityID:    pay.PaymentID,
+		OldValue:    oldVal,
+		NewValue:    newVal,
+	})
+
 	if err := tx.Commit(); err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: commit: %w", err)
 	}

@@ -3,19 +3,28 @@ package registration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
 	"github.com/hskvinh/backend/internal/registration/dto/response"
 	regenum "github.com/hskvinh/backend/internal/registration/enum"
 )
 
 // Service handles seat reservation and registration lifecycle.
-type Service struct{ db *sql.DB }
+type Service struct {
+	db       *sql.DB
+	auditSvc audit.Service
+}
 
 // NewService creates a registration Service.
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB, auditSvc audit.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc}
+}
 
 // ReserveSeat atomically holds an available seat and creates an exam_registration.
 func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatRequestDTO) (response.ExamRegistrationResponseDTO, error) {
@@ -89,6 +98,16 @@ func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatReques
 	if err != nil {
 		return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: insert: %w", err)
 	}
+
+	newVal, _ := json.Marshal(map[string]any{"candidate_id": req.CandidateID, "session_id": req.ExamSessionID, "seat_id": seatID})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &req.CandidateID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityExamRegistration.String(),
+		EntityID:       e.ExamRegistrationID,
+		NewValue:       newVal,
+	})
+
 	if err := tx.Commit(); err != nil {
 		return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: commit: %w", err)
 	}
@@ -103,14 +122,14 @@ func (s *Service) ConfirmRegistration(ctx context.Context, registrationID int64)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var seatID int64
+	var seatID, candidateID int64
 	var status regenum.ExamRegistrationStatus
 	if err := tx.QueryRowContext(ctx, `
-		SELECT exam_registration_exam_seat_id, exam_registration_status
+		SELECT exam_registration_exam_seat_id, exam_registration_status, exam_registration_candidate_id
 		FROM exam_registrations
 		WHERE exam_registration_id = $1 AND exam_registration_is_deleted = FALSE
 		FOR UPDATE`, registrationID,
-	).Scan(&seatID, &status); errors.Is(err, sql.ErrNoRows) {
+	).Scan(&seatID, &status, &candidateID); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("registration not found")
 	} else if err != nil {
 		return fmt.Errorf("registration: lock: %w", err)
@@ -131,6 +150,16 @@ func (s *Service) ConfirmRegistration(ctx context.Context, registrationID int64)
 	); err != nil {
 		return fmt.Errorf("registration: book seat: %w", err)
 	}
+
+	newVal, _ := json.Marshal(map[string]any{"status": "confirmed"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &candidateID,
+		Action:         auditenum.AuditActionApprove.String(),
+		EntityTable:    auditenum.AuditEntityExamRegistration.String(),
+		EntityID:       registrationID,
+		NewValue:       newVal,
+	})
+
 	return tx.Commit()
 }
 
@@ -142,14 +171,14 @@ func (s *Service) CancelRegistration(ctx context.Context, registrationID int64) 
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var seatID int64
+	var seatID, candidateID int64
 	var status regenum.ExamRegistrationStatus
 	if err := tx.QueryRowContext(ctx, `
-		SELECT exam_registration_exam_seat_id, exam_registration_status
+		SELECT exam_registration_exam_seat_id, exam_registration_status, exam_registration_candidate_id
 		FROM exam_registrations
 		WHERE exam_registration_id=$1 AND exam_registration_is_deleted=FALSE
 		FOR UPDATE`, registrationID,
-	).Scan(&seatID, &status); errors.Is(err, sql.ErrNoRows) {
+	).Scan(&seatID, &status, &candidateID); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("registration not found")
 	} else if err != nil {
 		return fmt.Errorf("registration: lock: %w", err)
@@ -170,6 +199,18 @@ func (s *Service) CancelRegistration(ctx context.Context, registrationID int64) 
 	); err != nil {
 		return fmt.Errorf("registration: release seat: %w", err)
 	}
+
+	oldVal, _ := json.Marshal(map[string]any{"status": string(status)})
+	newVal, _ := json.Marshal(map[string]any{"status": "cancelled"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &candidateID,
+		Action:         auditenum.AuditActionDelete.String(),
+		EntityTable:    auditenum.AuditEntityExamRegistration.String(),
+		EntityID:       registrationID,
+		OldValue:       oldVal,
+		NewValue:       newVal,
+	})
+
 	return tx.Commit()
 }
 

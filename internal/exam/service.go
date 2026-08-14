@@ -3,17 +3,26 @@ package exam
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
 )
 
 // Service handles exam types, rooms, sessions, and seat generation.
-type Service struct{ db *sql.DB }
+type Service struct {
+	db       *sql.DB
+	auditSvc audit.Service
+}
 
 // NewService creates an exam Service.
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB, auditSvc audit.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc}
+}
 
 // ListExamTypes returns all non-deleted exam types as DTOs.
 func (s *Service) ListExamTypes(ctx context.Context) ([]response.ExamTypeResponseDTO, error) {
@@ -129,7 +138,8 @@ func (s *Service) ListExamSeats(ctx context.Context, sessionID int64) ([]respons
 }
 
 // GenerateExamSeats bulk-creates seats for a session up to its capacity.
-func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64) (int, error) {
+// actorID is the admin account that triggered the generation.
+func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64, actorID int64) (int, error) {
 	var capacity int
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT exam_session_capacity FROM exam_sessions
@@ -140,7 +150,13 @@ func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64) (int, 
 		return 0, fmt.Errorf("exam: get capacity: %w", err)
 	}
 
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("exam: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO exam_seats (exam_seat_exam_session_id, exam_seat_number, exam_seat_status)
 		SELECT $1, gs, 'available'
 		FROM generate_series(1,$2) AS gs
@@ -151,5 +167,18 @@ func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64) (int, 
 		return 0, fmt.Errorf("exam: generate seats: %w", err)
 	}
 	n, _ := res.RowsAffected()
+
+	newVal, _ := json.Marshal(map[string]any{"session_id": sessionID, "created_seats": n})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityExamSeat.String(),
+		EntityID:       sessionID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("exam: commit: %w", err)
+	}
 	return int(n), nil
 }

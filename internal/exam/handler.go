@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
+	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -81,12 +82,18 @@ func (h *Handler) GenerateSeats(c *gin.Context) {
 		utils.BadRequest(c, "invalid session id")
 		return
 	}
-	created, err := h.svc.GenerateExamSeats(c.Request.Context(), id)
+	actorID := mustAccountID(c)
+	created, err := h.svc.GenerateExamSeats(c.Request.Context(), id, actorID)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
 	}
 	utils.Created(c, response.GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
+}
+
+func mustAccountID(c *gin.Context) int64 {
+	v, _ := c.Get(middleware.ContextKeyUserID)
+	return v.(int64)
 }
 
 func paramID(c *gin.Context, key string) (int64, bool) {

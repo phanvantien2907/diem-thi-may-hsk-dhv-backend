@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/certificate/dto/request"
+	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -40,7 +41,7 @@ func (h *Handler) IssueCertificate(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	cert, err := h.svc.CreateCertificate(c.Request.Context(), req)
+	cert, err := h.svc.CreateCertificate(c.Request.Context(), req, accountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -64,7 +65,7 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	d, err := h.svc.CreateDelivery(c.Request.Context(), certID, req)
+	d, err := h.svc.CreateDelivery(c.Request.Context(), certID, req, accountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -75,4 +76,9 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 func paramID(c *gin.Context, key string) (int64, bool) {
 	n, err := strconv.ParseInt(c.Param(key), 10, 64)
 	return n, err == nil && n > 0
+}
+
+func accountID(c *gin.Context) int64 {
+	v, _ := c.Get(middleware.ContextKeyUserID)
+	return v.(int64)
 }

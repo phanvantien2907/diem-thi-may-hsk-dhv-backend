@@ -26,7 +26,7 @@ func (h *Handler) CreateResult(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	r, err := h.svc.CreateResult(c.Request.Context(), req)
+	r, err := h.svc.CreateResult(c.Request.Context(), req, accountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -60,7 +60,7 @@ func (h *Handler) CreateRecheck(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	r, err := h.svc.CreateRecheckRequest(c.Request.Context(), req)
+	r, err := h.svc.CreateRecheckRequest(c.Request.Context(), req, accountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return

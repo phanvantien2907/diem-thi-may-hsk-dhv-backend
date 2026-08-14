@@ -3,27 +3,43 @@ package result
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/result/dto/request"
 	"github.com/hskvinh/backend/internal/result/dto/response"
 	"github.com/hskvinh/backend/internal/result/enum"
 )
 
 // Service handles exam results and recheck requests.
-type Service struct{ db *sql.DB }
+type Service struct {
+	db       *sql.DB
+	auditSvc audit.Service
+}
 
 // NewService creates a result Service.
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB, auditSvc audit.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc}
+}
 
 // CreateResult inserts an exam result and returns its public DTO.
-func (s *Service) CreateResult(ctx context.Context, req request.CreateResultRequestDTO) (response.ExamResultResponseDTO, error) {
+func (s *Service) CreateResult(ctx context.Context, req request.CreateResultRequestDTO, actorID int64) (response.ExamResultResponseDTO, error) {
 	if !enum.ExamResultStatus(req.Status).Valid() {
 		return response.ExamResultResponseDTO{}, fmt.Errorf("invalid result status: %s", req.Status)
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.ExamResultResponseDTO{}, fmt.Errorf("result: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e ExamResultEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO exam_results
 		       (exam_result_exam_registration_id,
 		        exam_result_listening_score, exam_result_reading_score,
@@ -48,6 +64,19 @@ func (s *Service) CreateResult(ctx context.Context, req request.CreateResultRequ
 	)
 	if err != nil {
 		return response.ExamResultResponseDTO{}, fmt.Errorf("result: create: %w", err)
+	}
+
+	newVal, _ := json.Marshal(map[string]any{"total": req.TotalScore, "status": req.Status, "registration_id": req.ExamRegistrationID})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityExamResult.String(),
+		EntityID:       e.ExamResultID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.ExamResultResponseDTO{}, fmt.Errorf("result: commit: %w", err)
 	}
 	return ToExamResultResponseDTO(e), nil
 }
@@ -83,9 +112,15 @@ func (s *Service) GetResultByRegistration(ctx context.Context, registrationID in
 }
 
 // CreateRecheckRequest submits a recheck and returns its public DTO.
-func (s *Service) CreateRecheckRequest(ctx context.Context, req request.CreateRecheckRequestDTO) (response.RecheckResponseDTO, error) {
+func (s *Service) CreateRecheckRequest(ctx context.Context, req request.CreateRecheckRequestDTO, actorID int64) (response.RecheckResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e ExamRecheckRequestEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO exam_recheck_requests
 		       (exam_recheck_exam_result_id, exam_recheck_reason, exam_recheck_status)
 		VALUES ($1,$2,'submitted')
@@ -105,6 +140,19 @@ func (s *Service) CreateRecheckRequest(ctx context.Context, req request.CreateRe
 	if err != nil {
 		return response.RecheckResponseDTO{}, fmt.Errorf("result: create recheck: %w", err)
 	}
+
+	newVal, _ := json.Marshal(map[string]any{"result_id": req.ExamResultID, "reason": req.Reason})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID,
+		Action:         auditenum.AuditActionRecheck.String(),
+		EntityTable:    auditenum.AuditEntityExamRecheck.String(),
+		EntityID:       e.ExamRecheckID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: commit: %w", err)
+	}
 	return ToRecheckResponseDTO(e), nil
 }
 
@@ -113,8 +161,15 @@ func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInpu
 	if !in.Status.Valid() {
 		return response.RecheckResponseDTO{}, fmt.Errorf("invalid recheck status: %s", in.Status)
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e ExamRecheckRequestEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		UPDATE exam_recheck_requests
 		SET exam_recheck_status                  = $1,
 		    exam_recheck_reviewed_by_account_id   = $2,
@@ -140,6 +195,23 @@ func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInpu
 	}
 	if err != nil {
 		return response.RecheckResponseDTO{}, fmt.Errorf("result: review: %w", err)
+	}
+
+	action := auditenum.AuditActionApprove
+	if in.Status.String() == "rejected" {
+		action = auditenum.AuditActionReject
+	}
+	newVal, _ := json.Marshal(map[string]any{"status": in.Status.String(), "reviewer_id": in.ReviewerID})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &in.ReviewerID,
+		Action:         action.String(),
+		EntityTable:    auditenum.AuditEntityExamRecheck.String(),
+		EntityID:       in.RecheckID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: commit: %w", err)
 	}
 	return ToRecheckResponseDTO(e), nil
 }

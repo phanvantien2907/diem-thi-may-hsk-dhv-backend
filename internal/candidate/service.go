@@ -3,20 +3,29 @@ package candidate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 )
 
 // Service handles candidate profiles and documents.
-type Service struct{ db *sql.DB }
+type Service struct {
+	db       *sql.DB
+	auditSvc audit.Service
+}
 
 // NewService creates a candidate Service.
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB, auditSvc audit.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc}
+}
 
 // CreateProfile inserts a new candidate and returns its public DTO.
 func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRequestDTO, accountID int64) (response.CandidateResponseDTO, error) {
@@ -24,8 +33,15 @@ func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRe
 	if err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: invalid dob: %w", err)
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e CandidateEntity
-	err = s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO candidates
 		       (candidate_account_id, candidate_full_name, candidate_full_name_cn,
 		        candidate_dob, candidate_gender, candidate_ethnicity, candidate_religion,
@@ -51,13 +67,32 @@ func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRe
 	if err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: create profile: %w", err)
 	}
+
+	newVal, _ := json.Marshal(map[string]any{"full_name": e.CandidateFullName, "gender": string(e.CandidateGender)})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityCandidate.String(),
+		EntityID:       e.CandidateID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
+	}
 	return ToCandidateResponseDTO(e), nil
 }
 
 // UpdateProfile applies partial updates and returns the updated public DTO.
 func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, req request.UpdateProfileRequestDTO) (response.CandidateResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e CandidateEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		UPDATE candidates
 		SET candidate_full_name           = COALESCE(NULLIF($1,''), candidate_full_name),
 		    candidate_full_name_cn        = COALESCE(NULLIF($2,''), candidate_full_name_cn),
@@ -89,6 +124,19 @@ func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, req requ
 	if err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: update profile: %w", err)
 	}
+
+	newVal, _ := json.Marshal(map[string]any{"full_name": e.CandidateFullName, "nationality": e.CandidateNationality})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &e.CandidateAccountID,
+		Action:         auditenum.AuditActionUpdate.String(),
+		EntityTable:    auditenum.AuditEntityCandidate.String(),
+		EntityID:       candidateID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
+	}
 	return ToCandidateResponseDTO(e), nil
 }
 
@@ -98,8 +146,15 @@ func (s *Service) UploadDocument(ctx context.Context, candidateID int64, req req
 	if err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: invalid issue_date: %w", err)
 	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var e CandidateDocumentEntity
-	err = s.db.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO candidate_documents
 		       (candidate_document_candidate_id, candidate_document_type, candidate_document_number,
 		        candidate_document_issue_date, candidate_document_issue_place,
@@ -133,6 +188,19 @@ func (s *Service) UploadDocument(ctx context.Context, candidateID int64, req req
 	)
 	if err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: upload document: %w", err)
+	}
+
+	newVal, _ := json.Marshal(map[string]any{"doc_type": string(e.CandidateDocumentType), "doc_number": e.CandidateDocumentNumber})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &candidateID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+		EntityID:       e.CandidateDocumentID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
 	}
 	return ToDocumentResponseDTO(e), nil
 }
