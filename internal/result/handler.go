@@ -16,30 +16,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateResult POST /admin/results
 func (h *Handler) CreateResult(c *gin.Context) {
-	var body struct {
-		RegistrationID int64   `json:"exam_registration_id"`
-		Listening      float64 `json:"listening_score"`
-		Reading        float64 `json:"reading_score"`
-		Writing        float64 `json:"writing_score"`
-		Total          float64 `json:"total_score"`
-		Status         string  `json:"status"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req CreateResultRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Positive("exam_registration_id", body.RegistrationID).Required("status", body.Status)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	r, err := h.svc.CreateResult(c.Request.Context(), CreateResultInput{
-		RegistrationID: body.RegistrationID,
-		Listening:      body.Listening, Reading: body.Reading,
-		Writing: body.Writing, Total: body.Total,
-		Status: ExamResultStatus(body.Status),
-	})
+	r, err := h.svc.CreateResult(c.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -64,21 +50,16 @@ func (h *Handler) GetResult(c *gin.Context) {
 
 // CreateRecheck POST /rechecks
 func (h *Handler) CreateRecheck(c *gin.Context) {
-	var body struct {
-		ResultID int64  `json:"exam_result_id"`
-		Reason   string `json:"reason"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req CreateRecheckRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Positive("exam_result_id", body.ResultID).Required("reason", body.Reason)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	r, err := h.svc.CreateRecheckRequest(c.Request.Context(), body.ResultID, body.Reason)
+	r, err := h.svc.CreateRecheckRequest(c.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return

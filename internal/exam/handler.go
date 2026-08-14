@@ -4,7 +4,6 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -86,13 +85,10 @@ func (h *Handler) GenerateSeats(c *gin.Context) {
 		utils.InternalServerError(c, err.Error())
 		return
 	}
-	utils.Created(c, gin.H{"created_seats": created})
+	utils.Created(c, GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
 }
 
 func paramID(c *gin.Context, key string) (int64, bool) {
 	n, err := strconv.ParseInt(c.Param(key), 10, 64)
 	return n, err == nil && n > 0
 }
-
-// adminMiddleware is set in route.go via RequireRole.
-var _ = middleware.RequireRole

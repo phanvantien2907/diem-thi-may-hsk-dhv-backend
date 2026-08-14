@@ -15,21 +15,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // ReserveSeat POST /registrations
 func (h *Handler) ReserveSeat(c *gin.Context) {
-	var body struct {
-		SessionID   int64 `json:"exam_session_id"`
-		CandidateID int64 `json:"candidate_id"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req ReserveSeatRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Positive("exam_session_id", body.SessionID).Positive("candidate_id", body.CandidateID)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	reg, err := h.svc.ReserveSeat(c.Request.Context(), body.SessionID, body.CandidateID)
+	reg, err := h.svc.ReserveSeat(c.Request.Context(), req)
 	if err != nil {
 		utils.Conflict(c, err.Error())
 		return

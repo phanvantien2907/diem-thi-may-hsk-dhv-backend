@@ -1,28 +1,47 @@
 version: "3.9"
 
 services:
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: hsk_vinh_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: hsk_vinh
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB:       ${DB_NAME:-hsk_vinh}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations/001_create_tables.sql:/docker-entrypoint-initdb.d/001_create_tables.sql
-      - ./migrations/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql
+      # Runs in alphabetical order → schema first, seed second
+      - ./migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./migrations/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d hsk_vinh"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-hsk_vinh}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - hsk_net
 
+  # ── Go API ───────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hsk_vinh_api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - hsk_net
+
+  # ── Adminer (DB GUI) ─────────────────────────────────────────────────────
   adminer:
     image: adminer:latest
     container_name: hsk_vinh_adminer
@@ -35,11 +54,12 @@ services:
     networks:
       - hsk_net
 
-  # Placeholder service – uncomment and configure when adding Redis
+  # ── Redis (commented out – uncomment when caching / queue is needed) ─────
   # redis:
   #   image: redis:7-alpine
   #   container_name: hsk_vinh_redis
   #   restart: unless-stopped
+  #   command: redis-server --appendonly yes
   #   ports:
   #     - "6379:6379"
   #   volumes:

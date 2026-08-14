@@ -17,45 +17,30 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateProfile POST /candidates
 func (h *Handler) CreateProfile(c *gin.Context) {
-	id := accountID(c)
-	var body struct {
-		FullName          string `json:"full_name"`
-		FullNameCN        string `json:"full_name_cn"`
-		DOB               string `json:"dob"`
-		Gender            string `json:"gender"`
-		Ethnicity         string `json:"ethnicity"`
-		Religion          string `json:"religion"`
-		Birthplace        string `json:"birthplace"`
-		Nationality       string `json:"nationality"`
-		MotherTongue      string `json:"mother_tongue"`
-		ChineseStudyYears *int16 `json:"chinese_study_years"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req CreateProfileRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Required("full_name", body.FullName).Required("dob", body.DOB).Required("gender", body.Gender)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	dob, err := time.Parse("2006-01-02", body.DOB)
+	dob, err := time.Parse("2006-01-02", req.DOB)
 	if err != nil {
 		utils.BadRequest(c, "dob must be YYYY-MM-DD")
 		return
 	}
-	if body.Nationality == "" {
-		body.Nationality = "Việt Nam"
-	}
-	cand, err := h.svc.CreateProfile(c.Request.Context(), CreateProfileInput{
-		AccountID: id, FullName: body.FullName, FullNameCN: body.FullNameCN,
-		DOB: dob, Gender: CandidateGender(body.Gender), Ethnicity: body.Ethnicity,
-		Religion: body.Religion, Birthplace: body.Birthplace, Nationality: body.Nationality,
-		MotherTongue: body.MotherTongue, ChineseStudyYears: body.ChineseStudyYears,
+	id := accountID(c)
+	cand, svcErr := h.svc.CreateProfile(c.Request.Context(), CreateProfileInput{
+		AccountID: id, FullName: req.FullName, FullNameCN: req.FullNameCN,
+		DOB: dob, Gender: CandidateGender(req.Gender), Ethnicity: req.Ethnicity,
+		Religion: req.Religion, Birthplace: req.Birthplace,
+		Nationality: req.Nationality, MotherTongue: req.MotherTongue,
+		ChineseStudyYears: req.ChineseStudyYears,
 	})
-	if err != nil {
-		utils.InternalServerError(c, err.Error())
+	if svcErr != nil {
+		utils.InternalServerError(c, svcErr.Error())
 		return
 	}
 	utils.Created(c, cand)
@@ -68,25 +53,20 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		utils.BadRequest(c, "invalid candidate id")
 		return
 	}
-	var body struct {
-		FullName          string `json:"full_name"`
-		FullNameCN        string `json:"full_name_cn"`
-		Ethnicity         string `json:"ethnicity"`
-		Religion          string `json:"religion"`
-		Birthplace        string `json:"birthplace"`
-		Nationality       string `json:"nationality"`
-		MotherTongue      string `json:"mother_tongue"`
-		ChineseStudyYears *int16 `json:"chinese_study_years"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req UpdateProfileRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
 	cand, err := h.svc.UpdateProfile(c.Request.Context(), cid, UpdateProfileInput{
-		FullName: body.FullName, FullNameCN: body.FullNameCN,
-		Ethnicity: body.Ethnicity, Religion: body.Religion,
-		Birthplace: body.Birthplace, Nationality: body.Nationality,
-		MotherTongue: body.MotherTongue, ChineseStudyYears: body.ChineseStudyYears,
+		FullName: req.FullName, FullNameCN: req.FullNameCN,
+		Ethnicity: req.Ethnicity, Religion: req.Religion,
+		Birthplace: req.Birthplace, Nationality: req.Nationality,
+		MotherTongue: req.MotherTongue, ChineseStudyYears: req.ChineseStudyYears,
 	})
 	if err != nil {
 		utils.NotFound(c, err.Error())
@@ -102,43 +82,29 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 		utils.BadRequest(c, "invalid candidate id")
 		return
 	}
-	var body struct {
-		DocType          string `json:"doc_type"`
-		DocNumber        string `json:"doc_number"`
-		IssueDate        string `json:"issue_date"`
-		IssuePlace       string `json:"issue_place"`
-		FrontImageURL    string `json:"front_image_url"`
-		BackImageURL     string `json:"back_image_url"`
-		PortraitImageURL string `json:"portrait_image_url"`
-		WardID           *int64 `json:"ward_id"`
-		AddressDetail    string `json:"address_detail"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req UploadDocumentRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Required("doc_type", body.DocType).Required("doc_number", body.DocNumber).
-		Required("issue_date", body.IssueDate).Required("issue_place", body.IssuePlace).
-		Required("front_image_url", body.FrontImageURL).Required("portrait_image_url", body.PortraitImageURL)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	issueDate, err := time.Parse("2006-01-02", body.IssueDate)
+	issueDate, err := time.Parse("2006-01-02", req.IssueDate)
 	if err != nil {
 		utils.BadRequest(c, "issue_date must be YYYY-MM-DD")
 		return
 	}
-	doc, err := h.svc.UploadDocument(c.Request.Context(), UploadDocumentInput{
-		CandidateID: cid, DocType: DocumentType(body.DocType), DocNumber: body.DocNumber,
-		IssueDate: issueDate, IssuePlace: body.IssuePlace,
-		FrontImageURL: body.FrontImageURL, BackImageURL: body.BackImageURL,
-		PortraitImageURL: body.PortraitImageURL, WardID: body.WardID,
-		AddressDetail: body.AddressDetail,
+	doc, svcErr := h.svc.UploadDocument(c.Request.Context(), UploadDocumentInput{
+		CandidateID: cid, DocType: DocumentType(req.DocType), DocNumber: req.DocNumber,
+		IssueDate: issueDate, IssuePlace: req.IssuePlace,
+		FrontImageURL: req.FrontImageURL, BackImageURL: req.BackImageURL,
+		PortraitImageURL: req.PortraitImageURL, WardID: req.WardID,
+		AddressDetail: req.AddressDetail,
 	})
-	if err != nil {
-		utils.InternalServerError(c, err.Error())
+	if svcErr != nil {
+		utils.InternalServerError(c, svcErr.Error())
 		return
 	}
 	utils.Created(c, doc)

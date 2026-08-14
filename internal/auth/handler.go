@@ -14,32 +14,16 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // Register POST /auth/register
 func (h *Handler) Register(c *gin.Context) {
-	var body struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Phone    string `json:"phone"`
-		RoleCode string `json:"role_code"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req CreateAccountRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Required("username", body.Username).MinLen("username", body.Username, 3)
-	v.Required("email", body.Email).Email("email", body.Email)
-	v.Required("password", body.Password).MinLen("password", body.Password, 8)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	if body.RoleCode == "" {
-		body.RoleCode = "candidate"
-	}
-	acc, err := h.svc.Register(c.Request.Context(), RegisterInput{
-		Username: body.Username, Email: body.Email,
-		Password: body.Password, Phone: body.Phone, RoleCode: body.RoleCode,
-	})
+	acc, err := h.svc.Register(c.Request.Context(), req)
 	if err != nil {
 		utils.Conflict(c, err.Error())
 		return
@@ -49,23 +33,16 @@ func (h *Handler) Register(c *gin.Context) {
 
 // Login POST /auth/login
 func (h *Handler) Login(c *gin.Context) {
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req LoginRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Required("username", body.Username).Required("password", body.Password)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	tokens, err := h.svc.Login(c.Request.Context(), LoginInput{
-		Username: body.Username, Password: body.Password,
-	})
+	tokens, err := h.svc.Login(c.Request.Context(), req)
 	if err != nil {
 		utils.Unauthorized(c, err.Error())
 		return
@@ -75,8 +52,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 // Me GET /me
 func (h *Handler) Me(c *gin.Context) {
-	id := mustAccountID(c)
-	acc, err := h.svc.GetAccount(c.Request.Context(), id)
+	acc, err := h.svc.GetAccount(c.Request.Context(), mustAccountID(c))
 	if err != nil {
 		utils.NotFound(c, err.Error())
 		return
@@ -86,18 +62,16 @@ func (h *Handler) Me(c *gin.Context) {
 
 // UpdateMe PUT /me
 func (h *Handler) UpdateMe(c *gin.Context) {
-	id := mustAccountID(c)
-	var body struct {
-		Email string `json:"email"`
-		Phone string `json:"phone"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req UpdateAccountRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	acc, err := h.svc.UpdateAccount(c.Request.Context(), id, UpdateAccountInput{
-		Email: body.Email, Phone: body.Phone,
-	})
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	acc, err := h.svc.UpdateAccount(c.Request.Context(), mustAccountID(c), req)
 	if err != nil {
 		utils.NotFound(c, err.Error())
 		return
@@ -107,15 +81,13 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 
 // DeleteMe DELETE /me
 func (h *Handler) DeleteMe(c *gin.Context) {
-	id := mustAccountID(c)
-	if err := h.svc.SoftDeleteAccount(c.Request.Context(), id); err != nil {
+	if err := h.svc.SoftDeleteAccount(c.Request.Context(), mustAccountID(c)); err != nil {
 		utils.NotFound(c, err.Error())
 		return
 	}
 	utils.OK(c, gin.H{"message": "account deleted"})
 }
 
-// mustAccountID extracts the authenticated account ID from Gin context.
 func mustAccountID(c *gin.Context) int64 {
 	v, _ := c.Get(middleware.ContextKeyUserID)
 	return v.(int64)

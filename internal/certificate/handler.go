@@ -2,7 +2,6 @@ package certificate
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/utils"
@@ -31,36 +30,16 @@ func (h *Handler) GetCertificate(c *gin.Context) {
 
 // IssueCertificate POST /admin/certificates
 func (h *Handler) IssueCertificate(c *gin.Context) {
-	var body struct {
-		ResultID         int64  `json:"exam_result_id"`
-		CertificateNo    string `json:"certificate_no"`
-		IssueDate        string `json:"issue_date"`
-		VerificationCode string `json:"verification_code"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req IssueCertificateRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Positive("exam_result_id", body.ResultID).
-		Required("certificate_no", body.CertificateNo).
-		Required("issue_date", body.IssueDate).
-		Required("verification_code", body.VerificationCode)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	issueDate, err := time.Parse("2006-01-02", body.IssueDate)
-	if err != nil {
-		utils.BadRequest(c, "issue_date must be YYYY-MM-DD")
-		return
-	}
-	cert, err := h.svc.CreateCertificate(c.Request.Context(), CreateCertificateInput{
-		ResultID:         body.ResultID,
-		CertificateNo:    body.CertificateNo,
-		IssueDate:        issueDate,
-		VerificationCode: body.VerificationCode,
-	})
+	cert, err := h.svc.CreateCertificate(c.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -75,25 +54,16 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 		utils.BadRequest(c, "invalid certificate id")
 		return
 	}
-	var body struct {
-		WardID        *int64 `json:"ward_id"`
-		AddressDetail string `json:"address_detail"`
-		Courier       string `json:"courier"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	var req CreateDeliveryRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
 	}
-	v := utils.NewValidator()
-	v.Required("address_detail", body.AddressDetail)
-	if v.HasErrors() {
-		utils.BadRequest(c, v.FirstError())
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
 		return
 	}
-	d, err := h.svc.CreateDelivery(c.Request.Context(), CreateDeliveryInput{
-		CertificateID: certID, WardID: body.WardID,
-		AddressDetail: body.AddressDetail, Courier: body.Courier,
-	})
+	d, err := h.svc.CreateDelivery(c.Request.Context(), certID, req)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
