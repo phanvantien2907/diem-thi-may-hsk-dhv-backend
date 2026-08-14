@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/hskvinh/backend/internal/exam/dto/response"
 )
 
 // Service handles exam types, rooms, sessions, and seat generation.
@@ -14,7 +16,7 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // ListExamTypes returns all non-deleted exam types as DTOs.
-func (s *Service) ListExamTypes(ctx context.Context) ([]ExamTypeResponseDTO, error) {
+func (s *Service) ListExamTypes(ctx context.Context) ([]response.ExamTypeResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_type_id, exam_type_code, exam_type_name, exam_type_description
 		FROM exam_types WHERE exam_type_is_deleted = FALSE ORDER BY exam_type_code ASC`)
@@ -22,7 +24,7 @@ func (s *Service) ListExamTypes(ctx context.Context) ([]ExamTypeResponseDTO, err
 		return nil, fmt.Errorf("exam: list types: %w", err)
 	}
 	defer rows.Close()
-	var list []ExamTypeResponseDTO
+	var list []response.ExamTypeResponseDTO
 	for rows.Next() {
 		var e ExamTypeEntity
 		if err := rows.Scan(&e.ExamTypeID, &e.ExamTypeCode, &e.ExamTypeName, &e.ExamTypeDescription); err != nil {
@@ -34,7 +36,7 @@ func (s *Service) ListExamTypes(ctx context.Context) ([]ExamTypeResponseDTO, err
 }
 
 // ListExamRooms returns all non-deleted exam rooms as DTOs.
-func (s *Service) ListExamRooms(ctx context.Context) ([]ExamRoomResponseDTO, error) {
+func (s *Service) ListExamRooms(ctx context.Context) ([]response.ExamRoomResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_room_id, exam_room_name, exam_room_location, exam_room_capacity
 		FROM exam_rooms WHERE exam_room_is_deleted = FALSE ORDER BY exam_room_name ASC`)
@@ -42,7 +44,7 @@ func (s *Service) ListExamRooms(ctx context.Context) ([]ExamRoomResponseDTO, err
 		return nil, fmt.Errorf("exam: list rooms: %w", err)
 	}
 	defer rows.Close()
-	var list []ExamRoomResponseDTO
+	var list []response.ExamRoomResponseDTO
 	for rows.Next() {
 		var e ExamRoomEntity
 		if err := rows.Scan(&e.ExamRoomID, &e.ExamRoomName, &e.ExamRoomLocation, &e.ExamRoomCapacity); err != nil {
@@ -54,7 +56,7 @@ func (s *Service) ListExamRooms(ctx context.Context) ([]ExamRoomResponseDTO, err
 }
 
 // ListExamSessions returns all non-deleted sessions as DTOs.
-func (s *Service) ListExamSessions(ctx context.Context) ([]ExamSessionResponseDTO, error) {
+func (s *Service) ListExamSessions(ctx context.Context) ([]response.ExamSessionResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id, exam_session_exam_room_id,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
@@ -64,7 +66,7 @@ func (s *Service) ListExamSessions(ctx context.Context) ([]ExamSessionResponseDT
 		return nil, fmt.Errorf("exam: list sessions: %w", err)
 	}
 	defer rows.Close()
-	var list []ExamSessionResponseDTO
+	var list []response.ExamSessionResponseDTO
 	for rows.Next() {
 		var e ExamSessionEntity
 		if err := rows.Scan(
@@ -80,7 +82,7 @@ func (s *Service) ListExamSessions(ctx context.Context) ([]ExamSessionResponseDT
 }
 
 // GetExamSession returns a single session DTO by ID.
-func (s *Service) GetExamSession(ctx context.Context, id int64) (ExamSessionResponseDTO, error) {
+func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSessionResponseDTO, error) {
 	var e ExamSessionEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id, exam_session_exam_room_id,
@@ -93,16 +95,16 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (ExamSessionResp
 		&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ExamSessionResponseDTO{}, errors.New("exam session not found")
+		return response.ExamSessionResponseDTO{}, errors.New("exam session not found")
 	}
 	if err != nil {
-		return ExamSessionResponseDTO{}, fmt.Errorf("exam: get session: %w", err)
+		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: get session: %w", err)
 	}
 	return ToExamSessionResponseDTO(e), nil
 }
 
 // ListExamSeats returns seats for a given session as DTOs.
-func (s *Service) ListExamSeats(ctx context.Context, sessionID int64) ([]ExamSeatResponseDTO, error) {
+func (s *Service) ListExamSeats(ctx context.Context, sessionID int64) ([]response.ExamSeatResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_seat_id, exam_seat_exam_session_id, exam_seat_number, exam_seat_status, exam_seat_held_until
 		FROM exam_seats
@@ -112,7 +114,7 @@ func (s *Service) ListExamSeats(ctx context.Context, sessionID int64) ([]ExamSea
 		return nil, fmt.Errorf("exam: list seats: %w", err)
 	}
 	defer rows.Close()
-	var list []ExamSeatResponseDTO
+	var list []response.ExamSeatResponseDTO
 	for rows.Next() {
 		var e ExamSeatEntity
 		if err := rows.Scan(

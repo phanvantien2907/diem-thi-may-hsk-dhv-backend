@@ -1,8 +1,10 @@
 package exam
 
+import "github.com/hskvinh/backend/internal/exam/dto/response"
+
 // ToExamTypeResponseDTO maps an ExamTypeEntity to its public DTO.
-func ToExamTypeResponseDTO(e ExamTypeEntity) ExamTypeResponseDTO {
-	return ExamTypeResponseDTO{
+func ToExamTypeResponseDTO(e ExamTypeEntity) response.ExamTypeResponseDTO {
+	return response.ExamTypeResponseDTO{
 		ID:          e.ExamTypeID,
 		Code:        e.ExamTypeCode,
 		Name:        e.ExamTypeName,
@@ -11,8 +13,8 @@ func ToExamTypeResponseDTO(e ExamTypeEntity) ExamTypeResponseDTO {
 }
 
 // ToExamRoomResponseDTO maps an ExamRoomEntity to its public DTO.
-func ToExamRoomResponseDTO(e ExamRoomEntity) ExamRoomResponseDTO {
-	return ExamRoomResponseDTO{
+func ToExamRoomResponseDTO(e ExamRoomEntity) response.ExamRoomResponseDTO {
+	return response.ExamRoomResponseDTO{
 		ID:       e.ExamRoomID,
 		Name:     e.ExamRoomName,
 		Location: e.ExamRoomLocation,
@@ -21,8 +23,8 @@ func ToExamRoomResponseDTO(e ExamRoomEntity) ExamRoomResponseDTO {
 }
 
 // ToExamSessionResponseDTO maps an ExamSessionEntity to its public DTO.
-func ToExamSessionResponseDTO(e ExamSessionEntity) ExamSessionResponseDTO {
-	return ExamSessionResponseDTO{
+func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseDTO {
+	return response.ExamSessionResponseDTO{
 		ID:                   e.ExamSessionID,
 		ExamTypeID:           e.ExamSessionExamTypeID,
 		ExamRoomID:           e.ExamSessionExamRoomID,
@@ -36,8 +38,8 @@ func ToExamSessionResponseDTO(e ExamSessionEntity) ExamSessionResponseDTO {
 }
 
 // ToExamSeatResponseDTO maps an ExamSeatEntity to its public DTO.
-func ToExamSeatResponseDTO(e ExamSeatEntity) ExamSeatResponseDTO {
-	return ExamSeatResponseDTO{
+func ToExamSeatResponseDTO(e ExamSeatEntity) response.ExamSeatResponseDTO {
+	return response.ExamSeatResponseDTO{
 		ID:        e.ExamSeatID,
 		SessionID: e.ExamSeatExamSessionID,
 		Number:    e.ExamSeatNumber,

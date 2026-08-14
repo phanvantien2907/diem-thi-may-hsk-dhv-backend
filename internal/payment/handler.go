@@ -2,6 +2,7 @@ package payment
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/payment/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -13,7 +14,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreatePayment POST /payments
 func (h *Handler) CreatePayment(c *gin.Context) {
-	var req CreatePaymentRequestDTO
+	var req request.CreatePaymentRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -32,7 +33,7 @@ func (h *Handler) CreatePayment(c *gin.Context) {
 
 // Callback POST /payments/callback
 func (h *Handler) Callback(c *gin.Context) {
-	var req PaymentCallbackRequestDTO
+	var req request.PaymentCallbackRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return

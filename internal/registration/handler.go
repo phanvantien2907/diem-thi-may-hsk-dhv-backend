@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/registration/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -15,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // ReserveSeat POST /registrations
 func (h *Handler) ReserveSeat(c *gin.Context) {
-	var req ReserveSeatRequestDTO
+	var req request.ReserveSeatRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return

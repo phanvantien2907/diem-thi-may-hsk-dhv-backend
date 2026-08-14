@@ -1,6 +1,10 @@
 package exam
 
-import "time"
+import (
+	"time"
+
+	"github.com/hskvinh/backend/internal/exam/enum"
+)
 
 // ExamTypeEntity mirrors the exam_types table 1:1.
 type ExamTypeEntity struct {
@@ -15,13 +19,13 @@ type ExamTypeEntity struct {
 
 // ExamRoomEntity mirrors the exam_rooms table 1:1.
 type ExamRoomEntity struct {
-	ExamRoomID         int64
-	ExamRoomName       string
-	ExamRoomLocation   *string
-	ExamRoomCapacity   int
-	ExamRoomIsDeleted  bool
-	ExamRoomCreatedAt  time.Time
-	ExamRoomUpdatedAt  time.Time
+	ExamRoomID        int64
+	ExamRoomName      string
+	ExamRoomLocation  *string
+	ExamRoomCapacity  int
+	ExamRoomIsDeleted bool
+	ExamRoomCreatedAt time.Time
+	ExamRoomUpdatedAt time.Time
 }
 
 // ExamSessionEntity mirrors the exam_sessions table 1:1.
@@ -30,11 +34,11 @@ type ExamSessionEntity struct {
 	ExamSessionExamTypeID           int64
 	ExamSessionExamRoomID           int64
 	ExamSessionDate                 time.Time
-	ExamSessionShift                ExamShift
+	ExamSessionShift                enum.ExamShift
 	ExamSessionCapacity             int
 	ExamSessionFee                  int64
 	ExamSessionRegistrationDeadline time.Time
-	ExamSessionStatus               ExamSessionStatus
+	ExamSessionStatus               enum.ExamSessionStatus
 	ExamSessionIsDeleted            bool
 	ExamSessionCreatedAt            time.Time
 	ExamSessionUpdatedAt            time.Time
@@ -42,12 +46,12 @@ type ExamSessionEntity struct {
 
 // ExamSeatEntity mirrors the exam_seats table 1:1.
 type ExamSeatEntity struct {
-	ExamSeatID             int64
-	ExamSeatExamSessionID  int64
-	ExamSeatNumber         int16
-	ExamSeatStatus         ExamSeatStatus
-	ExamSeatHeldUntil      *time.Time
-	ExamSeatIsDeleted      bool
-	ExamSeatCreatedAt      time.Time
-	ExamSeatUpdatedAt      time.Time
+	ExamSeatID            int64
+	ExamSeatExamSessionID int64
+	ExamSeatNumber        int16
+	ExamSeatStatus        enum.ExamSeatStatus
+	ExamSeatHeldUntil     *time.Time
+	ExamSeatIsDeleted     bool
+	ExamSeatCreatedAt     time.Time
+	ExamSeatUpdatedAt     time.Time
 }

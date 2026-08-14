@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/hskvinh/backend/internal/notification/dto/response"
+	"github.com/hskvinh/backend/internal/notification/enum"
 )
 
 // Service handles system notifications.
@@ -14,9 +17,9 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // CreateNotification inserts a pending notification and returns its DTO.
-func (s *Service) CreateNotification(ctx context.Context, accountID int64, channel NotificationChannel, content string) (NotificationResponseDTO, error) {
+func (s *Service) CreateNotification(ctx context.Context, accountID int64, channel enum.NotificationChannel, content string) (response.NotificationResponseDTO, error) {
 	if !channel.Valid() {
-		return NotificationResponseDTO{}, fmt.Errorf("invalid notification channel: %s", channel)
+		return response.NotificationResponseDTO{}, fmt.Errorf("invalid notification channel: %s", channel)
 	}
 	var e NotificationEntity
 	err := s.db.QueryRowContext(ctx, `
@@ -33,7 +36,7 @@ func (s *Service) CreateNotification(ctx context.Context, accountID int64, chann
 		&e.NotificationDeletedAt, &e.NotificationCreatedAt, &e.NotificationUpdatedAt,
 	)
 	if err != nil {
-		return NotificationResponseDTO{}, fmt.Errorf("notification: create: %w", err)
+		return response.NotificationResponseDTO{}, fmt.Errorf("notification: create: %w", err)
 	}
 	return ToNotificationResponseDTO(e), nil
 }
@@ -54,7 +57,7 @@ func (s *Service) MarkSent(ctx context.Context, notificationID int64) error {
 }
 
 // GetMyNotifications returns a user's non-deleted notifications as DTOs.
-func (s *Service) GetMyNotifications(ctx context.Context, accountID int64) ([]NotificationResponseDTO, error) {
+func (s *Service) GetMyNotifications(ctx context.Context, accountID int64) ([]response.NotificationResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT notification_id, notification_account_id, notification_channel,
 		       notification_content, notification_status, notification_is_deleted,
@@ -66,7 +69,7 @@ func (s *Service) GetMyNotifications(ctx context.Context, accountID int64) ([]No
 		return nil, fmt.Errorf("notification: list: %w", err)
 	}
 	defer rows.Close()
-	var list []NotificationResponseDTO
+	var list []response.NotificationResponseDTO
 	for rows.Next() {
 		var e NotificationEntity
 		if err := rows.Scan(

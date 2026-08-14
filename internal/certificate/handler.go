@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/certificate/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -30,7 +31,7 @@ func (h *Handler) GetCertificate(c *gin.Context) {
 
 // IssueCertificate POST /admin/certificates
 func (h *Handler) IssueCertificate(c *gin.Context) {
-	var req IssueCertificateRequestDTO
+	var req request.IssueCertificateRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -54,7 +55,7 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 		utils.BadRequest(c, "invalid certificate id")
 		return
 	}
-	var req CreateDeliveryRequestDTO
+	var req request.CreateDeliveryRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return

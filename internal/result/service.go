@@ -5,6 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/hskvinh/backend/internal/result/dto/request"
+	"github.com/hskvinh/backend/internal/result/dto/response"
+	"github.com/hskvinh/backend/internal/result/enum"
 )
 
 // Service handles exam results and recheck requests.
@@ -14,9 +18,9 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // CreateResult inserts an exam result and returns its public DTO.
-func (s *Service) CreateResult(ctx context.Context, req CreateResultRequestDTO) (ExamResultResponseDTO, error) {
-	if !ExamResultStatus(req.Status).Valid() {
-		return ExamResultResponseDTO{}, fmt.Errorf("invalid result status: %s", req.Status)
+func (s *Service) CreateResult(ctx context.Context, req request.CreateResultRequestDTO) (response.ExamResultResponseDTO, error) {
+	if !enum.ExamResultStatus(req.Status).Valid() {
+		return response.ExamResultResponseDTO{}, fmt.Errorf("invalid result status: %s", req.Status)
 	}
 	var e ExamResultEntity
 	err := s.db.QueryRowContext(ctx, `
@@ -43,13 +47,13 @@ func (s *Service) CreateResult(ctx context.Context, req CreateResultRequestDTO) 
 		&e.ExamResultCreatedAt, &e.ExamResultUpdatedAt,
 	)
 	if err != nil {
-		return ExamResultResponseDTO{}, fmt.Errorf("result: create: %w", err)
+		return response.ExamResultResponseDTO{}, fmt.Errorf("result: create: %w", err)
 	}
 	return ToExamResultResponseDTO(e), nil
 }
 
 // GetResultByRegistration returns the result DTO for a given registration ID.
-func (s *Service) GetResultByRegistration(ctx context.Context, registrationID int64) (ExamResultResponseDTO, error) {
+func (s *Service) GetResultByRegistration(ctx context.Context, registrationID int64) (response.ExamResultResponseDTO, error) {
 	var e ExamResultEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT exam_result_id, exam_result_exam_registration_id,
@@ -70,16 +74,16 @@ func (s *Service) GetResultByRegistration(ctx context.Context, registrationID in
 		&e.ExamResultCreatedAt, &e.ExamResultUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ExamResultResponseDTO{}, errors.New("result not found")
+		return response.ExamResultResponseDTO{}, errors.New("result not found")
 	}
 	if err != nil {
-		return ExamResultResponseDTO{}, fmt.Errorf("result: get: %w", err)
+		return response.ExamResultResponseDTO{}, fmt.Errorf("result: get: %w", err)
 	}
 	return ToExamResultResponseDTO(e), nil
 }
 
 // CreateRecheckRequest submits a recheck and returns its public DTO.
-func (s *Service) CreateRecheckRequest(ctx context.Context, req CreateRecheckRequestDTO) (RecheckResponseDTO, error) {
+func (s *Service) CreateRecheckRequest(ctx context.Context, req request.CreateRecheckRequestDTO) (response.RecheckResponseDTO, error) {
 	var e ExamRecheckRequestEntity
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO exam_recheck_requests
@@ -99,24 +103,24 @@ func (s *Service) CreateRecheckRequest(ctx context.Context, req CreateRecheckReq
 		&e.ExamRecheckCreatedAt, &e.ExamRecheckUpdatedAt,
 	)
 	if err != nil {
-		return RecheckResponseDTO{}, fmt.Errorf("result: create recheck: %w", err)
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: create recheck: %w", err)
 	}
 	return ToRecheckResponseDTO(e), nil
 }
 
 // ReviewRecheckRequest records a reviewer's decision and returns the updated DTO.
-func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInput) (RecheckResponseDTO, error) {
+func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInput) (response.RecheckResponseDTO, error) {
 	if !in.Status.Valid() {
-		return RecheckResponseDTO{}, fmt.Errorf("invalid recheck status: %s", in.Status)
+		return response.RecheckResponseDTO{}, fmt.Errorf("invalid recheck status: %s", in.Status)
 	}
 	var e ExamRecheckRequestEntity
 	err := s.db.QueryRowContext(ctx, `
 		UPDATE exam_recheck_requests
-		SET exam_recheck_status                 = $1,
-		    exam_recheck_reviewed_by_account_id  = $2,
-		    exam_recheck_reviewed_at             = NOW(),
-		    exam_recheck_new_total_score         = $3,
-		    exam_recheck_updated_at              = NOW()
+		SET exam_recheck_status                  = $1,
+		    exam_recheck_reviewed_by_account_id   = $2,
+		    exam_recheck_reviewed_at              = NOW(),
+		    exam_recheck_new_total_score          = $3,
+		    exam_recheck_updated_at               = NOW()
 		WHERE exam_recheck_id=$4 AND exam_recheck_is_deleted=FALSE
 		RETURNING exam_recheck_id, exam_recheck_exam_result_id, exam_recheck_reason,
 		          exam_recheck_status, exam_recheck_reviewed_by_account_id,
@@ -132,10 +136,10 @@ func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInpu
 		&e.ExamRecheckCreatedAt, &e.ExamRecheckUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return RecheckResponseDTO{}, errors.New("recheck request not found")
+		return response.RecheckResponseDTO{}, errors.New("recheck request not found")
 	}
 	if err != nil {
-		return RecheckResponseDTO{}, fmt.Errorf("result: review: %w", err)
+		return response.RecheckResponseDTO{}, fmt.Errorf("result: review: %w", err)
 	}
 	return ToRecheckResponseDTO(e), nil
 }

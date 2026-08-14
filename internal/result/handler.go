@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/middleware"
+	"github.com/hskvinh/backend/internal/result/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -16,7 +17,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateResult POST /admin/results
 func (h *Handler) CreateResult(c *gin.Context) {
-	var req CreateResultRequestDTO
+	var req request.CreateResultRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -50,7 +51,7 @@ func (h *Handler) GetResult(c *gin.Context) {
 
 // CreateRecheck POST /rechecks
 func (h *Handler) CreateRecheck(c *gin.Context) {
-	var req CreateRecheckRequestDTO
+	var req request.CreateRecheckRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return

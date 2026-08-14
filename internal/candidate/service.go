@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/hskvinh/backend/internal/candidate/dto/request"
+	"github.com/hskvinh/backend/internal/candidate/dto/response"
+	"github.com/hskvinh/backend/internal/candidate/enum"
 )
 
 // Service handles candidate profiles and documents.
@@ -15,9 +19,13 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // CreateProfile inserts a new candidate and returns its public DTO.
-func (s *Service) CreateProfile(ctx context.Context, in CreateProfileInput) (CandidateResponseDTO, error) {
+func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRequestDTO, accountID int64) (response.CandidateResponseDTO, error) {
+	dob, err := time.Parse("2006-01-02", req.DOB)
+	if err != nil {
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: invalid dob: %w", err)
+	}
 	var e CandidateEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO candidates
 		       (candidate_account_id, candidate_full_name, candidate_full_name_cn,
 		        candidate_dob, candidate_gender, candidate_ethnicity, candidate_religion,
@@ -30,9 +38,9 @@ func (s *Service) CreateProfile(ctx context.Context, in CreateProfileInput) (Can
 		          candidate_birthplace, candidate_nationality, candidate_mother_tongue,
 		          candidate_chinese_study_years, candidate_is_deleted, candidate_deleted_at,
 		          candidate_created_at, candidate_updated_at`,
-		in.AccountID, in.FullName, in.FullNameCN,
-		in.DOB, in.Gender, in.Ethnicity, in.Religion,
-		in.Birthplace, in.Nationality, in.MotherTongue, in.ChineseStudyYears,
+		accountID, req.FullName, req.FullNameCN,
+		dob, req.Gender, req.Ethnicity, req.Religion,
+		req.Birthplace, req.Nationality, req.MotherTongue, req.ChineseStudyYears,
 	).Scan(
 		&e.CandidateID, &e.CandidateAccountID, &e.CandidateFullName, &e.CandidateFullNameCN,
 		&e.CandidateDOB, &e.CandidateGender, &e.CandidateEthnicity, &e.CandidateReligion,
@@ -41,13 +49,13 @@ func (s *Service) CreateProfile(ctx context.Context, in CreateProfileInput) (Can
 		&e.CandidateCreatedAt, &e.CandidateUpdatedAt,
 	)
 	if err != nil {
-		return CandidateResponseDTO{}, fmt.Errorf("candidate: create profile: %w", err)
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: create profile: %w", err)
 	}
 	return ToCandidateResponseDTO(e), nil
 }
 
 // UpdateProfile applies partial updates and returns the updated public DTO.
-func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, in UpdateProfileInput) (CandidateResponseDTO, error) {
+func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, req request.UpdateProfileRequestDTO) (response.CandidateResponseDTO, error) {
 	var e CandidateEntity
 	err := s.db.QueryRowContext(ctx, `
 		UPDATE candidates
@@ -66,8 +74,8 @@ func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, in Updat
 		          candidate_birthplace, candidate_nationality, candidate_mother_tongue,
 		          candidate_chinese_study_years, candidate_is_deleted, candidate_deleted_at,
 		          candidate_created_at, candidate_updated_at`,
-		in.FullName, in.FullNameCN, in.Ethnicity, in.Religion,
-		in.Birthplace, in.Nationality, in.MotherTongue, in.ChineseStudyYears, candidateID,
+		req.FullName, req.FullNameCN, req.Ethnicity, req.Religion,
+		req.Birthplace, req.Nationality, req.MotherTongue, req.ChineseStudyYears, candidateID,
 	).Scan(
 		&e.CandidateID, &e.CandidateAccountID, &e.CandidateFullName, &e.CandidateFullNameCN,
 		&e.CandidateDOB, &e.CandidateGender, &e.CandidateEthnicity, &e.CandidateReligion,
@@ -76,18 +84,22 @@ func (s *Service) UpdateProfile(ctx context.Context, candidateID int64, in Updat
 		&e.CandidateCreatedAt, &e.CandidateUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return CandidateResponseDTO{}, errors.New("candidate not found")
+		return response.CandidateResponseDTO{}, errors.New("candidate not found")
 	}
 	if err != nil {
-		return CandidateResponseDTO{}, fmt.Errorf("candidate: update profile: %w", err)
+		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: update profile: %w", err)
 	}
 	return ToCandidateResponseDTO(e), nil
 }
 
 // UploadDocument inserts a new document and returns its public DTO.
-func (s *Service) UploadDocument(ctx context.Context, in UploadDocumentInput) (DocumentResponseDTO, error) {
+func (s *Service) UploadDocument(ctx context.Context, candidateID int64, req request.UploadDocumentRequestDTO) (response.DocumentResponseDTO, error) {
+	issueDate, err := time.Parse("2006-01-02", req.IssueDate)
+	if err != nil {
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: invalid issue_date: %w", err)
+	}
 	var e CandidateDocumentEntity
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO candidate_documents
 		       (candidate_document_candidate_id, candidate_document_type, candidate_document_number,
 		        candidate_document_issue_date, candidate_document_issue_place,
@@ -104,10 +116,10 @@ func (s *Service) UploadDocument(ctx context.Context, in UploadDocumentInput) (D
 		          candidate_document_ward_id, candidate_document_address_detail,
 		          candidate_document_is_deleted, candidate_document_deleted_at,
 		          candidate_document_created_at, candidate_document_updated_at`,
-		in.CandidateID, in.DocType, in.DocNumber,
-		in.IssueDate, in.IssuePlace,
-		in.FrontImageURL, in.BackImageURL, in.PortraitImageURL,
-		in.WardID, in.AddressDetail,
+		candidateID, enum.DocumentType(req.DocType), req.DocNumber,
+		issueDate, req.IssuePlace,
+		req.FrontImageURL, req.BackImageURL, req.PortraitImageURL,
+		req.WardID, req.AddressDetail,
 	).Scan(
 		&e.CandidateDocumentID, &e.CandidateDocumentCandidateID,
 		&e.CandidateDocumentType, &e.CandidateDocumentNumber,
@@ -120,18 +132,7 @@ func (s *Service) UploadDocument(ctx context.Context, in UploadDocumentInput) (D
 		&e.CandidateDocumentCreatedAt, &e.CandidateDocumentUpdatedAt,
 	)
 	if err != nil {
-		return DocumentResponseDTO{}, fmt.Errorf("candidate: upload document: %w", err)
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: upload document: %w", err)
 	}
 	return ToDocumentResponseDTO(e), nil
 }
-
-// nullStr converts empty string to nil *string for optional nullable columns.
-func nullStr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	st := s
-	return &st
-}
-
-var _ = time.Now // keep import used

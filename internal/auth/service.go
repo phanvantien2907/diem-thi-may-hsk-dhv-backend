@@ -8,15 +8,18 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hskvinh/backend/internal/auth/dto/request"
+	"github.com/hskvinh/backend/internal/auth/dto/response"
+	"github.com/hskvinh/backend/internal/auth/enum"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
 // Service handles account management and JWT issuance.
 type Service struct {
-	db           *sql.DB
-	jwtSecret    string
-	accessTTL    time.Duration
-	refreshTTL   time.Duration
+	db         *sql.DB
+	jwtSecret  string
+	accessTTL  time.Duration
+	refreshTTL time.Duration
 }
 
 // NewService creates an auth Service.
@@ -25,21 +28,20 @@ func NewService(db *sql.DB, jwtSecret string, accessTTL, refreshTTL time.Duratio
 }
 
 // Register creates a new account and returns its public DTO.
-func (s *Service) Register(ctx context.Context, req CreateAccountRequestDTO) (AccountResponseDTO, error) {
-	// Resolve role_id from role_code
+func (s *Service) Register(ctx context.Context, req request.CreateAccountRequestDTO) (response.AccountResponseDTO, error) {
 	var roleID int64
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT role_id FROM roles WHERE role_code = $1 AND role_is_deleted = FALSE`,
 		req.RoleCode,
 	).Scan(&roleID); errors.Is(err, sql.ErrNoRows) {
-		return AccountResponseDTO{}, fmt.Errorf("role %q not found", req.RoleCode)
+		return response.AccountResponseDTO{}, fmt.Errorf("role %q not found", req.RoleCode)
 	} else if err != nil {
-		return AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
 	}
 
 	hash, err := utils.HashPassword(req.Password)
 	if err != nil {
-		return AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
 	}
 
 	var e AccountEntity
@@ -60,13 +62,13 @@ func (s *Service) Register(ctx context.Context, req CreateAccountRequestDTO) (Ac
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	)
 	if err != nil {
-		return AccountResponseDTO{}, fmt.Errorf("auth: create account: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: create account: %w", err)
 	}
 	return ToAccountResponseDTO(e), nil
 }
 
 // Login validates credentials and issues a JWT pair.
-func (s *Service) Login(ctx context.Context, req LoginRequestDTO) (TokenPairResponseDTO, error) {
+func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (response.TokenPairResponseDTO, error) {
 	var e AccountEntity
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT account_id, account_role_id, account_username, account_password_hash,
@@ -82,19 +84,18 @@ func (s *Service) Login(ctx context.Context, req LoginRequestDTO) (TokenPairResp
 		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
-		return TokenPairResponseDTO{}, errors.New("invalid credentials")
+		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
 	} else if err != nil {
-		return TokenPairResponseDTO{}, fmt.Errorf("auth: login query: %w", err)
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: login query: %w", err)
 	}
 
-	if e.AccountStatus == AccountStatusLocked {
-		return TokenPairResponseDTO{}, errors.New("account is locked")
+	if e.AccountStatus == enum.AccountStatusLocked {
+		return response.TokenPairResponseDTO{}, errors.New("account is locked")
 	}
 	if err := utils.CheckPassword(e.AccountPasswordHash, req.Password); err != nil {
-		return TokenPairResponseDTO{}, errors.New("invalid credentials")
+		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
 	}
 
-	// Update last_login_at
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE accounts SET account_last_login_at = NOW() WHERE account_id = $1`,
 		e.AccountID,
@@ -102,13 +103,13 @@ func (s *Service) Login(ctx context.Context, req LoginRequestDTO) (TokenPairResp
 
 	accessToken, err := s.issueToken(e.AccountID, s.accessTTL)
 	if err != nil {
-		return TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
 	}
 	refreshToken, err := s.issueToken(e.AccountID, s.refreshTTL)
 	if err != nil {
-		return TokenPairResponseDTO{}, fmt.Errorf("auth: issue refresh token: %w", err)
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue refresh token: %w", err)
 	}
-	return TokenPairResponseDTO{
+	return response.TokenPairResponseDTO{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(s.accessTTL.Seconds()),
@@ -116,7 +117,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequestDTO) (TokenPairResp
 }
 
 // GetAccount returns the public account DTO for the given account ID.
-func (s *Service) GetAccount(ctx context.Context, accountID int64) (AccountResponseDTO, error) {
+func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.AccountResponseDTO, error) {
 	var e AccountEntity
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT account_id, account_role_id, account_username, account_password_hash,
@@ -131,15 +132,15 @@ func (s *Service) GetAccount(ctx context.Context, accountID int64) (AccountRespo
 		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
-		return AccountResponseDTO{}, errors.New("account not found")
+		return response.AccountResponseDTO{}, errors.New("account not found")
 	} else if err != nil {
-		return AccountResponseDTO{}, fmt.Errorf("auth: get account: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: get account: %w", err)
 	}
 	return ToAccountResponseDTO(e), nil
 }
 
 // UpdateAccount applies partial updates and returns the updated public DTO.
-func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req UpdateAccountRequestDTO) (AccountResponseDTO, error) {
+func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req request.UpdateAccountRequestDTO) (response.AccountResponseDTO, error) {
 	var e AccountEntity
 	if err := s.db.QueryRowContext(ctx, `
 		UPDATE accounts
@@ -158,9 +159,9 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req Update
 		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
-		return AccountResponseDTO{}, errors.New("account not found")
+		return response.AccountResponseDTO{}, errors.New("account not found")
 	} else if err != nil {
-		return AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
 	}
 	return ToAccountResponseDTO(e), nil
 }

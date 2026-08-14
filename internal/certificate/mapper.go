@@ -1,8 +1,10 @@
 package certificate
 
+import "github.com/hskvinh/backend/internal/certificate/dto/response"
+
 // ToCertificateResponseDTO maps a CertificateEntity to its public DTO.
-func ToCertificateResponseDTO(e CertificateEntity) CertificateResponseDTO {
-	return CertificateResponseDTO{
+func ToCertificateResponseDTO(e CertificateEntity) response.CertificateResponseDTO {
+	return response.CertificateResponseDTO{
 		ID:               e.CertificateID,
 		ExamResultID:     e.CertificateExamResultID,
 		CertificateNo:    e.CertificateNo,
@@ -14,8 +16,8 @@ func ToCertificateResponseDTO(e CertificateEntity) CertificateResponseDTO {
 }
 
 // ToDeliveryResponseDTO maps a CertificateDeliveryEntity to its public DTO.
-func ToDeliveryResponseDTO(e CertificateDeliveryEntity) DeliveryResponseDTO {
-	return DeliveryResponseDTO{
+func ToDeliveryResponseDTO(e CertificateDeliveryEntity) response.DeliveryResponseDTO {
+	return response.DeliveryResponseDTO{
 		ID:            e.CertificateDeliveryID,
 		CertificateID: e.CertificateDeliveryCertificateID,
 		WardID:        e.CertificateDeliveryWardID,

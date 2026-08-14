@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/exam/dto/response"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -85,7 +86,7 @@ func (h *Handler) GenerateSeats(c *gin.Context) {
 		utils.InternalServerError(c, err.Error())
 		return
 	}
-	utils.Created(c, GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
+	utils.Created(c, response.GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
 }
 
 func paramID(c *gin.Context, key string) (int64, bool) {

@@ -6,6 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/hskvinh/backend/internal/certificate/dto/request"
+	"github.com/hskvinh/backend/internal/certificate/dto/response"
+	"github.com/hskvinh/backend/internal/certificate/enum"
 )
 
 // Service handles certificate issuance and delivery.
@@ -15,10 +19,10 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // CreateCertificate issues a certificate and returns its public DTO.
-func (s *Service) CreateCertificate(ctx context.Context, req IssueCertificateRequestDTO) (CertificateResponseDTO, error) {
+func (s *Service) CreateCertificate(ctx context.Context, req request.IssueCertificateRequestDTO) (response.CertificateResponseDTO, error) {
 	issueDate, err := time.Parse("2006-01-02", req.IssueDate)
 	if err != nil {
-		return CertificateResponseDTO{}, fmt.Errorf("invalid issue_date: %w", err)
+		return response.CertificateResponseDTO{}, fmt.Errorf("invalid issue_date: %w", err)
 	}
 	var e CertificateEntity
 	err = s.db.QueryRowContext(ctx, `
@@ -38,13 +42,13 @@ func (s *Service) CreateCertificate(ctx context.Context, req IssueCertificateReq
 		&e.CertificateCreatedAt, &e.CertificateUpdatedAt,
 	)
 	if err != nil {
-		return CertificateResponseDTO{}, fmt.Errorf("certificate: create: %w", err)
+		return response.CertificateResponseDTO{}, fmt.Errorf("certificate: create: %w", err)
 	}
 	return ToCertificateResponseDTO(e), nil
 }
 
 // GetCertificateByResult returns the certificate DTO for a given result ID.
-func (s *Service) GetCertificateByResult(ctx context.Context, resultID int64) (CertificateResponseDTO, error) {
+func (s *Service) GetCertificateByResult(ctx context.Context, resultID int64) (response.CertificateResponseDTO, error) {
 	var e CertificateEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT certificate_id, certificate_exam_result_id, certificate_no,
@@ -60,16 +64,16 @@ func (s *Service) GetCertificateByResult(ctx context.Context, resultID int64) (C
 		&e.CertificateCreatedAt, &e.CertificateUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return CertificateResponseDTO{}, errors.New("certificate not found")
+		return response.CertificateResponseDTO{}, errors.New("certificate not found")
 	}
 	if err != nil {
-		return CertificateResponseDTO{}, fmt.Errorf("certificate: get: %w", err)
+		return response.CertificateResponseDTO{}, fmt.Errorf("certificate: get: %w", err)
 	}
 	return ToCertificateResponseDTO(e), nil
 }
 
 // CreateDelivery creates a delivery request and returns its public DTO.
-func (s *Service) CreateDelivery(ctx context.Context, certID int64, req CreateDeliveryRequestDTO) (DeliveryResponseDTO, error) {
+func (s *Service) CreateDelivery(ctx context.Context, certID int64, req request.CreateDeliveryRequestDTO) (response.DeliveryResponseDTO, error) {
 	var e CertificateDeliveryEntity
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO certificate_deliveries
@@ -90,13 +94,13 @@ func (s *Service) CreateDelivery(ctx context.Context, certID int64, req CreateDe
 		&e.CertificateDeliveryCreatedAt, &e.CertificateDeliveryUpdatedAt,
 	)
 	if err != nil {
-		return DeliveryResponseDTO{}, fmt.Errorf("certificate: create delivery: %w", err)
+		return response.DeliveryResponseDTO{}, fmt.Errorf("certificate: create delivery: %w", err)
 	}
 	return ToDeliveryResponseDTO(e), nil
 }
 
 // UpdateDeliveryStatus updates status + tracking number.
-func (s *Service) UpdateDeliveryStatus(ctx context.Context, deliveryID int64, status DeliveryStatus, trackingNo string) error {
+func (s *Service) UpdateDeliveryStatus(ctx context.Context, deliveryID int64, status enum.DeliveryStatus, trackingNo string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid delivery status: %s", status)
 	}

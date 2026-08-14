@@ -2,9 +2,9 @@ package candidate
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -17,7 +17,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateProfile POST /candidates
 func (h *Handler) CreateProfile(c *gin.Context) {
-	var req CreateProfileRequestDTO
+	var req request.CreateProfileRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -26,21 +26,9 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	dob, err := time.Parse("2006-01-02", req.DOB)
+	cand, err := h.svc.CreateProfile(c.Request.Context(), req, accountID(c))
 	if err != nil {
-		utils.BadRequest(c, "dob must be YYYY-MM-DD")
-		return
-	}
-	id := accountID(c)
-	cand, svcErr := h.svc.CreateProfile(c.Request.Context(), CreateProfileInput{
-		AccountID: id, FullName: req.FullName, FullNameCN: req.FullNameCN,
-		DOB: dob, Gender: CandidateGender(req.Gender), Ethnicity: req.Ethnicity,
-		Religion: req.Religion, Birthplace: req.Birthplace,
-		Nationality: req.Nationality, MotherTongue: req.MotherTongue,
-		ChineseStudyYears: req.ChineseStudyYears,
-	})
-	if svcErr != nil {
-		utils.InternalServerError(c, svcErr.Error())
+		utils.InternalServerError(c, err.Error())
 		return
 	}
 	utils.Created(c, cand)
@@ -53,7 +41,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		utils.BadRequest(c, "invalid candidate id")
 		return
 	}
-	var req UpdateProfileRequestDTO
+	var req request.UpdateProfileRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -62,12 +50,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	cand, err := h.svc.UpdateProfile(c.Request.Context(), cid, UpdateProfileInput{
-		FullName: req.FullName, FullNameCN: req.FullNameCN,
-		Ethnicity: req.Ethnicity, Religion: req.Religion,
-		Birthplace: req.Birthplace, Nationality: req.Nationality,
-		MotherTongue: req.MotherTongue, ChineseStudyYears: req.ChineseStudyYears,
-	})
+	cand, err := h.svc.UpdateProfile(c.Request.Context(), cid, req)
 	if err != nil {
 		utils.NotFound(c, err.Error())
 		return
@@ -82,7 +65,7 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 		utils.BadRequest(c, "invalid candidate id")
 		return
 	}
-	var req UploadDocumentRequestDTO
+	var req request.UploadDocumentRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -91,20 +74,9 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	issueDate, err := time.Parse("2006-01-02", req.IssueDate)
+	doc, err := h.svc.UploadDocument(c.Request.Context(), cid, req)
 	if err != nil {
-		utils.BadRequest(c, "issue_date must be YYYY-MM-DD")
-		return
-	}
-	doc, svcErr := h.svc.UploadDocument(c.Request.Context(), UploadDocumentInput{
-		CandidateID: cid, DocType: DocumentType(req.DocType), DocNumber: req.DocNumber,
-		IssueDate: issueDate, IssuePlace: req.IssuePlace,
-		FrontImageURL: req.FrontImageURL, BackImageURL: req.BackImageURL,
-		PortraitImageURL: req.PortraitImageURL, WardID: req.WardID,
-		AddressDetail: req.AddressDetail,
-	})
-	if svcErr != nil {
-		utils.InternalServerError(c, svcErr.Error())
+		utils.InternalServerError(c, err.Error())
 		return
 	}
 	utils.Created(c, doc)

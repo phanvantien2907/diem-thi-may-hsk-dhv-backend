@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hskvinh/backend/internal/payment/dto/request"
+	"github.com/hskvinh/backend/internal/payment/dto/response"
+	payenum "github.com/hskvinh/backend/internal/payment/enum"
 	"github.com/hskvinh/backend/internal/registration"
+	regenum "github.com/hskvinh/backend/internal/registration/enum"
 )
 
 // Service handles payment creation and confirmation.
@@ -21,23 +25,23 @@ func NewService(db *sql.DB, regSvc *registration.Service) *Service {
 }
 
 // CreatePayment inserts a pending payment and returns its public DTO.
-func (s *Service) CreatePayment(ctx context.Context, req CreatePaymentRequestDTO) (PaymentResponseDTO, error) {
-	if !PaymentMethod(req.Method).Valid() {
-		return PaymentResponseDTO{}, fmt.Errorf("invalid payment method: %s", req.Method)
+func (s *Service) CreatePayment(ctx context.Context, req request.CreatePaymentRequestDTO) (response.PaymentResponseDTO, error) {
+	if !payenum.PaymentMethod(req.Method).Valid() {
+		return response.PaymentResponseDTO{}, fmt.Errorf("invalid payment method: %s", req.Method)
 	}
 
-	var regStatus registration.ExamRegistrationStatus
+	var regStatus regenum.ExamRegistrationStatus
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT exam_registration_status FROM exam_registrations
 		 WHERE exam_registration_id=$1 AND exam_registration_is_deleted=FALSE`,
 		req.ExamRegistrationID,
 	).Scan(&regStatus); errors.Is(err, sql.ErrNoRows) {
-		return PaymentResponseDTO{}, errors.New("registration not found")
+		return response.PaymentResponseDTO{}, errors.New("registration not found")
 	} else if err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: check reg: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: check reg: %w", err)
 	}
-	if regStatus == registration.RegStatusCancelled {
-		return PaymentResponseDTO{}, errors.New("cannot pay for a cancelled registration")
+	if regStatus == regenum.RegStatusCancelled {
+		return response.PaymentResponseDTO{}, errors.New("cannot pay for a cancelled registration")
 	}
 
 	var e PaymentEntity
@@ -55,20 +59,20 @@ func (s *Service) CreatePayment(ctx context.Context, req CreatePaymentRequestDTO
 		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
 	)
 	if err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: insert: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: insert: %w", err)
 	}
 	return ToPaymentResponseDTO(e), nil
 }
 
-// ProcessCallback handles a gateway callback, marks the payment and confirms registration on success.
-func (s *Service) ProcessCallback(ctx context.Context, req PaymentCallbackRequestDTO) (PaymentResponseDTO, error) {
-	if !PaymentStatus(req.Status).Valid() {
-		return PaymentResponseDTO{}, fmt.Errorf("invalid payment status: %s", req.Status)
+// ProcessCallback handles a gateway callback.
+func (s *Service) ProcessCallback(ctx context.Context, req request.PaymentCallbackRequestDTO) (response.PaymentResponseDTO, error) {
+	if !payenum.PaymentStatus(req.Status).Valid() {
+		return response.PaymentResponseDTO{}, fmt.Errorf("invalid payment status: %s", req.Status)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: begin tx: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
@@ -79,12 +83,12 @@ func (s *Service) ProcessCallback(ctx context.Context, req PaymentCallbackReques
 		WHERE payment_transaction_ref=$1 AND payment_is_deleted=FALSE
 		FOR UPDATE`, req.TransactionRef,
 	).Scan(&pay.PaymentID, &pay.PaymentExamRegistrationID, &pay.PaymentStatus); errors.Is(err, sql.ErrNoRows) {
-		return PaymentResponseDTO{}, errors.New("payment not found for this transaction reference")
+		return response.PaymentResponseDTO{}, errors.New("payment not found for this transaction reference")
 	} else if err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: lock: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: lock: %w", err)
 	}
-	if pay.PaymentStatus != PayStatusPending {
-		return PaymentResponseDTO{}, fmt.Errorf("payment already processed: %s", pay.PaymentStatus)
+	if pay.PaymentStatus != payenum.PayStatusPending {
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment already processed: %s", pay.PaymentStatus)
 	}
 
 	var updated PaymentEntity
@@ -104,13 +108,13 @@ func (s *Service) ProcessCallback(ctx context.Context, req PaymentCallbackReques
 		&updated.PaymentPaidAt, &updated.PaymentIsDeleted, &updated.PaymentDeletedAt,
 		&updated.PaymentCreatedAt, &updated.PaymentUpdatedAt,
 	); err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: update: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: update: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return PaymentResponseDTO{}, fmt.Errorf("payment: commit: %w", err)
+		return response.PaymentResponseDTO{}, fmt.Errorf("payment: commit: %w", err)
 	}
 
-	if PaymentStatus(req.Status) == PayStatusSuccess {
+	if payenum.PaymentStatus(req.Status) == payenum.PayStatusSuccess {
 		if err := s.regSvc.ConfirmRegistration(ctx, pay.PaymentExamRegistrationID); err != nil {
 			return ToPaymentResponseDTO(updated), fmt.Errorf("payment: confirm reg: %w", err)
 		}
@@ -119,7 +123,7 @@ func (s *Service) ProcessCallback(ctx context.Context, req PaymentCallbackReques
 }
 
 // GetPaymentHistory returns a candidate's payment DTOs.
-func (s *Service) GetPaymentHistory(ctx context.Context, candidateID int64) ([]PaymentResponseDTO, error) {
+func (s *Service) GetPaymentHistory(ctx context.Context, candidateID int64) ([]response.PaymentResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.payment_id, p.payment_exam_registration_id, p.payment_amount,
 		       p.payment_method, p.payment_transaction_ref, p.payment_status,
@@ -133,7 +137,7 @@ func (s *Service) GetPaymentHistory(ctx context.Context, candidateID int64) ([]P
 		return nil, fmt.Errorf("payment: history: %w", err)
 	}
 	defer rows.Close()
-	var list []PaymentResponseDTO
+	var list []response.PaymentResponseDTO
 	for rows.Next() {
 		var e PaymentEntity
 		if err := rows.Scan(

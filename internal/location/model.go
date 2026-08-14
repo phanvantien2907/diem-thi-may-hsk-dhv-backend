@@ -1,16 +1,20 @@
 package location
 
-import "time"
+import (
+	"time"
+
+	"github.com/hskvinh/backend/internal/location/enum"
+)
 
 // ProvinceEntity mirrors the provinces table 1:1.
 type ProvinceEntity struct {
-	ProvinceID         int64
-	ProvinceCode       string
-	ProvinceName       string
-	ProvinceIsDeleted  bool
-	ProvinceDeletedAt  *time.Time
-	ProvinceCreatedAt  time.Time
-	ProvinceUpdatedAt  time.Time
+	ProvinceID        int64
+	ProvinceCode      string
+	ProvinceName      string
+	ProvinceIsDeleted bool
+	ProvinceDeletedAt *time.Time
+	ProvinceCreatedAt time.Time
+	ProvinceUpdatedAt time.Time
 }
 
 // WardEntity mirrors the wards table 1:1.
@@ -19,7 +23,7 @@ type WardEntity struct {
 	WardProvinceID int64
 	WardCode       string
 	WardName       string
-	WardType       WardType
+	WardType       enum.WardType
 	WardIsDeleted  bool
 	WardDeletedAt  *time.Time
 	WardCreatedAt  time.Time

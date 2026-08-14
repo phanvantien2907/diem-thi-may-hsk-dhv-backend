@@ -2,6 +2,7 @@ package auth
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -14,7 +15,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // Register POST /auth/register
 func (h *Handler) Register(c *gin.Context) {
-	var req CreateAccountRequestDTO
+	var req request.CreateAccountRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -33,7 +34,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 // Login POST /auth/login
 func (h *Handler) Login(c *gin.Context) {
-	var req LoginRequestDTO
+	var req request.LoginRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return
@@ -62,7 +63,7 @@ func (h *Handler) Me(c *gin.Context) {
 
 // UpdateMe PUT /me
 func (h *Handler) UpdateMe(c *gin.Context) {
-	var req UpdateAccountRequestDTO
+	var req request.UpdateAccountRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "invalid request body")
 		return

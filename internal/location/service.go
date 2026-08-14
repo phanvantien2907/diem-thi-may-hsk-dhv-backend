@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/hskvinh/backend/internal/location/dto/response"
 )
 
 // Service handles province and ward lookups.
@@ -13,7 +15,7 @@ type Service struct{ db *sql.DB }
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
 // ListProvinces returns all non-deleted provinces as DTOs.
-func (s *Service) ListProvinces(ctx context.Context) ([]ProvinceResponseDTO, error) {
+func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT province_id, province_code, province_name,
 		       province_is_deleted, province_deleted_at, province_created_at, province_updated_at
@@ -24,7 +26,7 @@ func (s *Service) ListProvinces(ctx context.Context) ([]ProvinceResponseDTO, err
 		return nil, fmt.Errorf("location: list provinces: %w", err)
 	}
 	defer rows.Close()
-	var list []ProvinceResponseDTO
+	var list []response.ProvinceResponseDTO
 	for rows.Next() {
 		var e ProvinceEntity
 		if err := rows.Scan(
@@ -40,7 +42,7 @@ func (s *Service) ListProvinces(ctx context.Context) ([]ProvinceResponseDTO, err
 }
 
 // ListWards returns all non-deleted wards for a province as DTOs.
-func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]WardResponseDTO, error) {
+func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.WardResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type,
 		       ward_is_deleted, ward_deleted_at, ward_created_at, ward_updated_at
@@ -51,7 +53,7 @@ func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]WardRespon
 		return nil, fmt.Errorf("location: list wards: %w", err)
 	}
 	defer rows.Close()
-	var list []WardResponseDTO
+	var list []response.WardResponseDTO
 	for rows.Next() {
 		var e WardEntity
 		if err := rows.Scan(
@@ -64,6 +66,3 @@ func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]WardRespon
 	}
 	return list, rows.Err()
 }
-
-// unused sentinel to satisfy db/sql import if needed
-var _ *sql.DB
