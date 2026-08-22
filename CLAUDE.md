@@ -16,13 +16,13 @@ The existing implementation is the source of truth. Rules here describe what the
 | HTTP framework | Gin (`github.com/gin-gonic/gin v1.10.0`) |
 | Database | PostgreSQL 16 |
 | Database driver | `github.com/lib/pq v1.12.3` via `database/sql` |
-| ORM / query builder | None — raw SQL with `database/sql` |
+| ORM / query builder | **None** — raw SQL with `database/sql` |
 | Authentication | JWT (`github.com/golang-jwt/jwt/v5 v5.2.1`), HMAC-SHA256, Bearer token |
 | Password hashing | bcrypt (`golang.org/x/crypto`) |
 | Validation | `github.com/go-playground/validator/v10 v10.22.0` via `utils.Validate.Struct()` |
 | Configuration | `github.com/joho/godotenv v1.5.1` + `os.LookupEnv` |
-| Logging | Standard library `log` package |
-| Migration tool | Plain SQL files applied by `docker-entrypoint-initdb.d` (Postgres init) |
+| Logging | Standard library `log` package only |
+| Migration tool | Plain SQL files applied via PostgreSQL `docker-entrypoint-initdb.d` |
 | Rate limiting | Custom in-memory token bucket (`internal/middleware/ratelimit.go`) |
 | Redis | **Not used** — commented out in `docker-compose.yml` |
 | Dependency injection | Manual constructor wiring in `cmd/api/main.go` |
@@ -39,20 +39,20 @@ cmd/
     └── main.go             # Entry point: wires config, DB, services, handlers, routes, HTTP server
 
 internal/
-├── audit/                  # Cross-cutting audit log domain
+├── audit/                  # Cross-cutting audit log domain (only domain with an exported interface)
 ├── auth/                   # Account management, JWT issuance
-├── candidate/              # Candidate profile and documents
+├── candidate/              # Candidate profile and identity documents
 ├── certificate/            # Certificate issuance and delivery
 ├── config/                 # Configuration loading (config.go)
 ├── database/               # PostgreSQL connection pool (postgres.go)
 ├── exam/                   # Exam types, rooms, sessions, seat generation
 ├── location/               # Provinces and wards (public reference data)
-├── middleware/              # HTTP middleware: auth.go, cors.go, logger.go, ratelimit.go
-├── notification/           # Notifications
-├── payment/                # Payment creation, callback handling
-├── registration/           # Exam registration, seat reservation
-├── result/                 # Exam results, recheck requests
-└── utils/                  # Shared HTTP helpers, validation, password
+├── middleware/              # auth.go, cors.go, logger.go, ratelimit.go
+├── notification/           # System notifications
+├── payment/                # Payment creation and gateway callback handling
+├── registration/           # Exam registration and seat reservation
+├── result/                 # Exam results and recheck requests
+└── utils/                  # Shared HTTP response helpers, validation, password hashing
 
 migrations/
 ├── 001_schema.sql          # Full DB schema (applied first)
@@ -104,12 +104,12 @@ PostgreSQL 16
 
 **Layer responsibilities:**
 
-- **Handler** — bind JSON/params, call `utils.Validate.Struct()`, call service, call `utils.*` response helper, return. Nothing else.
+- **Handler** — bind JSON/params/query, call `utils.Validate.Struct()`, call service, call `utils.*` response helper, return. Nothing else.
 - **Service** — owns all business logic, SQL queries, transaction management, audit logging. Receives and returns domain types and DTOs.
-- **Model** (`*Entity`) — plain structs mirroring DB columns 1:1. No methods beyond what the domain absolutely needs.
+- **Model** (`*Entity`) — plain structs mirroring DB columns 1:1. Some domains also define internal input structs (e.g., `CreateProfileInput`) in `model.go` when the service needs a validated form of the request that differs from the DTO.
 - **Mapper** — pure functions converting `*Entity → ResponseDTO`. No business logic.
 - **DTO** — transport layer only. Request DTOs carry `validate` struct tags. Response DTOs carry `json` tags.
-- **Route** — registers URL paths, HTTP methods, and attaches middleware. No logic.
+- **Route** — registers URL paths, HTTP methods, attaches middleware. No logic.
 - **Middleware** — cross-cutting HTTP concerns only.
 
 **Violations to avoid:**
@@ -117,7 +117,7 @@ PostgreSQL 16
 - Do not put HTTP logic (status codes, `gin.Context`) inside services.
 - Do not bypass middleware for protected routes.
 - Do not put mapping logic inside handlers or services; use `mapper.go`.
-- Do not expose raw `*Entity` structs as API responses; always map to a response DTO.
+- Do not expose raw `*Entity` structs as API responses.
 
 ---
 
@@ -133,11 +133,13 @@ h   := domain.NewHandler(svc)
 domain.RegisterRoutes(api, h, cfg.JWTSecret)
 ```
 
-`auditSvc` is wired once and injected into every service that requires it.
+`auditSvc` is instantiated once and injected into every service that requires it.
 
-`payment.Service` receives `*registration.Service` as a constructor argument because payment confirmation must trigger registration confirmation.
+`payment.Service` receives `*registration.Service` as a constructor argument because a successful payment must trigger registration confirmation.
 
-Do **not** introduce a dependency injection framework. Do **not** use `init()` or global singletons. Configuration and `*sql.DB` are passed explicitly.
+`notification.Service` and `location.Service` receive only `*sql.DB` — they have no audit dependency.
+
+Do **not** introduce a dependency injection framework. Do **not** use `init()` or global singletons.
 
 ---
 
@@ -145,17 +147,18 @@ Do **not** introduce a dependency injection framework. Do **not** use `init()` o
 
 Configuration lives in `internal/config/config.go`. The `Config` struct holds all values.
 
-- `godotenv.Load()` reads `.env` (optional; missing is non-fatal).
-- `mustGetEnv` calls `log.Fatalf` if a required variable is absent. Required variables: `DATABASE_URL`, `JWT_SECRET`.
-- All other variables have defaults.
-- Configuration is validated at startup (parsing durations, integers).
-- `cfg` is passed into constructors. Do not read `os.Getenv` anywhere outside `config.go`.
+- `godotenv.Load()` reads `.env` (optional; missing is non-fatal in production).
+- `mustGetEnv` calls `log.Fatalf` if a required variable is absent.
+- Required variables: `DATABASE_URL`, `JWT_SECRET`.
+- All other variables have safe defaults.
+- Configuration is validated at startup (parsing durations, integers fail fast).
+- `cfg` is passed into constructors. Do **not** read `os.Getenv` anywhere outside `config.go`.
 
 **Add new configuration in this order:**
 1. Add a field to `Config`.
 2. Load it in `Load()` with `getEnv` or `mustGetEnv`.
 3. Add the key to `.env.example` with a safe default.
-4. Inject `cfg` (or the specific field) into the constructor that needs it.
+4. Inject the specific field into the constructor that needs it.
 
 Never hard-code secrets, ports, or connection strings.
 
@@ -165,9 +168,9 @@ Never hard-code secrets, ports, or connection strings.
 
 - `*sql.DB` is passed directly into service constructors. There is no repository layer; services own their SQL.
 - All queries use `$N` positional placeholders (PostgreSQL style).
-- Always call `rows.Close()` with `defer rows.Close()` immediately after `QueryContext`.
-- Always check `rows.Err()` after the scan loop.
-- All `RETURNING` clauses scan into the entity immediately.
+- Always `defer rows.Close()` immediately after a successful `QueryContext`.
+- Always check `rows.Err()` after a scan loop.
+- All `RETURNING` clauses scan into the entity struct immediately.
 
 ### Transactions
 
@@ -189,22 +192,22 @@ if err := tx.Commit(); err != nil {
 
 `defer tx.Rollback()` is always present. Rollback after a successful commit is a no-op in `database/sql`.
 
-Audit logging inside a transaction is done by passing `tx` to `auditSvc.Log(ctx, tx, ...)`. For standalone (non-transactional) audit events, pass `nil`.
+Audit logging inside a transaction passes `tx` to `auditSvc.Log(ctx, tx, ...)`. For standalone events, pass `nil`.
 
 ### Seat reservation and concurrency
 
-`registration.Service.ReserveSeat` uses `SELECT ... FOR UPDATE SKIP LOCKED` to safely acquire the first available seat without races. This is the established pattern for any operation that must atomically claim a shared resource.
+`registration.Service.ReserveSeat` uses `SELECT ... FOR UPDATE SKIP LOCKED` to atomically acquire the first available seat without races. This is the established pattern for claiming a shared resource.
 
-For any new feature touching `exam_seats`, `exam_registrations`, or `payments` that can be triggered by concurrent requests, use `SELECT ... FOR UPDATE` to lock the row before modifying state.
+For any new feature touching `exam_seats`, `exam_registrations`, or `payments` that can be called concurrently, lock the row with `SELECT ... FOR UPDATE` before modifying state.
 
-### Schema conventions (derived from `001_schema.sql`)
+### Schema conventions (from `001_schema.sql`)
 
 - Primary keys: `BIGINT GENERATED ALWAYS AS IDENTITY`
 - All tables implement soft-delete: `*_is_deleted BOOLEAN DEFAULT FALSE`, `*_deleted_at TIMESTAMPTZ`
 - All tables have `*_created_at TIMESTAMPTZ NOT NULL DEFAULT now()` and `*_updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`
-- `updated_at` is maintained by a shared `fn_touch_updated_at()` trigger applied to every table
+- `updated_at` is maintained by the shared `fn_touch_updated_at()` trigger
 - All column names are prefixed with the table name (e.g., `account_username`, `exam_seat_status`)
-- All queries must include `AND <table>_is_deleted = FALSE` when soft-delete is applicable
+- **All queries must include `AND <table>_is_deleted = FALSE`** when soft-delete applies — omitting this leaks deleted records
 - Migrations are plain `.sql` files applied in numeric order
 
 **Never modify the schema directly.** Add a new numbered `.sql` migration file.
@@ -217,22 +220,42 @@ For any new feature touching `exam_seats`, `exam_registrations`, or `payments` t
 
 All API routes are mounted under `/api/v1`.
 
-### Route naming (established patterns)
+### Actual routes (verified against route.go files)
 
-| Domain | Routes |
-|---|---|
-| auth | `POST /auth/register`, `POST /auth/login` |
-| auth (self) | `GET /me`, `PUT /me`, `DELETE /me` |
-| candidate | `GET/POST /candidates`, `GET/PUT/DELETE /candidates/:id` |
-| exam | `GET /exam-types`, `GET /exam-rooms`, `GET /exam-sessions`, `GET /exam-sessions/:id`, `GET /exam-sessions/:id/seats` |
-| exam (admin) | `POST /admin/exam-sessions/:id/seats/generate` |
-| registration | `POST /registrations`, `GET /registrations`, `PUT /registrations/:id/confirm`, `DELETE /registrations/:id` |
-| payment | `POST /payments`, `POST /payments/callback`, `GET /payments` |
-| result | `POST /results`, `GET /results/:registration_id`, `POST /results/:id/recheck`, `PUT /admin/results/recheck/:id` |
-| certificate | `POST /certificates`, `GET /certificates/:registration_id`, `PUT /certificates/:id/delivery` |
-| notification | `GET /notifications` |
-| location | `GET /provinces`, `GET /provinces/:id/wards` |
-| audit (admin) | `GET /admin/audit-logs` |
+| Domain | Method | Path | Auth |
+|---|---|---|---|
+| auth | POST | `/auth/register` | public |
+| auth | POST | `/auth/login` | public |
+| auth | GET | `/me` | JWT |
+| auth | PUT | `/me` | JWT |
+| auth | DELETE | `/me` | JWT |
+| candidate | POST | `/candidates` | JWT |
+| candidate | PUT | `/candidates/:id` | JWT |
+| candidate | POST | `/candidates/:id/documents` | JWT |
+| exam | GET | `/exam-types` | public |
+| exam | GET | `/exam-rooms` | public |
+| exam | GET | `/exam-sessions` | public |
+| exam | GET | `/exam-sessions/:id` | public |
+| exam | GET | `/exam-sessions/:id/seats` | public |
+| exam | POST | `/admin/exam-sessions/:id/seats/generate` | JWT + admin |
+| registration | POST | `/registrations` | JWT |
+| registration | GET | `/registrations?candidate_id=X` | JWT |
+| registration | PUT | `/registrations/:id/confirm` | JWT |
+| registration | DELETE | `/registrations/:id` | JWT |
+| payment | POST | `/payments` | JWT |
+| payment | POST | `/payments/callback` | JWT |
+| payment | GET | `/payments?candidate_id=X` | JWT |
+| result | GET | `/results/:registration_id` | JWT |
+| result | POST | `/rechecks` | JWT |
+| result | POST | `/admin/results` | JWT + admin |
+| certificate | GET | `/certificates/:result_id` | JWT |
+| certificate | POST | `/certificates/:id/deliveries` | JWT |
+| certificate | POST | `/admin/certificates` | JWT + admin |
+| notification | GET | `/notifications` | JWT |
+| notification | PUT | `/notifications/:id/read` | JWT |
+| location | GET | `/provinces` | public |
+| location | GET | `/provinces/:id/wards` | public |
+| audit | GET | `/admin/audit-logs` | JWT + admin |
 
 ### Response envelope
 
@@ -262,11 +285,17 @@ utils.TooManyRequests(c, msg)       // 429
 utils.InternalServerError(c, msg)   // 500
 ```
 
-Never call `c.JSON` directly in handlers. Use only these helpers.
+**Never call `c.JSON` directly in handlers.** Use only these helpers.
 
-### Path parameters
+Middleware-level error responses (e.g., 401 from `JWTAuth`, 429 from `RateLimit`) call `c.AbortWithStatusJSON` directly — this is acceptable for middleware only.
 
-Parse path params in the handler using `strconv.ParseInt` or the local `paramID` helper. Return `utils.BadRequest` immediately if parsing fails.
+### Path and query parameters
+
+Path params: parsed with `strconv.ParseInt` via a local `paramID(c, "key") (int64, bool)` helper defined in each handler file.
+
+Query params: bound with `c.ShouldBindQuery(&q)`.
+
+Return `utils.BadRequest` immediately if a required param is missing or invalid.
 
 ### Validation
 
@@ -282,26 +311,17 @@ if err := utils.Validate.Struct(req); err != nil {
 }
 ```
 
-Always bind first, then validate. `utils.Validate` is a package-level `*validator.Validate` instance.
-
-Request DTOs use standard `validate` struct tags: `required`, `min`, `max`, `email`, `omitempty`.
+Always bind first, then validate. `utils.Validate` is a package-level `*validator.Validate` singleton.
 
 ---
 
 ## 8. Authentication and Authorization
 
-### Mechanism
+### JWT mechanism
 
-JWT, HMAC-SHA256 (`jwt.SigningMethodHS256`). Access token TTL: 24 h. Refresh token TTL: 168 h (7 days).
+JWT, HMAC-SHA256 (`jwt.SigningMethodHS256`). Access token TTL: 24 h. Refresh token TTL: 168 h.
 
-JWT payload contains `sub` (account ID as `int64`), `exp`, `iat`.
-
-The middleware (`internal/middleware/auth.go`) extracts `user_id` and `user_role` into `gin.Context`:
-
-```go
-middleware.ContextKeyUserID   // "user_id"  → int64
-middleware.ContextKeyUserRole // "user_role" → string
-```
+**Important implementation note:** `auth.Service.issueToken` embeds only `sub` (account ID), `exp`, and `iat` in the token payload. It does **not** embed `user_role`. The middleware `Claims` struct has `UserID` and `UserRole` fields, but `UserRole` will deserialize to the zero value (empty string) for tokens issued by the current implementation. The `RequireRole` middleware therefore operates on the role extracted from the token — which is empty unless this is explicitly fixed. Be aware of this when implementing or testing role-based access.
 
 ### Protecting routes
 
@@ -313,37 +333,44 @@ g.Use(middleware.JWTAuth(jwtSecret))
 g.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 ```
 
-Both middlewares are applied at the group level in `route.go`. Public routes receive no middleware.
+Applied at the group level in `route.go`. Public routes receive no middleware.
 
 ### Extracting the authenticated user in handlers
 
+Each handler file defines a local helper. The name varies slightly by domain:
+
 ```go
+// Used in auth, exam:
 func mustAccountID(c *gin.Context) int64 {
+    v, _ := c.Get(middleware.ContextKeyUserID)
+    return v.(int64)
+}
+
+// Used in candidate, result, certificate, notification:
+func accountID(c *gin.Context) int64 {
     v, _ := c.Get(middleware.ContextKeyUserID)
     return v.(int64)
 }
 ```
 
-Every domain handler file that needs the caller's ID must define this helper locally (it is not shared; each domain has its own copy — follow this pattern).
+Both functions are identical in logic. When adding a new handler, follow the naming convention already used in that domain's handler file. Do not create a shared helper for this — the existing pattern is per-domain local functions.
 
 ### Roles
 
-Known roles: `admin`, `candidate` (and any others seeded in `002_seed_data.sql`).
-
-Use `middleware.RequireRole("admin")` for admin-only endpoints. Never trust role values supplied by the client.
+Known roles seeded in `002_seed_data.sql`: `admin`, `candidate`.
 
 ### Security rules
 
 - Never log tokens, passwords, or the JWT secret.
 - Never expose bcrypt hashes or internal error details to clients.
-- Login failures always return generic "invalid credentials" — never distinguish between "user not found" and "wrong password."
-- Account status `locked` prevents login.
+- Login failures always return generic "invalid credentials" — do not distinguish between "user not found" and "wrong password."
+- Account statuses `locked` and `pending` (in addition to absence of the record) prevent normal access.
 
 ---
 
 ## 9. Audit Logging
 
-`audit.Service` is an interface:
+`audit.Service` is an interface — **the only domain that exposes an exported interface**:
 
 ```go
 type Service interface {
@@ -352,49 +379,59 @@ type Service interface {
 }
 ```
 
-This is **the only domain that exposes an interface** — specifically to allow injection into other services and to facilitate test doubles.
+This allows injection into other services and easy test-double substitution.
 
-Every state-changing operation (create, update, delete, payment, login, etc.) must call `auditSvc.Log(...)` **inside the same transaction** if one is open, or with `tx = nil` for standalone events.
+Every state-changing operation must call `auditSvc.Log(...)` **inside the same transaction** if one is open, or with `tx = nil` for standalone events.
 
-Audit calls are intentionally non-fatal: callers use `_ = s.auditSvc.Log(...)` when audit failure should not abort the primary operation.
+Audit calls are intentionally non-fatal: callers use `_ = s.auditSvc.Log(...)`.
 
-Valid `AuditAction` values: `CREATE`, `UPDATE`, `DELETE`, `SOFT_DELETE`, `RESTORE`, `LOGIN`, `LOGOUT`, `PASSWORD_CHANGE`, `PAYMENT`, `REFUND`, `EXPORT`, `APPROVE`, `REJECT`, `RECHECK`.
+Valid `AuditAction` values (from `internal/audit/enum`):
 
-Valid `AuditEntity` values: `accounts`, `candidates`, `candidate_documents`, `exam_rooms`, `exam_sessions`, `exam_seats`, `exam_registrations`, `payments`, `exam_results`, `exam_recheck_requests`, `certificates`, `certificate_deliveries`.
+```
+CREATE, UPDATE, DELETE, SOFT_DELETE, RESTORE,
+LOGIN, LOGOUT, PASSWORD_CHANGE,
+PAYMENT, REFUND,
+EXPORT, APPROVE, REJECT, RECHECK
+```
 
-Do not use raw strings. Use the typed constants from `internal/audit/enum`.
+Valid `AuditEntity` values (from `internal/audit/enum`):
+
+```
+accounts, candidates, candidate_documents,
+exam_rooms, exam_sessions, exam_seats,
+exam_registrations, payments,
+exam_results, exam_recheck_requests,
+certificates, certificate_deliveries
+```
+
+**Never use raw strings.** Use the typed constants from `internal/audit/enum`.
 
 ---
 
 ## 10. Domain Enums
 
-Each domain defines its own typed string enum in `<domain>/enum/`:
+Each domain defines its own typed string enum in `<domain>/enum/`. Every enum type provides `Valid()` and `String()`. Validate using `.Valid()` at the service boundary before persisting.
 
-```go
-type SomeStatus string
+Complete enum reference:
 
-const (
-    StatusFoo SomeStatus = "foo"
-    StatusBar SomeStatus = "bar"
-)
-
-func (s SomeStatus) Valid() bool { ... }
-func (s SomeStatus) String() string { return string(s) }
-```
-
-Every enum type provides `Valid()` and `String()`. Validate enum values at the service boundary using `.Valid()` before persisting. Never store arbitrary client-supplied strings as enum values.
-
-Known enums:
-
-| Domain | Enum type | Values |
+| Domain | Type | Values |
 |---|---|---|
-| auth | `AccountStatus` | `active`, `locked` |
+| auth | `AccountStatus` | `active`, `locked`, `pending` |
+| candidate | `CandidateGender` | `male`, `female`, `other` |
+| candidate | `DocumentType` | `cccd`, `passport` |
+| candidate | `DocumentVerificationStatus` | `pending`, `verified`, `rejected` |
+| exam | `ExamShift` | `morning`, `afternoon`, `evening` |
+| exam | `ExamSessionStatus` | `open`, `closed`, `cancelled` |
+| exam | `ExamSeatStatus` | `available`, `held`, `booked` |
 | registration | `ExamRegistrationStatus` | `pending_payment`, `confirmed`, `cancelled` |
 | payment | `PaymentMethod` | `vnpay`, `momo`, `zalopay`, `bank_transfer`, `cash` |
 | payment | `PaymentStatus` | `pending`, `success`, `failed`, `refunded` |
-| exam | `ExamSeatStatus` | `available`, `held`, `booked` |
-
-Inspect the per-domain `enum/` directory for other enum types in `exam`, `result`, and `certificate`.
+| result | `ExamResultStatus` | `pass`, `fail` |
+| result | `RecheckStatus` | `submitted`, `in_review`, `completed`, `rejected` |
+| certificate | `CertificateStatus` | `issued`, `revoked` |
+| certificate | `DeliveryStatus` | `requested`, `shipped`, `delivered`, `failed` |
+| notification | `NotificationChannel` | `email`, `sms`, `zalo`, `push` |
+| notification | `NotificationStatus` | `pending`, `sent`, `failed` |
 
 ---
 
@@ -404,10 +441,12 @@ Entity structs live in `<domain>/model.go`. They mirror database tables 1:1:
 
 - Named `<TableName>Entity` (e.g., `AccountEntity`, `ExamSeatEntity`).
 - All fields prefixed with the table name in PascalCase (e.g., `AccountEmail`, `ExamSeatStatus`).
-- Nullable columns use pointer types (`*string`, `*time.Time`).
+- Nullable columns use pointer types (`*string`, `*time.Time`, `*int64`).
 - Soft-delete fields (`IsDeleted bool`, `DeletedAt *time.Time`) are included on every entity.
 
-Do not add methods to entity structs. Do not use entity structs as API response types.
+Some domains also define **internal input structs** in `model.go` (e.g., `CreateProfileInput`, `UpdateProfileInput`, `UploadDocumentInput` in the candidate domain). These carry validated, parsed data from request DTOs and are used as service method parameters when the service needs a form that differs from the raw DTO.
+
+Do not add methods to entity structs. Do not expose entity structs as API responses.
 
 ---
 
@@ -429,7 +468,7 @@ Do not reuse one DTO for unrelated operations. Do not expose entity structs as A
 
 ## 13. Mappers
 
-Every domain has a `mapper.go` containing pure functions:
+Every domain has a `mapper.go` with pure mapping functions:
 
 ```go
 func ToSomeResponseDTO(e SomeEntity) response.SomeResponseDTO {
@@ -450,16 +489,16 @@ func ToSomeResponseDTO(e SomeEntity) response.SomeResponseDTO {
 
 | Middleware | File | Behaviour |
 |---|---|---|
-| `CORS()` | `cors.go` | Permissive CORS headers; short-circuits `OPTIONS`. |
-| `Logger()` | `logger.go` | Custom timestamp/IP/method/path/status/latency format. |
+| `CORS()` | `cors.go` | Permissive CORS headers; short-circuits `OPTIONS` with 204. |
+| `Logger()` | `logger.go` | Custom format: `timestamp \| IP \| METHOD path \| status \| latency`. |
 | `gin.Recovery()` | Gin built-in | Recovers panics, returns 500. |
-| `limiter.RateLimit()` | `ratelimit.go` | Per-IP token bucket (RPS + burst). Responds 429. Cleanup goroutine runs every 5 min. |
-| `JWTAuth(secret)` | `auth.go` | Validates Bearer token; sets `user_id` and `user_role` on context. |
-| `RequireRole(roles...)` | `auth.go` | Enforces role; must follow `JWTAuth`. |
+| `limiter.RateLimit()` | `ratelimit.go` | Per-IP token bucket. Responds 429. Background cleanup every 5 min. |
+| `JWTAuth(secret)` | `auth.go` | Validates Bearer token; sets `user_id` (int64) and `user_role` (string) on Gin context. |
+| `RequireRole(roles...)` | `auth.go` | Enforces role membership; must follow `JWTAuth`. |
 
-Global middleware order (applied in `main.go`): `CORS → Logger → Recovery → RateLimit`.
+Global middleware order (in `main.go`): `CORS → Logger → Recovery → RateLimit`.
 
-Do not reorder global middleware without understanding the security implications.
+Do not reorder global middleware without understanding the security and logging implications.
 
 ---
 
@@ -469,7 +508,7 @@ Do not reorder global middleware without understanding the security implications
 
 Wrap errors with `fmt.Errorf("domain: operation: %w", err)`.
 
-Use `errors.Is(err, sql.ErrNoRows)` to detect not-found, then return a plain `errors.New("entity not found")` for the handler to surface.
+Detect not-found with `errors.Is(err, sql.ErrNoRows)`, then return a plain `errors.New("entity not found")`:
 
 ```go
 if errors.Is(err, sql.ErrNoRows) {
@@ -481,30 +520,25 @@ if errors.Is(err, sql.ErrNoRows) {
 
 ### In handlers
 
-Map service errors to the appropriate `utils.*` response helper:
+Map service errors to the appropriate `utils.*` helper. The actual mapping used per domain:
 
-```go
-if err != nil {
-    utils.NotFound(c, err.Error())   // or Conflict, BadRequest, etc.
-    return
-}
-```
+| Domain | Error condition | HTTP helper used |
+|---|---|---|
+| auth | business/not found | `utils.NotFound` or `utils.Conflict` |
+| registration | conflicts (dup, no seats) | `utils.Conflict` |
+| registration | infrastructure | `utils.InternalServerError` |
+| payment | invalid method/status | `utils.BadRequest` |
+| payment | callback conflicts | `utils.Conflict` |
+| result | not found | `utils.NotFound` |
+| result | create/recheck | `utils.InternalServerError` |
+| certificate | not found | `utils.NotFound` |
+| certificate | create | `utils.InternalServerError` |
+| exam | list failures | `utils.InternalServerError` |
+| notification | list failures | `utils.InternalServerError` |
 
-Do not call `utils.InternalServerError` with raw database error messages. Use a generic message: `"failed to fetch exam types"`.
+Do not pass raw database error messages to `utils.InternalServerError`. Use a generic message like `"failed to fetch registrations"`.
 
 Never panic in request handling.
-
-### Error classification
-
-| Condition | HTTP helper |
-|---|---|
-| JSON binding failure | `BadRequest` |
-| Validation failure | `BadRequest` |
-| Not found (ErrNoRows) | `NotFound` |
-| Business rule violation | `Conflict` |
-| Invalid credentials | `Unauthorized` |
-| Insufficient role | `Forbidden` |
-| Database/infrastructure error | `InternalServerError` (generic msg) |
 
 ---
 
@@ -512,7 +546,7 @@ Never panic in request handling.
 
 - Every DB call receives `ctx` from `c.Request.Context()`.
 - Services accept `ctx context.Context` as first parameter.
-- Pass `ctx` to every `QueryContext`, `QueryRowContext`, `ExecContext`, `BeginTx` call.
+- Pass `ctx` to every `QueryContext`, `QueryRowContext`, `ExecContext`, `BeginTx`.
 - Do not create `context.Background()` inside request handlers or services.
 - Do not store context in structs.
 
@@ -522,7 +556,7 @@ Never panic in request handling.
 
 ### Seat reservation
 
-The only safe way to reserve a seat is `SELECT ... FOR UPDATE SKIP LOCKED`:
+The only safe way to reserve a seat under concurrent load is `SELECT ... FOR UPDATE SKIP LOCKED`:
 
 ```sql
 SELECT exam_seat_id FROM exam_seats
@@ -533,88 +567,93 @@ ORDER BY exam_seat_number ASC LIMIT 1
 FOR UPDATE SKIP LOCKED
 ```
 
-This is done inside a transaction. Do not implement seat reservation with application-level checks only.
+This is inside a transaction. Do not implement seat reservation with application-level checks only.
 
 ### Payment callbacks
 
-`ProcessCallback` locks the payment row with `SELECT ... FOR UPDATE` before updating status. This prevents duplicate callback processing. Only `pending` payments can transition.
+`ProcessCallback` locks the payment row with `SELECT ... FOR UPDATE` before updating status, preventing duplicate processing. Only `pending` payments may transition.
 
 ### Held seat expiry
 
-`AutoReleaseHeldSeats` releases held seats whose `exam_seat_held_until < NOW()` in a single atomic `UPDATE`. Seats are held for 15 minutes after reservation.
+`AutoReleaseHeldSeats` reclaims seats with `exam_seat_held_until < NOW()` in a single atomic `UPDATE`. Seats are held for 15 minutes.
 
-### Rate limiter goroutine
+### In-memory rate limiter
 
-The `RateLimiter` cleanup goroutine is started in `NewRateLimiter` and runs for the lifetime of the process. This is intentional. It removes stale per-IP entries every 5 minutes.
+`RateLimiter` is a `sync.Mutex`-protected token bucket keyed by client IP. It is process-local (not distributed). A background cleanup goroutine removes stale entries every 5 minutes — started in `NewRateLimiter`, runs for the process lifetime.
 
 ### Rules for new goroutines
 
-Introduce a goroutine only when it provides concrete value. For every goroutine:
-
-1. Define its owner, lifetime, and stop condition.
-2. Handle errors explicitly.
-3. Do not use a request `context.Context` in a goroutine that outlives the request.
+Introduce a goroutine only when it provides concrete value. For every goroutine define:
+1. Owner and lifetime.
+2. Stop condition.
+3. Error handling.
+4. Whether it may outlive a request context (if yes, do not use `c.Request.Context()`).
 
 ---
 
-## 18. Payment State Machine
+## 18. State Machines
 
-Valid payment status transitions:
+### Registration
 
 ```
-pending → success
+(new) → pending_payment
+pending_payment → confirmed   (via payment success callback)
+pending_payment → cancelled
+confirmed       → (terminal)
+cancelled       → (terminal)
+```
+
+A cancelled registration cannot be confirmed. Cancellation frees the seat to `available`.
+
+### Payment
+
+```
+pending → success   (triggers ConfirmRegistration)
 pending → failed
 pending → refunded
 ```
 
-No other transitions are permitted. The service enforces `pay.PaymentStatus != payenum.PayStatusPending` before accepting a callback.
+No other transitions. The service rejects any callback for a non-`pending` payment.
 
-When a payment transitions to `success`, `payment.Service.ProcessCallback` calls `registration.Service.ConfirmRegistration`, which moves the registration to `confirmed` and the seat to `booked`.
+### Seat
 
-Do not allow arbitrary client-supplied status transitions.
+```
+available → held    (15-minute window, during reservation)
+held      → booked  (on payment success / registration confirm)
+held      → available (on cancellation or expiry)
+booked    → available (on registration cancellation)
+```
 
 ---
 
-## 19. Registration State Machine
+## 19. Logging
 
-```
-(created) → pending_payment → confirmed
-                            → cancelled
-pending_payment             → cancelled
-```
-
-A `cancelled` registration cannot be confirmed. Cancellation releases the held seat back to `available`.
-
----
-
-## 20. Logging
-
-The project uses the Go standard library `log` package only:
+The project uses the standard library `log` package only:
 
 ```go
 log.Printf("[domain] message: %v", err)
-log.Println("[main] listening on :8080")
+log.Println("[main] server started")
 log.Fatalf("[main] fatal: %v", err)
 ```
 
 - Prefix log messages with `[package]` for traceability.
-- Use `log.Fatalf` only at startup for unrecoverable configuration or DB failures.
-- Do not log passwords, JWT tokens, or sensitive payment information.
-- Do not introduce a third-party structured logger unless the project explicitly adopts one.
-- The HTTP middleware (`logger.go`) logs each request's timestamp, IP, method, path, status, and latency automatically.
+- Use `log.Fatalf` only at startup for unrecoverable failures.
+- Never log passwords, tokens, or sensitive payment data.
+- Do not introduce a structured logging library unless the project explicitly adopts one.
+- HTTP request logging is automatic via `middleware.Logger()`.
 
 ---
 
-## 21. Validation
+## 20. Validation
 
-Two validation mechanisms exist — use the correct one for the context:
+Two mechanisms exist — use the appropriate one:
 
 **Struct-tag validation** (preferred for request DTOs):
 ```go
-utils.Validate.Struct(req)   // uses go-playground/validator/v10
+utils.Validate.Struct(req)   // go-playground/validator/v10
 ```
 
-**Imperative validation** (`utils.Validator`, for complex or conditional logic):
+**Imperative validation** (`utils.Validator`, for complex/conditional logic):
 ```go
 v := utils.NewValidator()
 v.Required("field", value).MinLen("field", value, 3)
@@ -624,73 +663,80 @@ if v.HasErrors() {
 }
 ```
 
-Enum validation happens inside the service using `enum.Valid()`.
+**Enum validation** at the service boundary:
+```go
+if !payenum.PaymentMethod(req.Method).Valid() {
+    return ..., fmt.Errorf("invalid payment method: %s", req.Method)
+}
+```
 
 Do not duplicate validation between the handler and the service for the same input.
 
 ---
 
-## 22. Security
+## 21. Security
 
 - Never hard-code secrets. Use environment variables.
 - Never commit a real `.env` file. `.env.example` only.
 - `mustGetEnv` calls `log.Fatalf` at startup if `DATABASE_URL` or `JWT_SECRET` are absent.
-- Passwords are hashed with bcrypt at `bcrypt.DefaultCost`. Never store or log plain-text passwords.
-- SQL injection: all queries use positional `$N` parameters. String interpolation into SQL is forbidden.
-- Soft-delete: always filter `AND *_is_deleted = FALSE` in queries — omitting this leaks deleted records.
-- CORS: currently permissive (`*`). In production, restrict `AllowOrigins` to the frontend domain.
-- Rate limiting: global per-IP token bucket at 10 RPS / 20 burst. Do not remove without a replacement.
+- Passwords hashed with bcrypt at `bcrypt.DefaultCost`. Never store or log plain text.
+- All queries use positional `$N` parameters. String interpolation into SQL is **forbidden**.
+- Always filter `AND *_is_deleted = FALSE` — omitting this leaks soft-deleted records.
+- CORS: currently permissive (`*`). Restrict `AllowOrigins` in production.
+- Rate limiting: global per-IP token bucket (10 RPS / 20 burst by default). Do not remove without a replacement.
 
 ---
 
-## 23. Adding a New Domain
+## 22. Adding a New Domain
 
-Follow this checklist:
+Checklist:
 
 1. Create `internal/<domain>/` directory.
 2. Create `model.go` with `*Entity` structs mirroring the DB tables.
 3. Create `dto/request/<domain>_request.go` and `dto/response/<domain>_response.go`.
 4. Create `enum/<domain>_enum.go` if the domain has typed string states.
-5. Create `service.go` with `Service` struct, `NewService(db *sql.DB, auditSvc audit.Service, ...) *Service`, and business methods.
-6. Create `mapper.go` with `To<Domain>ResponseDTO(e Entity) ResponseDTO` functions.
-7. Create `handler.go` with `Handler` struct, `NewHandler(svc *Service) *Handler`, and HTTP method functions.
-8. Create `route.go` with `RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string)` applying appropriate middleware.
+5. Create `service.go`: `Service` struct, `NewService(db *sql.DB, auditSvc audit.Service) *Service`, business methods.
+6. Create `mapper.go`: `To<Domain>ResponseDTO(e Entity) ResponseDTO` functions.
+7. Create `handler.go`: `Handler` struct, `NewHandler(svc *Service) *Handler`, HTTP method functions.
+8. Create `route.go`: `RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string)` with appropriate middleware.
 9. Wire in `cmd/api/main.go`: service → handler → RegisterRoutes.
 10. Add migration SQL if new tables are required.
 
+If the new domain does not need audit logging (like `location` or `notification`), omit `auditSvc` from the constructor — follow the pattern of those domains.
+
 ---
 
-## 24. Adding a New Endpoint to an Existing Domain
+## 23. Adding a New Endpoint to an Existing Domain
 
-1. Add the request/response DTO if new fields are required.
+1. Add request/response DTOs if new fields are needed.
 2. Add the business method to `service.go`.
-3. Add the mapper function to `mapper.go` if a new entity is returned.
+3. Add the mapper function to `mapper.go` if a new entity type is returned.
 4. Add the handler method to `handler.go`.
 5. Register the route in `route.go` with the correct HTTP method and middleware.
 6. Audit-log the action inside the service transaction.
 
 ---
 
-## 25. Database Migrations
+## 24. Database Migrations
 
-Migrations are plain SQL files under `migrations/`. Applied at container startup by PostgreSQL `docker-entrypoint-initdb.d` (alphabetical order).
+Migrations are plain SQL files under `migrations/`. Applied at container startup via PostgreSQL `docker-entrypoint-initdb.d` in alphabetical order.
 
 - `001_schema.sql` — full schema, all tables, indexes, triggers.
-- `002_seed_data.sql` — roles, exam types, provinces, wards, other reference data.
+- `002_seed_data.sql` — roles, exam types, provinces, wards, reference data.
 
 To add a schema change:
 1. Create `migrations/003_<description>.sql`.
-2. Write idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE IF NOT EXISTS`).
-3. Do **not** modify `001_schema.sql` or `002_seed_data.sql` once they have been applied to production.
+2. Write idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`).
+3. **Never modify `001_schema.sql` or `002_seed_data.sql`** after they have been applied to production.
 
-Reset local DB:
+Reset local database:
 ```bash
 docker compose down -v && docker compose up -d
 ```
 
 ---
 
-## 26. Verification Commands
+## 25. Verification Commands
 
 Run before considering any change complete:
 
@@ -702,78 +748,77 @@ go test ./...
 go test -race ./...
 ```
 
-The project currently has no test files. When writing tests, place them in the same package (`package <domain>`) using the standard `testing` package. Prefer table-driven tests.
+**The project currently has no test files.** When writing tests, place them in the same package (`package <domain>`) using the standard `testing` package. Table-driven tests are preferred when the case set is meaningful.
 
 ---
 
-## 27. Docker
+## 26. Docker
 
 ```bash
-# Start all services
+# Start all services (PostgreSQL 16, API, Adminer)
 docker compose up -d
 
 # Rebuild API after code changes
 docker compose up -d --build api
 
-# View API logs
+# Tail API logs
 docker compose logs -f api
 
-# Reset database (removes all data)
+# Reset database (destroys all data)
 docker compose down -v
 ```
 
-Build command: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api`
+Build: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api`
 
-Runtime: `alpine:latest` as non-root `appuser`.
+Runtime: `alpine:latest`, non-root `appuser`.
 
 ---
 
-## 28. Feature Implementation Workflow
+## 27. Feature Implementation Workflow
 
 For any non-trivial change:
 
 1. Read the affected domain's `service.go`, `model.go`, `handler.go`, `route.go`.
 2. Identify the business rules and state transitions involved.
-3. Identify any concurrent-access risks (registration, payment, seat capacity).
+3. Identify concurrent-access risks (registration, payment, seat capacity).
 4. Implement the smallest correct change.
 5. Add audit logging for state-changing operations.
 6. Run `go vet ./...` and `go build ./...`.
 7. Run `go test -race ./...` when tests are present.
 
-Do not start writing code for operations touching `registration`, `payment`, `exam_seats`, or `exam_results` without first tracing the transaction boundaries and understanding the state machine.
+Do not write code for operations touching `registration`, `payment`, `exam_seats`, or `exam_results` without first tracing the transaction boundaries and understanding the state machine.
 
 ---
 
-## 29. What Does NOT Exist in This Project
+## 28. What Does NOT Exist in This Project
 
 Do not invent or introduce the following unless explicitly required by a task:
 
 - Redis or any caching layer
-- Repository interfaces (there is no repository pattern; services own SQL)
+- A repository interface layer (services own SQL directly)
 - Event bus or message queue
 - gRPC
 - Structured/JSON logging library (zerolog, zap, slog)
-- Dependency injection container
+- Dependency injection container (Wire, fx, dig)
 - `common/`, `helpers/`, `base/`, `managers/` packages
-- A separate domain model distinct from the entity
-- Clean Architecture layering beyond what is documented here
 - Any ORM or query builder
+- Clean Architecture layering beyond what is documented here
 
 The existing code is intentionally simple. Preserve that simplicity.
 
 ---
 
-## 30. Code Review Priorities
+## 29. Code Review Priorities
 
 When reviewing any change, check in this order:
 
 1. **Correctness** — does it do the right thing?
 2. **Security** — auth, authz, SQL injection, credential exposure?
 3. **Data consistency** — transactions, state machines, concurrent access?
-4. **Error handling** — are errors handled, wrapped, mapped correctly?
+4. **Error handling** — are errors handled, wrapped, and mapped correctly?
 5. **Audit logging** — is the action logged inside the transaction?
 6. **Response envelope** — does the handler use `utils.*` helpers?
-7. **Soft-delete** — are queries filtering `_is_deleted = FALSE`?
+7. **Soft-delete** — are all queries filtering `_is_deleted = FALSE`?
 8. **Enum validation** — are enum values validated before persistence?
 9. **Architecture boundaries** — no business logic in handlers, no HTTP in services?
 10. **Tests** — are observable behaviors verified?
