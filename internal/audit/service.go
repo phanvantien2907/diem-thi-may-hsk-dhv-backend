@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"strings"
 
 	"github.com/hskvinh/backend/internal/audit/dto/request"
@@ -30,6 +29,10 @@ type auditService struct{ db *sql.DB }
 // NewService returns a production audit.Service backed by *sql.DB.
 func NewService(db *sql.DB) Service { return &auditService{db: db} }
 
+type dbExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 // ── Log ───────────────────────────────────────────────────────────────────────
 
 func (s *auditService) Log(ctx context.Context, tx *sql.Tx, req request.CreateAuditLogRequestDTO) error {
@@ -46,18 +49,17 @@ func (s *auditService) Log(ctx context.Context, tx *sql.Tx, req request.CreateAu
 		INSERT INTO audit_logs
 		       (audit_log_actor_account_id, audit_log_action, audit_log_entity_table,
 		        audit_log_entity_id, audit_log_old_value, audit_log_new_value, audit_log_created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())`
+		VALUES ($1, $2, $3, $4, $5, $6, NOW() AT TIME ZONE 'UTC')`
 
-	var err error
+	var execer dbExecer = s.db
 	if tx != nil {
-		_, err = tx.ExecContext(ctx, q,
-			req.ActorAccountID, req.Action, req.EntityTable,
-			req.EntityID, req.OldValue, req.NewValue)
-	} else {
-		_, err = s.db.ExecContext(ctx, q,
-			req.ActorAccountID, req.Action, req.EntityTable,
-			req.EntityID, req.OldValue, req.NewValue)
+		execer = tx
 	}
+
+	_, err := execer.ExecContext(ctx, q,
+		req.ActorAccountID, req.Action, req.EntityTable,
+		req.EntityID, req.OldValue, req.NewValue)
+
 	if err != nil {
 		return fmt.Errorf("audit: log: %w", err)
 	}
@@ -113,13 +115,22 @@ func (s *auditService) List(ctx context.Context, req request.ListAuditLogRequest
 
 	// Count total
 	var total int64
-	countArgs := make([]any, len(args))
-	copy(countArgs, args)
-	if err := s.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM audit_logs %s`, where),
-		countArgs...,
-	).Scan(&total); err != nil {
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM audit_logs %s`, where)
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return response.AuditLogListResponseDTO{}, fmt.Errorf("audit: count: %w", err)
+	}
+
+	// Return empty list if total is 0
+	if total == 0 {
+		return response.AuditLogListResponseDTO{
+			Items: make([]response.AuditLogResponseDTO, 0),
+			Meta: utils.Meta{
+				Page:       req.Page,
+				PerPage:    req.Limit,
+				TotalItems: 0,
+				TotalPages: 0,
+			},
+		}, nil
 	}
 
 	// Fetch page
@@ -140,7 +151,8 @@ func (s *auditService) List(ctx context.Context, req request.ListAuditLogRequest
 	}
 	defer rows.Close()
 
-	items := make([]response.AuditLogResponseDTO, 0)
+	// Pre-allocate slice with known capacity leak memory
+	items := make([]response.AuditLogResponseDTO, 0, req.Limit)
 	for rows.Next() {
 		var e AuditLogEntity
 		if err := rows.Scan(
@@ -156,7 +168,7 @@ func (s *auditService) List(ctx context.Context, req request.ListAuditLogRequest
 		return response.AuditLogListResponseDTO{}, fmt.Errorf("audit: rows: %w", err)
 	}
 
-	totalPages := int(math.Ceil(float64(total) / float64(req.Limit)))
+	totalPages := (int(total) + req.Limit - 1) / req.Limit
 	return response.AuditLogListResponseDTO{
 		Items: items,
 		Meta: utils.Meta{
