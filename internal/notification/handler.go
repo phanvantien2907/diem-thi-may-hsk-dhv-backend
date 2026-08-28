@@ -1,8 +1,6 @@
 package notification
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
@@ -27,7 +25,7 @@ func (h *Handler) GetMyNotifications(c *gin.Context) {
 
 // MarkRead PUT /notifications/:id/read
 func (h *Handler) MarkRead(c *gin.Context) {
-	nid, ok := paramID(c, "id")
+	nid, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid notification id")
 		return
@@ -42,9 +40,4 @@ func (h *Handler) MarkRead(c *gin.Context) {
 func accountID(c *gin.Context) int64 {
 	v, _ := c.Get(middleware.ContextKeyUserID)
 	return v.(int64)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
 }

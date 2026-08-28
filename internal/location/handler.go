@@ -1,8 +1,6 @@
 package location
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -25,7 +23,7 @@ func (h *Handler) ListProvinces(c *gin.Context) {
 
 // ListWards GET /provinces/:id/wards
 func (h *Handler) ListWards(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid province id")
 		return
@@ -36,9 +34,4 @@ func (h *Handler) ListWards(c *gin.Context) {
 		return
 	}
 	utils.OK(c, list)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
 }

@@ -1,8 +1,6 @@
 package registration
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
@@ -35,7 +33,7 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 
 // ConfirmRegistration PUT /registrations/:id/confirm
 func (h *Handler) ConfirmRegistration(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid registration id")
 		return
@@ -49,7 +47,7 @@ func (h *Handler) ConfirmRegistration(c *gin.Context) {
 
 // CancelRegistration DELETE /registrations/:id
 func (h *Handler) CancelRegistration(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid registration id")
 		return
@@ -77,9 +75,4 @@ func (h *Handler) GetMyRegistrations(c *gin.Context) {
 		return
 	}
 	utils.OK(c, list)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
 }

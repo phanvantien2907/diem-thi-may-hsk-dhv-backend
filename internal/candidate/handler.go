@@ -1,11 +1,8 @@
 package candidate
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
-	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -26,7 +23,7 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	cand, err := h.svc.CreateProfile(c.Request.Context(), req, accountID(c))
+	cand, err := h.svc.CreateProfile(c.Request.Context(), req, utils.MustAccountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -36,7 +33,7 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 
 // UpdateProfile PUT /candidates/:id
 func (h *Handler) UpdateProfile(c *gin.Context) {
-	cid, ok := paramID(c, "id")
+	cid, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid candidate id")
 		return
@@ -60,7 +57,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 
 // UploadDocument POST /candidates/:id/documents
 func (h *Handler) UploadDocument(c *gin.Context) {
-	cid, ok := paramID(c, "id")
+	cid, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid candidate id")
 		return
@@ -80,14 +77,4 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 		return
 	}
 	utils.Created(c, doc)
-}
-
-func accountID(c *gin.Context) int64 {
-	v, _ := c.Get(middleware.ContextKeyUserID)
-	return v.(int64)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
 }

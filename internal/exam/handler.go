@@ -1,11 +1,8 @@
 package exam
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
-	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -47,7 +44,7 @@ func (h *Handler) ListExamSessions(c *gin.Context) {
 
 // GetExamSession GET /exam-sessions/:id
 func (h *Handler) GetExamSession(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid session id")
 		return
@@ -62,7 +59,7 @@ func (h *Handler) GetExamSession(c *gin.Context) {
 
 // ListExamSeats GET /exam-sessions/:id/seats
 func (h *Handler) ListExamSeats(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid session id")
 		return
@@ -77,26 +74,16 @@ func (h *Handler) ListExamSeats(c *gin.Context) {
 
 // GenerateSeats POST /admin/exam-sessions/:id/seats/generate
 func (h *Handler) GenerateSeats(c *gin.Context) {
-	id, ok := paramID(c, "id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid session id")
 		return
 	}
-	actorID := mustAccountID(c)
+	actorID := utils.MustAccountID(c)
 	created, err := h.svc.GenerateExamSeats(c.Request.Context(), id, actorID)
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
 	}
 	utils.Created(c, response.GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
-}
-
-func mustAccountID(c *gin.Context) int64 {
-	v, _ := c.Get(middleware.ContextKeyUserID)
-	return v.(int64)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
 }

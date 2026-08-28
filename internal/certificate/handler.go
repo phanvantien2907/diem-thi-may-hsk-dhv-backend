@@ -1,11 +1,8 @@
 package certificate
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/certificate/dto/request"
-	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
@@ -17,7 +14,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // GetCertificate GET /certificates/:result_id
 func (h *Handler) GetCertificate(c *gin.Context) {
-	id, ok := paramID(c, "result_id")
+	id, ok := utils.ParamID(c, "result_id")
 	if !ok {
 		utils.BadRequest(c, "invalid result_id")
 		return
@@ -41,7 +38,7 @@ func (h *Handler) IssueCertificate(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	cert, err := h.svc.CreateCertificate(c.Request.Context(), req, accountID(c))
+	cert, err := h.svc.CreateCertificate(c.Request.Context(), req, utils.MustAccountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
@@ -51,7 +48,7 @@ func (h *Handler) IssueCertificate(c *gin.Context) {
 
 // CreateDelivery POST /certificates/:id/deliveries
 func (h *Handler) CreateDelivery(c *gin.Context) {
-	certID, ok := paramID(c, "id")
+	certID, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "invalid certificate id")
 		return
@@ -65,20 +62,10 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	d, err := h.svc.CreateDelivery(c.Request.Context(), certID, req, accountID(c))
+	d, err := h.svc.CreateDelivery(c.Request.Context(), certID, req, utils.MustAccountID(c))
 	if err != nil {
 		utils.InternalServerError(c, err.Error())
 		return
 	}
 	utils.Created(c, d)
-}
-
-func paramID(c *gin.Context, key string) (int64, bool) {
-	n, err := strconv.ParseInt(c.Param(key), 10, 64)
-	return n, err == nil && n > 0
-}
-
-func accountID(c *gin.Context) int64 {
-	v, _ := c.Get(middleware.ContextKeyUserID)
-	return v.(int64)
 }
