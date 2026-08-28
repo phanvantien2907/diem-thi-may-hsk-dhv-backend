@@ -14,6 +14,7 @@ import (
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/auth/dto/response"
+	"github.com/hskvinh/backend/internal/auth/entities"
 	"github.com/hskvinh/backend/internal/auth/enum"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -34,14 +35,14 @@ func NewService(db *sql.DB, auditSvc audit.Service, jwtSecret string, accessTTL,
 
 // Register creates a new account and returns its public DTO.
 func (s *Service) Register(ctx context.Context, req request.CreateAccountRequestDTO) (response.AccountResponseDTO, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+
+	hash, err := utils.HashPassword(req.Password)
 	if err != nil {
-		return response.AccountResponseDTO{}, fmt.Errorf("auth: begin tx: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
 
 	var roleID int64
-	if err := tx.QueryRowContext(ctx,
+	if err := s.db.QueryRowContext(ctx,
 		`SELECT role_id FROM roles WHERE role_code = $1 AND role_is_deleted = FALSE`,
 		req.RoleCode,
 	).Scan(&roleID); errors.Is(err, sql.ErrNoRows) {
@@ -50,12 +51,13 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
 	}
 
-	hash, err := utils.HashPassword(req.Password)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return response.AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: begin tx: %w", err)
 	}
+	defer tx.Rollback() //nolint:errcheck
 
-	var e AccountEntity
+	var e entities.AccountEntity
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO accounts
 		       (account_role_id, account_username, account_password_hash,
@@ -76,7 +78,7 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: create account: %w", err)
 	}
 
-	// Audit: record account creation inside the same transaction.
+	// write log
 	newVal, _ := json.Marshal(map[string]any{"username": e.AccountUsername, "email": e.AccountEmail, "role_id": e.AccountRoleID})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &e.AccountID,
@@ -86,6 +88,7 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 		NewValue:       newVal,
 	})
 
+	// commit transaction
 	if err := tx.Commit(); err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: commit: %w", err)
 	}
@@ -94,20 +97,14 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 
 // Login validates credentials and issues a JWT pair.
 func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (response.TokenPairResponseDTO, error) {
-	var e AccountEntity
+	var e entities.AccountEntity
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT account_id, account_role_id, account_username, account_password_hash,
-		       account_email, account_phone, account_status,
-		       account_last_login_at, account_is_deleted, account_deleted_at,
-		       account_created_at, account_updated_at
+		SELECT account_id, account_password_hash, account_status
 		FROM accounts
 		WHERE account_username = $1 AND account_is_deleted = FALSE`,
 		req.Username,
 	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername, &e.AccountPasswordHash,
-		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
-		&e.AccountCreatedAt, &e.AccountUpdatedAt,
+		&e.AccountID, &e.AccountPasswordHash, &e.AccountStatus,
 	); errors.Is(err, sql.ErrNoRows) {
 		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
 	} else if err != nil {
@@ -117,16 +114,22 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (respo
 	if e.AccountStatus == enum.AccountStatusLocked {
 		return response.TokenPairResponseDTO{}, errors.New("account is locked")
 	}
+
+	if e.AccountStatus == enum.AccountStatusPending {
+		return response.TokenPairResponseDTO{}, errors.New("account is pending")
+	}
+
 	if err := utils.CheckPassword(e.AccountPasswordHash, req.Password); err != nil {
 		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
 	}
 
+	// update last login time
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE accounts SET account_last_login_at = NOW() WHERE account_id = $1`,
 		e.AccountID,
 	)
 
-	// Audit: login event (standalone, no transaction needed).
+	// write log
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &e.AccountID,
 		Action:         auditenum.AuditActionLogin.String(),
@@ -134,6 +137,7 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (respo
 		EntityID:       e.AccountID,
 	})
 
+	// issue token
 	accessToken, err := s.issueToken(e.AccountID, s.accessTTL)
 	if err != nil {
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
@@ -151,18 +155,18 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (respo
 
 // GetAccount returns the public account DTO for the given account ID.
 func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.AccountResponseDTO, error) {
-	var e AccountEntity
+	var e entities.AccountEntity
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT account_id, account_role_id, account_username, account_password_hash,
+		SELECT account_id, account_role_id, account_username,
 		       account_email, account_phone, account_status,
-		       account_last_login_at, account_is_deleted, account_deleted_at,
+		       account_last_login_at,
 		       account_created_at, account_updated_at
 		FROM accounts
 		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID,
 	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername, &e.AccountPasswordHash,
+		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
 		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
+		&e.AccountLastLoginAt,
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return response.AccountResponseDTO{}, errors.New("account not found")
@@ -180,22 +184,21 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var e AccountEntity
+	var e entities.AccountEntity
 	if err := tx.QueryRowContext(ctx, `
 		UPDATE accounts
 		SET account_email      = COALESCE(NULLIF($1,''), account_email),
-		    account_phone      = COALESCE(NULLIF($2,''), account_phone),
-		    account_updated_at = NOW()
+		    account_phone      = COALESCE(NULLIF($2,''), account_phone)
 		WHERE account_id = $3 AND account_is_deleted = FALSE
-		RETURNING account_id, account_role_id, account_username, account_password_hash,
+		RETURNING account_id, account_role_id, account_username,
 		          account_email, account_phone, account_status,
-		          account_last_login_at, account_is_deleted, account_deleted_at,
+		          account_last_login_at,
 		          account_created_at, account_updated_at`,
 		req.Email, req.Phone, accountID,
 	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername, &e.AccountPasswordHash,
+		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
 		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
+		&e.AccountLastLoginAt,
 		&e.AccountCreatedAt, &e.AccountUpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return response.AccountResponseDTO{}, errors.New("account not found")
@@ -220,7 +223,7 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 }
 
 // SoftDeleteAccount marks an account as deleted.
-func (s *Service) SoftDeleteAccount(ctx context.Context, accountID int64) error {
+func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("auth: begin tx: %w", err)
@@ -229,7 +232,7 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, accountID int64) error 
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET account_is_deleted = TRUE, account_deleted_at = NOW(), account_updated_at = NOW()
+		SET account_is_deleted = TRUE, account_deleted_at = NOW()
 		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID)
 	if err != nil {
 		return fmt.Errorf("auth: soft delete: %w", err)
@@ -244,6 +247,36 @@ func (s *Service) SoftDeleteAccount(ctx context.Context, accountID int64) error 
 		Action:         auditenum.AuditActionSoftDelete.String(),
 		EntityTable:    auditenum.AuditEntityAccount.String(),
 		EntityID:       accountID,
+	})
+
+	return tx.Commit()
+}
+
+// SoftDeleteAccount by Admin
+func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, accountID int64, targetAccountID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE accounts
+		SET account_is_deleted = TRUE, account_deleted_at = NOW()
+		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID)
+	if err != nil {
+		return fmt.Errorf("auth: soft delete: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("account not found")
+	}
+
+	// Audit: soft-delete inside the same transaction.
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionSoftDelete.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       targetAccountID,
 	})
 
 	return tx.Commit()

@@ -14,10 +14,3 @@ type AccountResponseDTO struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
-
-// TokenPairResponseDTO carries the issued JWT pair.
-type TokenPairResponseDTO struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-}

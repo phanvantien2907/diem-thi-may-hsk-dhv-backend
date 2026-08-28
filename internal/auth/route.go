@@ -20,4 +20,10 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		me.PUT("", h.UpdateMe)
 		me.DELETE("", h.DeleteMe)
 	}
+
+	admin := r.Group("/admin")
+	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
+	{
+		admin.DELETE("/delete-account/:id", h.AdminDeleteAccount)
+	}
 }
