@@ -8,6 +8,7 @@ import (
 
 	"github.com/hskvinh/backend/internal/audit/dto/request"
 	"github.com/hskvinh/backend/internal/audit/dto/response"
+	"github.com/hskvinh/backend/internal/audit/entities"
 	"github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -154,7 +155,7 @@ func (s *auditService) List(ctx context.Context, req request.ListAuditLogRequest
 	// Pre-allocate slice with known capacity leak memory
 	items := make([]response.AuditLogResponseDTO, 0, req.Limit)
 	for rows.Next() {
-		var e AuditLogEntity
+		var e entities.AuditLogEntity
 		if err := rows.Scan(
 			&e.AuditLogID, &e.AuditLogActorAccountID, &e.AuditLogAction,
 			&e.AuditLogEntityTable, &e.AuditLogEntityID,
