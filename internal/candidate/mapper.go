@@ -1,9 +1,12 @@
 package candidate
 
-import "github.com/hskvinh/backend/internal/candidate/dto/response"
+import (
+	"github.com/hskvinh/backend/internal/candidate/dto/response"
+	"github.com/hskvinh/backend/internal/candidate/entities"
+)
 
 // ToCandidateResponseDTO maps a CandidateEntity to its public DTO.
-func ToCandidateResponseDTO(e CandidateEntity) response.CandidateResponseDTO {
+func ToCandidateResponseDTO(e entities.CandidateEntity) response.CandidateResponseDTO {
 	return response.CandidateResponseDTO{
 		ID:                e.CandidateID,
 		AccountID:         e.CandidateAccountID,
@@ -23,7 +26,7 @@ func ToCandidateResponseDTO(e CandidateEntity) response.CandidateResponseDTO {
 }
 
 // ToDocumentResponseDTO maps a CandidateDocumentEntity to its public DTO.
-func ToDocumentResponseDTO(e CandidateDocumentEntity) response.DocumentResponseDTO {
+func ToDocumentResponseDTO(e entities.CandidateDocumentEntity) response.DocumentResponseDTO {
 	return response.DocumentResponseDTO{
 		ID:                 e.CandidateDocumentID,
 		CandidateID:        e.CandidateDocumentCandidateID,

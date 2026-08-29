@@ -16,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) Register(c *gin.Context) {
 	var req request.CreateAccountRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -26,10 +26,10 @@ func (h *Handler) Register(c *gin.Context) {
 	acc, err := h.svc.Register(c.Request.Context(), req)
 	if err != nil {
 		if err.Error() == "account already exists" {
-			utils.Conflict(c, err.Error())
+			utils.Conflict(c, "Tài khoản đã tồn tại")
 			return
 		}
-		utils.InternalServerError(c, "failed to register account")
+		utils.InternalServerError(c, "Đăng ký tài khoản thất bại")
 		return
 	}
 	utils.Created(c, acc)
@@ -39,7 +39,7 @@ func (h *Handler) Register(c *gin.Context) {
 func (h *Handler) Login(c *gin.Context) {
 	var req request.LoginRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -49,10 +49,10 @@ func (h *Handler) Login(c *gin.Context) {
 	tokens, err := h.svc.Login(c.Request.Context(), req)
 	if err != nil {
 		if err.Error() == "invalid credentials" {
-			utils.Unauthorized(c, err.Error())
+			utils.Unauthorized(c, "Thông tin đăng nhập không chính xác")
 			return
 		}
-		utils.InternalServerError(c, "failed to login")
+		utils.InternalServerError(c, "Đăng nhập thất bại")
 		return
 	}
 	utils.OK(c, tokens)
@@ -64,10 +64,10 @@ func (h *Handler) Me(c *gin.Context) {
 	acc, err := h.svc.GetAccount(c.Request.Context(), userID)
 	if err != nil {
 		if err.Error() == "account not found" {
-			utils.NotFound(c, err.Error())
+			utils.NotFound(c, "Không tìm thấy tài khoản")
 			return
 		}
-		utils.InternalServerError(c, "failed to get account")
+		utils.InternalServerError(c, "Lấy thông tin tài khoản thất bại")
 		return
 	}
 	utils.OK(c, acc)
@@ -78,7 +78,7 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	userID := utils.MustAccountID(c)
 	var req request.UpdateAccountRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -88,10 +88,10 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	acc, err := h.svc.UpdateAccount(c.Request.Context(), userID, req)
 	if err != nil {
 		if err.Error() == "account not found" {
-			utils.NotFound(c, err.Error())
+			utils.NotFound(c, "Không tìm thấy tài khoản")
 			return
 		}
-		utils.InternalServerError(c, "failed to update account")
+		utils.InternalServerError(c, "Cập nhật tài khoản thất bại")
 		return
 	}
 	utils.OK(c, acc)
@@ -102,13 +102,13 @@ func (h *Handler) DeleteMe(c *gin.Context) {
 	userID := utils.MustAccountID(c)
 	if err := h.svc.SoftDeleteAccountMe(c.Request.Context(), userID); err != nil {
 		if err.Error() == "account not found" {
-			utils.NotFound(c, err.Error())
+			utils.NotFound(c, "Không tìm thấy tài khoản")
 			return
 		}
-		utils.InternalServerError(c, "failed to delete account")
+		utils.InternalServerError(c, "Xóa tài khoản thất bại")
 		return
 	}
-	utils.OK(c, gin.H{"message": "account deleted"})
+	utils.OK(c, gin.H{"message": "Đã xóa tài khoản"})
 }
 
 // AdminDeleteAccount DELETE /auth/delete-account/:id
@@ -116,16 +116,16 @@ func (h *Handler) AdminDeleteAccount(c *gin.Context) {
 	adminID := utils.MustAccountID(c)
 	targetID, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid account ID")
+		utils.BadRequest(c, "ID tài khoản không hợp lệ")
 		return
 	}
 	if err := h.svc.SoftDeleteAccountByAdmin(c.Request.Context(), adminID, targetID); err != nil {
 		if err.Error() == "account not found" {
-			utils.NotFound(c, err.Error())
+			utils.NotFound(c, "Không tìm thấy tài khoản")
 			return
 		}
-		utils.InternalServerError(c, "failed to delete account")
+		utils.InternalServerError(c, "Xóa tài khoản thất bại")
 		return
 	}
-	utils.OK(c, gin.H{"message": "account deleted"})
+	utils.OK(c, gin.H{"message": "Đã xóa tài khoản"})
 }

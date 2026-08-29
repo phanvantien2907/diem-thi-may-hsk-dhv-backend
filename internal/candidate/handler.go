@@ -16,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) CreateProfile(c *gin.Context) {
 	var req request.CreateProfileRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -35,12 +35,12 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 func (h *Handler) UpdateProfile(c *gin.Context) {
 	cid, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid candidate id")
+		utils.BadRequest(c, "ID ứng viên không hợp lệ")
 		return
 	}
 	var req request.UpdateProfileRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -59,12 +59,12 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 func (h *Handler) UploadDocument(c *gin.Context) {
 	cid, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid candidate id")
+		utils.BadRequest(c, "ID ứng viên không hợp lệ")
 		return
 	}
 	var req request.UploadDocumentRequestDTO
-	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+	if err := c.ShouldBind(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {

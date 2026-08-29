@@ -17,6 +17,7 @@ import (
 	"github.com/hskvinh/backend/internal/database"
 	"github.com/hskvinh/backend/internal/exam"
 	"github.com/hskvinh/backend/internal/location"
+	"github.com/hskvinh/backend/internal/media"
 	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/notification"
 	"github.com/hskvinh/backend/internal/payment"
@@ -46,9 +47,15 @@ func main() {
 	// ── Audit Service (shared dependency) ─────────────────────────────────
 	auditSvc := audit.NewService(db)
 
+	// Media Service ( shared dependency)
+	mediaSvc, err := media.NewService(cfg.CloudinaryURL)
+	if err != nil {
+		log.Fatalf("[main] media: %v", err)
+	}
+
 	// ── Services ──────────────────────────────────────────────────────────
 	authSvc := auth.NewService(db, auditSvc, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	candSvc := candidate.NewService(db, auditSvc)
+	candSvc := candidate.NewService(db, auditSvc, mediaSvc)
 	examSvc := exam.NewService(db, auditSvc)
 	regSvc := registration.NewService(db, auditSvc)
 	paySvc := payment.NewService(db, auditSvc, regSvc)

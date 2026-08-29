@@ -30,6 +30,9 @@ type Config struct {
 	// Rate Limit
 	RateLimitRPS   int
 	RateLimitBurst int
+
+	// Cloudinary
+	CloudinaryURL string
 }
 
 // Load reads configuration from the .env file and environment variables.
@@ -41,10 +44,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppPort:     getEnv("APP_PORT", "8080"),
-		AppEnv:      getEnv("APP_ENV", "production"),
-		DatabaseURL: mustGetEnv("DATABASE_URL"),
-		JWTSecret:   mustGetEnv("JWT_SECRET"),
+		AppPort:       getEnv("APP_PORT", "8080"),
+		AppEnv:        getEnv("APP_ENV", "production"),
+		DatabaseURL:   mustGetEnv("DATABASE_URL"),
+		JWTSecret:     mustGetEnv("JWT_SECRET"),
+		CloudinaryURL: mustGetEnv("CLOUDINARY_URL"),
 	}
 
 	var err error

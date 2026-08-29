@@ -17,12 +17,12 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) List(c *gin.Context) {
 	var req request.ListAuditLogRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {
-		utils.BadRequest(c, "invalid query params: "+err.Error())
+		utils.BadRequest(c, "Tham số truy vấn không hợp lệ: "+err.Error())
 		return
 	}
 	result, err := h.svc.List(c.Request.Context(), req)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch audit logs")
+		utils.InternalServerError(c, "Lấy lịch sử hoạt động thất bại")
 		return
 	}
 	utils.OKWithMeta(c, result.Items, &result.Meta)
