@@ -33,6 +33,9 @@ type Config struct {
 
 	// Cloudinary
 	CloudinaryURL string
+
+	// Webhook
+	WebhookSecret string
 }
 
 // Load reads configuration from the .env file and environment variables.
@@ -49,6 +52,7 @@ func Load() (*Config, error) {
 		DatabaseURL:   mustGetEnv("DATABASE_URL"),
 		JWTSecret:     mustGetEnv("JWT_SECRET"),
 		CloudinaryURL: mustGetEnv("CLOUDINARY_URL"),
+		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
 	}
 
 	var err error

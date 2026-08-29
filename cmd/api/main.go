@@ -60,7 +60,7 @@ func main() {
 	regSvc := registration.NewService(db, auditSvc)
 	paySvc := payment.NewService(db, auditSvc, regSvc)
 	resSvc := result.NewService(db, auditSvc)
-	certSvc := certificate.NewService(db, auditSvc)
+	certSvc := certificate.NewService(db, auditSvc, cfg.WebhookSecret)
 	notifSvc := notification.NewService(db)
 	locSvc := location.NewService(db)
 

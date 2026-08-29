@@ -386,6 +386,9 @@ CREATE INDEX IF NOT EXISTS idx_cert_deliveries_certificate
 CREATE OR REPLACE TRIGGER trg_certificate_deliveries_updated_at
     BEFORE UPDATE ON certificate_deliveries
     FOR EACH ROW EXECUTE FUNCTION fn_touch_updated_at('certificate_delivery_updated_at');
+CREATE UNIQUE INDEX ux_certificates_result
+    ON certificates (certificate_exam_result_id)
+    WHERE NOT certificate_is_deleted;
 
 -- =============================================================================
 -- 6. PARTITIONED TIME-SERIES TABLES
@@ -437,6 +440,30 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     audit_log_created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_log_id, audit_log_created_at)
 ) PARTITION BY RANGE (audit_log_created_at);
+
+-- 7.1 auth_sessions (replacement for revoked tokens)
+CREATE TABLE auth_sessions (
+    auth_session_id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    auth_session_account_id     BIGINT NOT NULL REFERENCES accounts (account_id),
+    auth_session_refresh_token_hash VARCHAR(255) NOT NULL,
+    auth_session_device_info    VARCHAR(255),
+    auth_session_ip_address     INET,
+    auth_session_expires_at     TIMESTAMPTZ NOT NULL,
+    auth_session_revoked_at     TIMESTAMPTZ,
+    auth_session_created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 7.2 auth_otp_codes (replacement for one_time_passwords)
+CREATE TABLE auth_otp_codes (
+    auth_otp_id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    auth_otp_account_id    BIGINT NOT NULL REFERENCES accounts (account_id),
+    auth_otp_code_hash     VARCHAR(255) NOT NULL,
+    auth_otp_purpose       VARCHAR(30) NOT NULL CHECK (auth_otp_purpose IN ('register_verify','reset_password')),
+    auth_otp_attempt_count SMALLINT NOT NULL DEFAULT 0,
+    auth_otp_expires_at    TIMESTAMPTZ NOT NULL,
+    auth_otp_consumed_at   TIMESTAMPTZ,
+    auth_otp_created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Default partition
 CREATE TABLE IF NOT EXISTS audit_logs_default
