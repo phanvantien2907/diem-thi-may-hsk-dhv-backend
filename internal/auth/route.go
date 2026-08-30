@@ -5,25 +5,39 @@ import (
 	"github.com/hskvinh/backend/internal/middleware"
 )
 
-// RegisterRoutes mounts auth routes on the given router group.
-//
-//	public:      /auth/register, /auth/login
-//	protected:   /me (GET, PUT, DELETE)
+// RegisterRoutes mounts all auth routes on the given router group.
 func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
+	auth := middleware.JWTAuth(jwtSecret)
+	admin := middleware.RequireRole("admin")
+
+	// ── Public (no auth) ───────────────────────────────────────────────────
 	r.POST("/auth/register", h.Register)
 	r.POST("/auth/login", h.Login)
+	r.POST("/auth/refresh", h.RefreshToken)
+	r.POST("/auth/force-password-change", h.ForceChangePassword)
 
-	me := r.Group("/me")
-	me.Use(middleware.JWTAuth(jwtSecret))
+	// ── Authenticated ─────────────────────────────────────────────────────
+	protected := r.Group("")
+	protected.Use(auth)
 	{
-		me.GET("", h.Me)
-		me.PUT("", h.UpdateMe)
-		me.DELETE("", h.DeleteMe)
+		// Logout
+		protected.POST("/auth/logout", h.Logout)
+		protected.POST("/auth/logout-all", h.LogoutAll)
+
+		// Me
+		protected.GET("/me", h.Me)
+		protected.PUT("/me", h.UpdateMe)
+		protected.DELETE("/me", h.DeleteMe)
+		protected.PATCH("/me/password", h.ChangePassword)
+		protected.GET("/me/sessions", h.ListSessions)
+		protected.DELETE("/me/sessions/:id", h.DeleteSession)
 	}
 
-	admin := r.Group("/admin")
-	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
+	// ── Admin ──────────────────────────────────────────────────────────────
+	adminG := r.Group("/admin")
+	adminG.Use(auth, admin)
 	{
-		admin.DELETE("/delete-account/:id", h.AdminDeleteAccount)
+		adminG.DELETE("/delete-account/:id", h.AdminDeleteAccount)
+		adminG.POST("/staff-accounts", h.CreateStaffAccount)
 	}
 }

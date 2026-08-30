@@ -453,17 +453,7 @@ CREATE TABLE auth_sessions (
     auth_session_created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 7.2 auth_otp_codes (replacement for one_time_passwords)
-CREATE TABLE auth_otp_codes (
-    auth_otp_id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    auth_otp_account_id    BIGINT NOT NULL REFERENCES accounts (account_id),
-    auth_otp_code_hash     VARCHAR(255) NOT NULL,
-    auth_otp_purpose       VARCHAR(30) NOT NULL CHECK (auth_otp_purpose IN ('register_verify','reset_password')),
-    auth_otp_attempt_count SMALLINT NOT NULL DEFAULT 0,
-    auth_otp_expires_at    TIMESTAMPTZ NOT NULL,
-    auth_otp_consumed_at   TIMESTAMPTZ,
-    auth_otp_created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+
 
 -- Default partition
 CREATE TABLE IF NOT EXISTS audit_logs_default
@@ -481,3 +471,25 @@ CREATE TABLE IF NOT EXISTS audit_logs_2026_12
     PARTITION OF audit_logs FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
 CREATE TABLE IF NOT EXISTS audit_logs_2027_01
     PARTITION OF audit_logs FOR VALUES FROM ('2027-01-01') TO ('2027-02-01');
+
+-- =============================================================================
+-- 8. AUTH EXTENSIONS
+-- =============================================================================
+
+-- 8.1 New columns on accounts for lockout, forced password change, and 2FA
+ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS account_failed_login_count  SMALLINT    NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS account_locked_until        TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS account_must_change_password BOOLEAN    NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS account_totp_secret         VARCHAR(64);
+
+-- 8.2 Indexes for auth_sessions
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_account
+    ON auth_sessions (auth_session_account_id)
+    WHERE auth_session_revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_hash
+    ON auth_sessions (auth_session_refresh_token_hash)
+    WHERE auth_session_revoked_at IS NULL;
+
+

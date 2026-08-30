@@ -2,10 +2,15 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -15,8 +20,13 @@ import (
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/auth/dto/response"
 	"github.com/hskvinh/backend/internal/auth/entities"
-	"github.com/hskvinh/backend/internal/auth/enum"
+
 	"github.com/hskvinh/backend/internal/utils"
+)
+
+const (
+	maxFailedAttempts = 5
+	lockDuration      = 15 * time.Minute
 )
 
 // Service handles account management and JWT issuance.
@@ -33,22 +43,59 @@ func NewService(db *sql.DB, auditSvc audit.Service, jwtSecret string, accessTTL,
 	return &Service{db: db, auditSvc: auditSvc, jwtSecret: jwtSecret, accessTTL: accessTTL, refreshTTL: refreshTTL}
 }
 
-// Register creates a new account and returns its public DTO.
-func (s *Service) Register(ctx context.Context, req request.CreateAccountRequestDTO) (response.AccountResponseDTO, error) {
+// hashToken returns SHA-256 hex of the given token (for refresh token storage).
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
 
+// generateTempPassword generates a random 12-char temporary password.
+func generateTempPassword() (string, error) {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$"
+	b := make([]byte, 12)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
+		if err != nil {
+			return "", err
+		}
+		b[i] = chars[n.Int64()]
+	}
+	return string(b), nil
+}
+
+// scanAccount scans the standard 9-column projection for public account queries.
+// Projection: id, role_id, username, email, phone, status, last_login_at, created_at, updated_at
+func scanAccount(row *sql.Row, e *entities.AccountEntity) error {
+	return row.Scan(
+		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
+		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
+		&e.AccountLastLoginAt, &e.AccountCreatedAt, &e.AccountUpdatedAt,
+	)
+}
+
+// Register creates a pending account and sends an OTP to the phone number.
+// The account is activated only after VerifyOTP succeeds.
+func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) (response.AccountResponseDTO, error) {
 	hash, err := utils.HashPassword(req.Password)
 	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
 	}
 
+	// Resolve candidate role
 	var roleID int64
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT role_id FROM roles WHERE role_code = $1 AND role_is_deleted = FALSE`,
-		req.RoleCode,
+		`SELECT role_id FROM roles WHERE role_code = 'candidate' AND role_is_deleted = FALSE`,
 	).Scan(&roleID); errors.Is(err, sql.ErrNoRows) {
-		return response.AccountResponseDTO{}, fmt.Errorf("role %q not found", req.RoleCode)
+		return response.AccountResponseDTO{}, errors.New("cấu hình hệ thống lỗi: không tìm thấy quyền dự thi")
 	} else if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
+	}
+
+	// Username = phone number for candidates
+	username := req.Phone
+	email := req.Email
+	if email == "" {
+		email = req.Phone + "@placeholder.hsk.vn" // placeholder nếu không có email
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -58,28 +105,24 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 	defer tx.Rollback() //nolint:errcheck
 
 	var e entities.AccountEntity
-	err = tx.QueryRowContext(ctx, `
+	err = scanAccount(tx.QueryRowContext(ctx, `
 		INSERT INTO accounts
 		       (account_role_id, account_username, account_password_hash,
 		        account_email, account_phone, account_status)
-		VALUES ($1,$2,$3,$4,NULLIF($5,''),'active')
-		RETURNING account_id, account_role_id, account_username, account_password_hash,
+		VALUES ($1,$2,$3,$4,$5,'active')
+		RETURNING account_id, account_role_id, account_username,
 		          account_email, account_phone, account_status,
-		          account_last_login_at, account_is_deleted, account_deleted_at,
-		          account_created_at, account_updated_at`,
-		roleID, req.Username, hash, req.Email, req.Phone,
-	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername, &e.AccountPasswordHash,
-		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt, &e.AccountIsDeleted, &e.AccountDeletedAt,
-		&e.AccountCreatedAt, &e.AccountUpdatedAt,
-	)
+		          account_last_login_at, account_created_at, account_updated_at`,
+		roleID, username, hash, email, req.Phone,
+	), &e)
 	if err != nil {
+		if strings.Contains(err.Error(), "uq_accounts") {
+			return response.AccountResponseDTO{}, errors.New("tài khoản đã tồn tại")
+		}
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: create account: %w", err)
 	}
 
-	// write log
-	newVal, _ := json.Marshal(map[string]any{"username": e.AccountUsername, "email": e.AccountEmail, "role_id": e.AccountRoleID})
+	newVal, _ := json.Marshal(map[string]any{"username": e.AccountUsername, "phone": req.Phone})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &e.AccountID,
 		Action:         auditenum.AuditActionCreate.String(),
@@ -88,89 +131,403 @@ func (s *Service) Register(ctx context.Context, req request.CreateAccountRequest
 		NewValue:       newVal,
 	})
 
-	// commit transaction
 	if err := tx.Commit(); err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: commit: %w", err)
 	}
+
 	return ToAccountResponseDTO(e), nil
 }
 
-// Login validates credentials and issues a JWT pair.
-func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO) (response.TokenPairResponseDTO, error) {
+// Login validates credentials, enforces lockout, creates a session, and issues JWT pair.
+func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, device string) (response.TokenPairResponseDTO, error) {
 	var e entities.AccountEntity
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT account_id, account_password_hash, account_status
+	err := s.db.QueryRowContext(ctx, `
+		SELECT account_id, account_password_hash, account_status,
+		       account_failed_login_count, account_locked_until, account_must_change_password
 		FROM accounts
 		WHERE account_username = $1 AND account_is_deleted = FALSE`,
 		req.Username,
 	).Scan(
 		&e.AccountID, &e.AccountPasswordHash, &e.AccountStatus,
-	); errors.Is(err, sql.ErrNoRows) {
-		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
-	} else if err != nil {
+		&e.AccountFailedLoginCount, &e.AccountLockedUntil, &e.AccountMustChangePassword,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.TokenPairResponseDTO{}, errors.New("thông tin đăng nhập không chính xác")
+	}
+	if err != nil {
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: login query: %w", err)
 	}
 
-	if e.AccountStatus == enum.AccountStatusLocked {
-		return response.TokenPairResponseDTO{}, errors.New("account is locked")
+	// Check lockout
+	if e.AccountLockedUntil != nil && time.Now().Before(*e.AccountLockedUntil) {
+		remaining := time.Until(*e.AccountLockedUntil).Round(time.Second)
+		return response.TokenPairResponseDTO{}, fmt.Errorf("tài khoản bị khóa tạm thời, thử lại sau %s", remaining)
 	}
 
-	if e.AccountStatus == enum.AccountStatusPending {
-		return response.TokenPairResponseDTO{}, errors.New("account is pending")
-	}
-
+	// Verify password
 	if err := utils.CheckPassword(e.AccountPasswordHash, req.Password); err != nil {
-		return response.TokenPairResponseDTO{}, errors.New("invalid credentials")
+		// Increment failed count + potentially lock
+		newCount := e.AccountFailedLoginCount + 1
+		if newCount >= maxFailedAttempts {
+			lockedUntil := time.Now().Add(lockDuration)
+			_, _ = s.db.ExecContext(ctx, `
+				UPDATE accounts
+				SET account_failed_login_count = $1,
+				    account_locked_until       = $2,
+				    account_status             = 'locked'
+				WHERE account_id = $3`,
+				newCount, lockedUntil, e.AccountID,
+			)
+			return response.TokenPairResponseDTO{}, fmt.Errorf("đăng nhập sai quá %d lần, tài khoản bị khóa 15 phút", maxFailedAttempts)
+		}
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE accounts SET account_failed_login_count = $1 WHERE account_id = $2`,
+			newCount, e.AccountID,
+		)
+		return response.TokenPairResponseDTO{}, errors.New("thông tin đăng nhập không chính xác")
 	}
 
-	// update last login time
-	_, _ = s.db.ExecContext(ctx,
-		`UPDATE accounts SET account_last_login_at = NOW() WHERE account_id = $1`,
+	// Reset failed count + unlock on success
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE accounts
+		SET account_failed_login_count = 0,
+		    account_locked_until       = NULL,
+		    account_status             = 'active',
+		    account_last_login_at      = NOW()
+		WHERE account_id = $1`,
 		e.AccountID,
 	)
 
-	// write log
+	// Create session with refresh token
+	rawRefresh, err := s.issueRawToken(e.AccountID, s.refreshTTL)
+	if err != nil {
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue refresh token: %w", err)
+	}
+	refreshHash := hashToken(rawRefresh)
+	expiresAt := time.Now().Add(s.refreshTTL)
+
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO auth_sessions
+		       (auth_session_account_id, auth_session_refresh_token_hash,
+		        auth_session_device_info, auth_session_ip_address, auth_session_expires_at)
+		VALUES ($1,$2,NULLIF($3,''),NULLIF($4,'')::inet,$5)`,
+		e.AccountID, refreshHash, device, ip, expiresAt,
+	); err != nil {
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: create session: %w", err)
+	}
+
+	// Issue access token with role
+	var roleCode string
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT r.role_code FROM roles r JOIN accounts a ON a.account_role_id = r.role_id WHERE a.account_id = $1`,
+		e.AccountID,
+	).Scan(&roleCode)
+
+	accessToken, err := s.issueAccessToken(e.AccountID, roleCode)
+	if err != nil {
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
+	}
+
+	// Audit login
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &e.AccountID,
 		Action:         auditenum.AuditActionLogin.String(),
 		EntityTable:    auditenum.AuditEntityAccount.String(),
 		EntityID:       e.AccountID,
+		NewValue:       mustMarshal(map[string]any{"ip": ip, "device": device}),
 	})
 
-	// issue token
-	accessToken, err := s.issueToken(e.AccountID, s.accessTTL)
+	return response.TokenPairResponseDTO{
+		AccessToken:        accessToken,
+		RefreshToken:       rawRefresh,
+		ExpiresIn:          int64(s.accessTTL.Seconds()),
+		MustChangePassword: e.AccountMustChangePassword,
+	}, nil
+}
+
+// RefreshToken validates the refresh token session and issues a new access token.
+func (s *Service) RefreshToken(ctx context.Context, req request.RefreshTokenRequestDTO) (response.TokenPairResponseDTO, error) {
+	refreshHash := hashToken(req.RefreshToken)
+
+	var sessionID, accountID int64
+	var expiresAt time.Time
+	err := s.db.QueryRowContext(ctx, `
+		SELECT auth_session_id, auth_session_account_id, auth_session_expires_at
+		FROM auth_sessions
+		WHERE auth_session_refresh_token_hash = $1
+		  AND auth_session_revoked_at IS NULL
+		  AND auth_session_expires_at > NOW()`,
+		refreshHash,
+	).Scan(&sessionID, &accountID, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.TokenPairResponseDTO{}, errors.New("refresh token không hợp lệ hoặc đã hết hạn")
+	}
+	if err != nil {
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: refresh query: %w", err)
+	}
+
+	var roleCode string
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT r.role_code FROM roles r JOIN accounts a ON a.account_role_id = r.role_id WHERE a.account_id = $1`,
+		accountID,
+	).Scan(&roleCode)
+
+	accessToken, err := s.issueAccessToken(accountID, roleCode)
 	if err != nil {
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
 	}
-	refreshToken, err := s.issueToken(e.AccountID, s.refreshTTL)
-	if err != nil {
-		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue refresh token: %w", err)
-	}
 	return response.TokenPairResponseDTO{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    int64(s.accessTTL.Seconds()),
+		AccessToken: accessToken,
+		ExpiresIn:   int64(s.accessTTL.Seconds()),
 	}, nil
+}
+
+// ChangePassword updates the password for an authenticated user.
+func (s *Service) ChangePassword(ctx context.Context, accountID int64, req request.ChangePasswordRequestDTO) error {
+	var currentHash string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT account_password_hash FROM accounts WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		accountID,
+	).Scan(&currentHash); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("không tìm thấy tài khoản")
+	} else if err != nil {
+		return fmt.Errorf("auth: change password lookup: %w", err)
+	}
+
+	if err := utils.CheckPassword(currentHash, req.OldPassword); err != nil {
+		return errors.New("mật khẩu cũ không chính xác")
+	}
+
+	newHash, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return fmt.Errorf("auth: hash password: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE accounts SET account_password_hash = $1, account_must_change_password = FALSE WHERE account_id = $2`,
+		newHash, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("auth: change password update: %w", err)
+	}
+
+	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionPasswordChange.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+	})
+	return nil
+}
+
+// ForceChangePassword verifies the temporary token and sets a new password.
+// The temp_token is a short-lived JWT issued at staff account creation.
+func (s *Service) ForceChangePassword(ctx context.Context, req request.ForceChangePasswordRequestDTO) error {
+	accountID, err := s.parseTempToken(req.TempToken)
+	if err != nil {
+		return errors.New("token tạm thời không hợp lệ hoặc đã hết hạn")
+	}
+
+	// Verify must_change_password flag is still set
+	var mustChange bool
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT account_must_change_password FROM accounts WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		accountID,
+	).Scan(&mustChange); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("không tìm thấy tài khoản")
+	} else if err != nil {
+		return fmt.Errorf("auth: force change lookup: %w", err)
+	}
+	if !mustChange {
+		return errors.New("tài khoản không yêu cầu đổi mật khẩu bắt buộc")
+	}
+
+	newHash, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return fmt.Errorf("auth: hash password: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE accounts SET account_password_hash = $1, account_must_change_password = FALSE WHERE account_id = $2`,
+		newHash, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("auth: force change update: %w", err)
+	}
+
+	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionPasswordChange.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+	})
+	return nil
+}
+
+// ListSessions returns all active sessions for the given account.
+func (s *Service) ListSessions(ctx context.Context, accountID int64) ([]response.SessionResponseDTO, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT auth_session_id, auth_session_device_info, auth_session_ip_address,
+		       auth_session_created_at, auth_session_expires_at
+		FROM auth_sessions
+		WHERE auth_session_account_id = $1
+		  AND auth_session_revoked_at IS NULL
+		  AND auth_session_expires_at > NOW()
+		ORDER BY auth_session_created_at DESC`,
+		accountID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("auth: list sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []response.SessionResponseDTO
+	for rows.Next() {
+		var e entities.SessionEntity
+		if err := rows.Scan(
+			&e.SessionID, &e.SessionDeviceInfo, &e.SessionIPAddress,
+			&e.SessionCreatedAt, &e.SessionExpiresAt,
+		); err != nil {
+			return nil, fmt.Errorf("auth: scan session: %w", err)
+		}
+		sessions = append(sessions, response.SessionResponseDTO{
+			ID:         e.SessionID,
+			DeviceInfo: e.SessionDeviceInfo,
+			IPAddress:  e.SessionIPAddress,
+			CreatedAt:  e.SessionCreatedAt,
+			ExpiresAt:  e.SessionExpiresAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("auth: sessions rows: %w", err)
+	}
+	return sessions, nil
+}
+
+// Logout revokes the current session identified by session ID (owned by accountID).
+func (s *Service) Logout(ctx context.Context, accountID, sessionID int64) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE auth_sessions
+		SET auth_session_revoked_at = NOW()
+		WHERE auth_session_id         = $1
+		  AND auth_session_account_id = $2
+		  AND auth_session_revoked_at IS NULL`,
+		sessionID, accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("auth: logout: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("không tìm thấy phiên đăng nhập")
+	}
+
+	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionLogout.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+		NewValue:       mustMarshal(map[string]any{"session_id": sessionID}),
+	})
+	return nil
+}
+
+// LogoutAll revokes all active sessions for the account.
+func (s *Service) LogoutAll(ctx context.Context, accountID int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE auth_sessions
+		SET auth_session_revoked_at = NOW()
+		WHERE auth_session_account_id = $1
+		  AND auth_session_revoked_at IS NULL`,
+		accountID,
+	)
+	if err != nil {
+		return fmt.Errorf("auth: logout all: %w", err)
+	}
+
+	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &accountID,
+		Action:         auditenum.AuditActionLogout.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       accountID,
+		NewValue:       mustMarshal(map[string]any{"scope": "all_sessions"}),
+	})
+	return nil
+}
+
+// CreateStaffAccount creates a staff account with a temporary password and must_change_password = true.
+func (s *Service) CreateStaffAccount(ctx context.Context, req request.CreateStaffRequestDTO, adminID int64) (response.AccountResponseDTO, string, error) {
+	var roleID int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT role_id FROM roles WHERE role_code = $1 AND role_is_deleted = FALSE`,
+		req.RoleCode,
+	).Scan(&roleID); errors.Is(err, sql.ErrNoRows) {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("không tìm thấy role %q", req.RoleCode)
+	} else if err != nil {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: resolve role: %w", err)
+	}
+
+	tempPass, err := generateTempPassword()
+	if err != nil {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: generate temp password: %w", err)
+	}
+	hash, err := utils.HashPassword(tempPass)
+	if err != nil {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: hash password: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var e entities.AccountEntity
+	err = scanAccount(tx.QueryRowContext(ctx, `
+		INSERT INTO accounts
+		       (account_role_id, account_username, account_password_hash,
+		        account_email, account_phone, account_status, account_must_change_password)
+		VALUES ($1,$2,$3,$4,NULLIF($5,''),'active',TRUE)
+		RETURNING account_id, account_role_id, account_username,
+		          account_email, account_phone, account_status,
+		          account_last_login_at, account_created_at, account_updated_at`,
+		roleID, req.Username, hash, req.Email, req.Phone,
+	), &e)
+	if err != nil {
+		if strings.Contains(err.Error(), "uq_accounts") {
+			return response.AccountResponseDTO{}, "", errors.New("tài khoản đã tồn tại")
+		}
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: create staff: %w", err)
+	}
+
+	newVal, _ := json.Marshal(map[string]any{"username": e.AccountUsername, "role": req.RoleCode, "created_by_admin": adminID})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &adminID,
+		Action:         auditenum.AuditActionCreate.String(),
+		EntityTable:    auditenum.AuditEntityAccount.String(),
+		EntityID:       e.AccountID,
+		NewValue:       newVal,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.AccountResponseDTO{}, "", fmt.Errorf("auth: commit: %w", err)
+	}
+	return ToAccountResponseDTO(e), tempPass, nil
 }
 
 // GetAccount returns the public account DTO for the given account ID.
 func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.AccountResponseDTO, error) {
 	var e entities.AccountEntity
-	if err := s.db.QueryRowContext(ctx, `
+	err := scanAccount(s.db.QueryRowContext(ctx, `
 		SELECT account_id, account_role_id, account_username,
 		       account_email, account_phone, account_status,
-		       account_last_login_at,
-		       account_created_at, account_updated_at
+		       account_last_login_at, account_created_at, account_updated_at
 		FROM accounts
 		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID,
-	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
-		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt,
-		&e.AccountCreatedAt, &e.AccountUpdatedAt,
-	); errors.Is(err, sql.ErrNoRows) {
-		return response.AccountResponseDTO{}, errors.New("account not found")
-	} else if err != nil {
+	), &e)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.AccountResponseDTO{}, errors.New("không tìm thấy tài khoản")
+	}
+	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: get account: %w", err)
 	}
 	return ToAccountResponseDTO(e), nil
@@ -185,28 +542,23 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	defer tx.Rollback() //nolint:errcheck
 
 	var e entities.AccountEntity
-	if err := tx.QueryRowContext(ctx, `
+	err = scanAccount(tx.QueryRowContext(ctx, `
 		UPDATE accounts
-		SET account_email      = COALESCE(NULLIF($1,''), account_email),
-		    account_phone      = COALESCE(NULLIF($2,''), account_phone)
+		SET account_email = COALESCE(NULLIF($1,''), account_email),
+		    account_phone = COALESCE(NULLIF($2,''), account_phone)
 		WHERE account_id = $3 AND account_is_deleted = FALSE
 		RETURNING account_id, account_role_id, account_username,
 		          account_email, account_phone, account_status,
-		          account_last_login_at,
-		          account_created_at, account_updated_at`,
+		          account_last_login_at, account_created_at, account_updated_at`,
 		req.Email, req.Phone, accountID,
-	).Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
-		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
-		&e.AccountLastLoginAt,
-		&e.AccountCreatedAt, &e.AccountUpdatedAt,
-	); errors.Is(err, sql.ErrNoRows) {
-		return response.AccountResponseDTO{}, errors.New("account not found")
-	} else if err != nil {
+	), &e)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.AccountResponseDTO{}, errors.New("không tìm thấy tài khoản")
+	}
+	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
 	}
 
-	// Audit: record update inside the same transaction.
 	newVal, _ := json.Marshal(map[string]any{"email": e.AccountEmail, "phone": e.AccountPhone})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &accountID,
@@ -222,7 +574,7 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	return ToAccountResponseDTO(e), nil
 }
 
-// SoftDeleteAccount marks an account as deleted.
+// SoftDeleteAccountMe soft-deletes the caller's own account.
 func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -238,22 +590,20 @@ func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64) erro
 		return fmt.Errorf("auth: soft delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("account not found")
+		return errors.New("không tìm thấy tài khoản")
 	}
 
-	// Audit: soft-delete inside the same transaction.
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &accountID,
 		Action:         auditenum.AuditActionSoftDelete.String(),
 		EntityTable:    auditenum.AuditEntityAccount.String(),
 		EntityID:       accountID,
 	})
-
 	return tx.Commit()
 }
 
-// SoftDeleteAccount by Admin
-func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, accountID int64, targetAccountID int64) error {
+// SoftDeleteAccountByAdmin soft-deletes a target account on behalf of an admin.
+func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetID int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("auth: begin tx: %w", err)
@@ -263,31 +613,70 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, accountID int64,
 	res, err := tx.ExecContext(ctx, `
 		UPDATE accounts
 		SET account_is_deleted = TRUE, account_deleted_at = NOW()
-		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID)
+		WHERE account_id = $1 AND account_is_deleted = FALSE`, targetID)
 	if err != nil {
 		return fmt.Errorf("auth: soft delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("account not found")
+		return errors.New("không tìm thấy tài khoản")
 	}
 
-	// Audit: soft-delete inside the same transaction.
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &accountID,
+		ActorAccountID: &adminID,
 		Action:         auditenum.AuditActionSoftDelete.String(),
 		EntityTable:    auditenum.AuditEntityAccount.String(),
-		EntityID:       targetAccountID,
+		EntityID:       targetID,
 	})
-
 	return tx.Commit()
 }
 
-// issueToken generates a signed JWT for the given accountID and TTL.
-func (s *Service) issueToken(accountID int64, ttl time.Duration) (string, error) {
+// issueAccessToken signs an access token with sub + role claims.
+func (s *Service) issueAccessToken(accountID int64, roleCode string) (string, error) {
+	claims := jwt.MapClaims{
+		"sub":       accountID,
+		"user_id":   accountID,
+		"user_role": roleCode,
+		"exp":       time.Now().Add(s.accessTTL).Unix(),
+		"iat":       time.Now().Unix(),
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.jwtSecret))
+}
+
+// issueRawToken signs a raw JWT for refresh tokens.
+func (s *Service) issueRawToken(accountID int64, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": accountID,
 		"exp": time.Now().Add(ttl).Unix(),
 		"iat": time.Now().Unix(),
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.jwtSecret))
+}
+
+// parseTempToken validates a JWT and returns the subject account ID.
+// Used for the force-password-change temp token.
+func (s *Service) parseTempToken(tokenStr string) (int64, error) {
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(s.jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		return 0, errors.New("invalid token")
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return 0, errors.New("invalid claims")
+	}
+	sub, ok := claims["sub"].(float64)
+	if !ok {
+		return 0, errors.New("invalid sub")
+	}
+	return int64(sub), nil
+}
+
+// mustMarshal marshals v to JSON, ignoring errors.
+func mustMarshal(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
