@@ -3,37 +3,46 @@ package location
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"time"
 
+	"github.com/hskvinh/backend/internal/audit"
+	auditdto "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	locreq "github.com/hskvinh/backend/internal/location/dto/request"
 	"github.com/hskvinh/backend/internal/location/dto/response"
+	"github.com/hskvinh/backend/internal/location/entities"
 )
 
 // Service handles province and ward lookups.
-type Service struct{ db *sql.DB }
+type Service struct {
+	db       *sql.DB
+	auditSvc audit.Service
+}
 
 // NewService creates a location Service.
-func NewService(db *sql.DB) *Service { return &Service{db: db} }
+func NewService(db *sql.DB, auditSvc audit.Service) *Service {
+	return &Service{db: db, auditSvc: auditSvc}
+}
 
-// ListProvinces returns all non-deleted provinces as DTOs.
+// ListProvinces returns all non-deleted provinces ordered alphabetically.
+// Only selects essential columns — no soft-delete metadata.
 func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT province_id, province_code, province_name,
-		       province_is_deleted, province_deleted_at, province_created_at, province_updated_at
+		SELECT province_id, province_code, province_name
 		FROM provinces
-		WHERE province_is_deleted=FALSE
+		WHERE province_is_deleted = FALSE
 		ORDER BY province_name ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("location: list provinces: %w", err)
 	}
 	defer rows.Close()
+
 	var list []response.ProvinceResponseDTO
 	for rows.Next() {
-		var e ProvinceEntity
-		if err := rows.Scan(
-			&e.ProvinceID, &e.ProvinceCode, &e.ProvinceName,
-			&e.ProvinceIsDeleted, &e.ProvinceDeletedAt,
-			&e.ProvinceCreatedAt, &e.ProvinceUpdatedAt,
-		); err != nil {
+		var e entities.ProvinceEntity
+		if err := rows.Scan(&e.ProvinceID, &e.ProvinceCode, &e.ProvinceName); err != nil {
 			return nil, fmt.Errorf("location: scan province: %w", err)
 		}
 		list = append(list, ToProvinceResponseDTO(e))
@@ -41,28 +50,169 @@ func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceRespons
 	return list, rows.Err()
 }
 
-// ListWards returns all non-deleted wards for a province as DTOs.
+// ListWards returns all non-deleted wards for a given province.
+// Only selects essential columns — no soft-delete metadata.
 func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.WardResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type,
-		       ward_is_deleted, ward_deleted_at, ward_created_at, ward_updated_at
+		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type
 		FROM wards
-		WHERE ward_province_id=$1 AND ward_is_deleted=FALSE
+		WHERE ward_province_id = $1 AND ward_is_deleted = FALSE
 		ORDER BY ward_name ASC`, provinceID)
 	if err != nil {
 		return nil, fmt.Errorf("location: list wards: %w", err)
 	}
 	defer rows.Close()
+
 	var list []response.WardResponseDTO
 	for rows.Next() {
-		var e WardEntity
+		var e entities.WardEntity
 		if err := rows.Scan(
 			&e.WardID, &e.WardProvinceID, &e.WardCode, &e.WardName, &e.WardType,
-			&e.WardIsDeleted, &e.WardDeletedAt, &e.WardCreatedAt, &e.WardUpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("location: scan ward: %w", err)
 		}
 		list = append(list, ToWardResponseDTO(e))
 	}
 	return list, rows.Err()
+}
+
+// GetWardDeliveryCoverage returns delivery coverage flags for a ward.
+// The courier query param filters to a specific courier (optional).
+func (s *Service) GetWardDeliveryCoverage(ctx context.Context, wardID int64) (entities.WardCoverageEntity, error) {
+	var e entities.WardCoverageEntity
+	err := s.db.QueryRowContext(ctx, `
+		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type,
+		       ward_ghn_coverage, ward_ghtk_coverage
+		FROM wards
+		WHERE ward_id = $1 AND ward_is_deleted = FALSE`, wardID).Scan(
+		&e.WardID, &e.WardProvinceID, &e.WardCode, &e.WardName, &e.WardType,
+		&e.GHNCoverage, &e.GHTKCoverage,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return entities.WardCoverageEntity{}, errors.New("xã/phường không tồn tại")
+	}
+	if err != nil {
+		return entities.WardCoverageEntity{}, fmt.Errorf("location: get ward coverage: %w", err)
+	}
+	return e, nil
+}
+
+// StatsCandidatesByProvince returns candidate counts grouped by province.
+// Joins candidate_documents → wards → provinces to count verified candidates.
+// Left join ensures provinces with 0 candidates are still returned.
+func (s *Service) StatsCandidatesByProvince(ctx context.Context) ([]response.ProvinceStatsResponseDTO, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.province_id, p.province_code, p.province_name,
+		       COUNT(DISTINCT c.candidate_id) AS total
+		FROM provinces p
+		LEFT JOIN wards w
+		       ON w.ward_province_id = p.province_id
+		      AND w.ward_is_deleted = FALSE
+		LEFT JOIN candidate_documents cd
+		       ON cd.candidate_document_ward_id = w.ward_id
+		      AND cd.candidate_document_is_deleted = FALSE
+		LEFT JOIN candidates c
+		       ON c.candidate_id = cd.candidate_document_candidate_id
+		      AND c.candidate_is_deleted = FALSE
+		WHERE p.province_is_deleted = FALSE
+		GROUP BY p.province_id, p.province_code, p.province_name
+		ORDER BY total DESC, p.province_name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("location: stats by province: %w", err)
+	}
+	defer rows.Close()
+
+	var list []response.ProvinceStatsResponseDTO
+	for rows.Next() {
+		var e entities.ProvinceStatsEntity
+		if err := rows.Scan(
+			&e.ProvinceID, &e.ProvinceCode, &e.ProvinceName, &e.Total,
+		); err != nil {
+			return nil, fmt.Errorf("location: scan stats: %w", err)
+		}
+		list = append(list, ToProvinceStatsResponseDTO(e))
+	}
+	return list, rows.Err()
+}
+
+// MergeWard re-points all candidate records from sourceWardID to targetWardID,
+// then soft-deletes the source ward. This handles administrative merges after
+// the 7/2025 administrative reform.
+func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID int64, req locreq.MergeWardRequestDTO) error {
+	// Validate target ward exists
+	var targetName string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT ward_name FROM wards WHERE ward_id = $1 AND ward_is_deleted = FALSE`,
+		req.TargetWardID).Scan(&targetName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("xã/phường đích không tồn tại")
+	}
+	if err != nil {
+		return fmt.Errorf("location: validate target ward: %w", err)
+	}
+
+	// Validate source ward exists
+	var sourceName string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT ward_name FROM wards WHERE ward_id = $1 AND ward_is_deleted = FALSE`,
+		sourceWardID).Scan(&sourceName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("xã/phường nguồn không tồn tại")
+	}
+	if err != nil {
+		return fmt.Errorf("location: validate source ward: %w", err)
+	}
+
+	if sourceWardID == req.TargetWardID {
+		return errors.New("xã/phường nguồn và đích không được trùng nhau")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("location: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Re-point candidate_documents
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE candidate_documents
+		   SET candidate_document_ward_id = $1
+		 WHERE candidate_document_ward_id = $2
+		   AND candidate_document_is_deleted = FALSE`,
+		req.TargetWardID, sourceWardID); err != nil {
+		return fmt.Errorf("location: update candidate_documents: %w", err)
+	}
+
+	// Re-point certificate_deliveries
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE certificate_deliveries
+		   SET certificate_delivery_ward_id = $1
+		 WHERE certificate_delivery_ward_id = $2
+		   AND certificate_delivery_is_deleted = FALSE`,
+		req.TargetWardID, sourceWardID); err != nil {
+		return fmt.Errorf("location: update certificate_deliveries: %w", err)
+	}
+
+	// Soft-delete source ward
+	now := time.Now()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE wards
+		   SET ward_is_deleted = TRUE, ward_deleted_at = $1
+		 WHERE ward_id = $2`,
+		now, sourceWardID); err != nil {
+		return fmt.Errorf("location: soft-delete source ward: %w", err)
+	}
+
+	_ = s.auditSvc.Log(ctx, tx, auditdto.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorAccountID,
+		Action:         auditenum.AuditActionUpdate.String(),
+		EntityTable:    "wards",
+		EntityID:       sourceWardID,
+		NewValue:       []byte(fmt.Sprintf(`{"merged_into":%d,"reason":%q}`, req.TargetWardID, req.Reason)),
+	})
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("location: commit: %w", err)
+	}
+	return nil
 }

@@ -42,7 +42,7 @@ database/sql → PostgreSQL 16
 ```
 
 Supporting layers (no logic):
-- `model.go` — DB-mirroring entity structs.
+- `entities/` — DB-mirroring entity structs and domain models.
 - `mapper.go` — entity → response DTO, pure functions.
 - `dto/request/` — input types with validate tags.
 - `dto/response/` — output types with json tags.
@@ -75,8 +75,8 @@ Do not introduce Clean Architecture, DDD, CQRS, event sourcing, microservices, h
 
 ```
 handler.go     → service.go, utils/*, middleware/ (constants only)
-service.go     → model.go, dto/*, enum/*, audit/, database/sql
-mapper.go      → model.go, dto/response/
+service.go     → entities/, dto/*, enum/*, audit/, database/sql
+mapper.go      → entities/, dto/response/
 route.go       → middleware/, gin
 cmd/api/main.go → all internal packages (wiring only)
 ```

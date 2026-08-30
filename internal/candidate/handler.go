@@ -192,4 +192,3 @@ func (h *Handler) AdminGetRoster(c *gin.Context) {
 	}
 	utils.OK(c, items)
 }
-

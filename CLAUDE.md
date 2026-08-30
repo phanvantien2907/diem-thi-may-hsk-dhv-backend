@@ -265,8 +265,11 @@ All API routes are mounted under `/api/v1`.
 | certificate | POST | `/admin/certificates` | JWT + admin |
 | notification | GET | `/notifications` | JWT |
 | notification | PUT | `/notifications/:id/read` | JWT |
-| location | GET | `/provinces` | public |
-| location | GET | `/provinces/:id/wards` | public |
+| location | GET | `/locations/provinces` | public |
+| location | GET | `/locations/provinces/:id/wards` | public |
+| location | GET | `/locations/wards/:id/delivery-coverage` | public |
+| location | GET | `/admin/locations/stats/candidates-by-province` | JWT + admin |
+| location | POST | `/admin/locations/wards/:id/merge` | JWT + admin |
 | audit | GET | `/admin/audit-logs` | JWT + admin |
 
 ### Response envelope
@@ -439,7 +442,14 @@ Complete enum reference:
 
 ## 11. Entities
 
-Entity structs live in `<domain>/entities/` as a Go package (one file per table, e.g., `account_entities.go`, `session_entities.go`). They mirror database tables 1:1:
+Entity structs live in `<domain>/entities/` as a Go package (one file per table or concern, e.g., `account_entities.go`, `province_entities.go`). 
+
+Types of structs allowed in this package:
+1. **DB-mirroring entities**: Mirror database tables 1:1. Named `<TableName>Entity`.
+2. **Lean projections**: Subsets of table columns used for read-only APIs (e.g. `ProvinceEntity` without `deleted_at`).
+3. **Aggregate entities**: Results of JOINs or GROUP BYs for specific queries (e.g. `ProvinceStatsEntity`).
+
+Rules for DB-mirroring entities:
 
 - Named `<TableName>Entity` (e.g., `AccountEntity`, `SessionEntity`, `CandidateDocumentEntity`).
 - All fields prefixed with the table name in PascalCase (e.g., `AccountEmail`, `SessionDeviceInfo`).
@@ -782,7 +792,7 @@ Runtime: `alpine:latest`, non-root `appuser`.
 
 For any non-trivial change:
 
-1. Read the affected domain's `service.go`, `model.go`, `handler.go`, `route.go`.
+1. Read the affected domain's `service.go`, `entities/`, `handler.go`, `route.go`.
 2. Identify the business rules and state transitions involved.
 3. Identify concurrent-access risks (registration, payment, seat capacity).
 4. Implement the smallest correct change.

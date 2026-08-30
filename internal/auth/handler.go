@@ -12,7 +12,6 @@ type Handler struct{ svc *Service }
 // NewHandler creates an auth Handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-
 // Register POST /auth/register
 func (h *Handler) Register(c *gin.Context) {
 	var req request.RegisterRequestDTO
@@ -39,7 +38,6 @@ func (h *Handler) Register(c *gin.Context) {
 	})
 }
 
-
 // Login POST /auth/login
 func (h *Handler) Login(c *gin.Context) {
 	var req request.LoginRequestDTO
@@ -61,7 +59,6 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	utils.OK(c, tokens)
 }
-
 
 // RefreshToken POST /auth/refresh
 func (h *Handler) RefreshToken(c *gin.Context) {
@@ -118,7 +115,6 @@ func (h *Handler) ForceChangePassword(c *gin.Context) {
 	utils.OK(c, gin.H{"message": "Đổi mật khẩu thành công, vui lòng đăng nhập lại"})
 }
 
-
 // ListSessions GET /me/sessions
 func (h *Handler) ListSessions(c *gin.Context) {
 	sessions, err := h.svc.ListSessions(c.Request.Context(), utils.MustAccountID(c))
@@ -172,7 +168,6 @@ func (h *Handler) LogoutAll(c *gin.Context) {
 	utils.OK(c, gin.H{"message": "Đã đăng xuất khỏi tất cả thiết bị"})
 }
 
-
 // Me GET /me
 func (h *Handler) Me(c *gin.Context) {
 	acc, err := h.svc.GetAccount(c.Request.Context(), utils.MustAccountID(c))
@@ -211,7 +206,6 @@ func (h *Handler) DeleteMe(c *gin.Context) {
 	utils.OK(c, gin.H{"message": "Đã xóa tài khoản"})
 }
 
-
 // AdminDeleteAccount DELETE /admin/delete-account/:id
 func (h *Handler) AdminDeleteAccount(c *gin.Context) {
 	targetID, ok := utils.ParamID(c, "id")
@@ -248,8 +242,8 @@ func (h *Handler) CreateStaffAccount(c *gin.Context) {
 	}
 	// Return temp password so admin can deliver it to the staff member
 	utils.Created(c, gin.H{
-		"account":           acc,
-		"temp_password":     tempPass,
-		"message":           "Tài khoản nhân viên đã được tạo. Nhân viên phải đổi mật khẩu khi đăng nhập lần đầu.",
+		"account":       acc,
+		"temp_password": tempPass,
+		"message":       "Tài khoản nhân viên đã được tạo. Nhân viên phải đổi mật khẩu khi đăng nhập lần đầu.",
 	})
 }

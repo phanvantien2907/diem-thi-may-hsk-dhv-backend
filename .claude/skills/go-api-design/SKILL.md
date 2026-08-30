@@ -37,8 +37,8 @@ For implementation-time verification of an already-coded endpoint, see `go-revie
 
 | Pattern | Examples found in code |
 |---|---|
-| Plural noun, kebab-case | `/candidates`, `/exam-sessions`, `/exam-rooms`, `/exam-types`, `/registrations`, `/payments`, `/notifications`, `/provinces`, `/certificates`, `/results` |
-| Nested sub-resource (noun) | `/candidates/:id/documents`, `/exam-sessions/:id/seats`, `/certificates/:id/deliveries`, `/provinces/:id/wards` |
+| Plural noun, kebab-case | `/candidates`, `/exam-sessions`, `/exam-rooms`, `/exam-types`, `/registrations`, `/payments`, `/notifications`, `/locations/provinces`, `/certificates`, `/results` |
+| Nested sub-resource (noun) | `/candidates/:id/documents`, `/exam-sessions/:id/seats`, `/certificates/:id/deliveries`, `/locations/provinces/:id/wards` |
 | Nested sub-resource (verb — deviation) | `/registrations/:id/confirm`, `/exam-sessions/:id/seats/generate`, `/notifications/:id/read` |
 | Flat non-resource (verb path) | `/payments/callback`, `/rechecks`, `/auth/register`, `/auth/login` |
 | Admin namespace | `/admin/audit-logs`, `/admin/exam-sessions/:id/seats/generate`, `/admin/results`, `/admin/certificates` |
@@ -55,7 +55,7 @@ For implementation-time verification of an already-coded endpoint, see `go-revie
 | `GET /exam-sessions` | **None** — unbounded array | `utils.OK` |
 | `GET /exam-rooms` | **None** — unbounded array | `utils.OK` |
 | `GET /exam-types` | **None** — unbounded array | `utils.OK` |
-| `GET /provinces` | **None** — unbounded array | `utils.OK` |
+| `GET /locations/provinces` | **None** — unbounded array | `utils.OK` |
 
 ### Response data on state-change operations
 
@@ -150,7 +150,7 @@ POST /auth/login                  ← verb; standard auth convention
 /parent-resource/:id/child-resource
 ```
 
-Examples: `/candidates/:id/documents`, `/exam-sessions/:id/seats`, `/certificates/:id/deliveries`, `/provinces/:id/wards`.
+Examples: `/candidates/:id/documents`, `/exam-sessions/:id/seats`, `/certificates/:id/deliveries`, `/locations/provinces/:id/wards`.
 
 **When to use flat routes:** When the sub-resource is queried by the caller's identity (not a path param), the project uses a flat route with a query parameter:
 
@@ -264,7 +264,7 @@ Four endpoints return `gin.H{"message": "..."}` instead of a DTO: `PUT /registra
 
 - Use `snake_case` for all query parameter names — no `camelCase`, no `PascalCase`.
 - For filtering by owner identity (the same concept as `candidate_id`), use `<entity>_id` form — e.g., a new endpoint filtering by account would use `account_id`, not `accountId` or `userId`.
-- For pagination on new list endpoints that could return large result sets, add `?page=&limit=` using `form:"page,default=1"` and `form:"limit,default=20"`, and return `utils.OKWithMeta`. Do not add pagination to bounded lists (e.g., reference data like provinces, exam types) where the total count is known to be small.
+- For pagination on new list endpoints that could return large result sets, add `?page=&limit=` using `form:"page,default=1"` and `form:"limit,default=20"`, and return `utils.OKWithMeta`. Do not add pagination to bounded lists (e.g., reference data like locations/provinces, exam types) where the total count is known to be small.
 
 ---
 
@@ -292,7 +292,7 @@ Limit int `form:"limit,default=20"`   // clamped to 100 in service
 
 **Unbounded list endpoints (existing — do not retroactively paginate without explicit request):**
 
-`GET /registrations`, `GET /payments`, `GET /notifications`, `GET /exam-sessions`, `GET /exam-rooms`, `GET /exam-types`, `GET /provinces` — all return unbounded arrays via `utils.OK`. These are established. Do not change them without explicit approval (breaking change for any client relying on the full-array response).
+`GET /registrations`, `GET /payments`, `GET /notifications`, `GET /exam-sessions`, `GET /exam-rooms`, `GET /exam-types`, `GET /locations/provinces` — all return unbounded arrays via `utils.OK`. These are established. Do not change them without explicit approval (breaking change for any client relying on the full-array response).
 
 **Rule for new endpoints:**
 
@@ -300,7 +300,7 @@ Limit int `form:"limit,default=20"`   // clamped to 100 in service
 |---|---|
 | User-scoped list (a candidate's own registrations/payments) | No — bounded by user's activity |
 | Admin list with arbitrary filter (like audit logs) | Yes — use `OKWithMeta` |
-| Reference data (types, rooms, provinces) | No — bounded by design |
+| Reference data (types, rooms, locations/provinces) | No — bounded by design |
 | Unbounded admin list (e.g., all registrations, all candidates) | Yes — use `OKWithMeta` |
 
 Flag a new admin list endpoint that returns an unbounded array as: `[MEDIUM] Pagination — admin list endpoint returns unbounded array; use OKWithMeta with page/limit`.

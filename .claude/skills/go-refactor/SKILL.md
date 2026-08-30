@@ -58,7 +58,7 @@ Before writing a single line, inspect the target and its context.
 cat internal/<domain>/service.go      # implementation
 cat internal/<domain>/handler.go      # HTTP callers
 cat internal/<domain>/route.go        # middleware, auth
-cat internal/<domain>/model.go        # entity structs
+ls internal/<domain>/entities/          # entity structs
 cat internal/<domain>/mapper.go       # mapping functions
 cat internal/<domain>/enum/           # typed enums
 cat internal/<domain>/dto/request/    # input types

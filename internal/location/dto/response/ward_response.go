@@ -1,15 +1,5 @@
 package response
 
-import "time"
-
-// ProvinceResponseDTO is the public province representation.
-type ProvinceResponseDTO struct {
-	ID        int64     `json:"id"`
-	Code      string    `json:"code"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 // WardResponseDTO is the public ward representation.
 type WardResponseDTO struct {
 	ID         int64  `json:"id"`
@@ -17,4 +7,11 @@ type WardResponseDTO struct {
 	Code       string `json:"code"`
 	Name       string `json:"name"`
 	Type       string `json:"type"`
+}
+
+// WardCoverageResponseDTO reports which couriers serve a ward.
+type WardCoverageResponseDTO struct {
+	WardID   int64           `json:"ward_id"`
+	WardName string          `json:"ward_name"`
+	Coverage map[string]bool `json:"coverage"`
 }

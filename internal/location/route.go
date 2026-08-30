@@ -1,9 +1,26 @@
 package location
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/middleware"
+)
 
-// RegisterRoutes mounts location routes (public, no auth required).
-func RegisterRoutes(r *gin.RouterGroup, h *Handler) {
-	r.GET("/provinces", h.ListProvinces)
-	r.GET("/provinces/:id/wards", h.ListWards)
+// RegisterRoutes mounts location routes.
+// Public routes require no auth. Admin routes require JWT + admin role.
+func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
+	// ── Public ─────────────────────────────────────────────────────────────
+	loc := r.Group("/locations")
+	{
+		loc.GET("/provinces", h.ListProvinces)
+		loc.GET("/provinces/:id/wards", h.ListWards)
+		loc.GET("/wards/:id/delivery-coverage", h.GetWardDeliveryCoverage)
+	}
+
+	// ── Admin (JWT + admin role required) ──────────────────────────────────
+	admin := r.Group("/admin/locations")
+	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
+	{
+		admin.GET("/stats/candidates-by-province", h.StatsCandidatesByProvince)
+		admin.POST("/wards/:id/merge", h.MergeWard)
+	}
 }

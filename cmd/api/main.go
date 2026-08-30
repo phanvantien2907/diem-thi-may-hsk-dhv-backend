@@ -62,7 +62,7 @@ func main() {
 	resSvc := result.NewService(db, auditSvc)
 	certSvc := certificate.NewService(db, auditSvc, cfg.WebhookSecret)
 	notifSvc := notification.NewService(db)
-	locSvc := location.NewService(db)
+	locSvc := location.NewService(db, auditSvc)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
 	auditH := audit.NewHandler(auditSvc)
@@ -99,10 +99,10 @@ func main() {
 	api := engine.Group("/api/v1")
 
 	audit.RegisterRoutes(api, auditH, cfg.JWTSecret)
-	
+
 	authLimiter := middleware.NewRateLimiter(3, 5) // 3 RPS / 5 burst for auth
 	auth.RegisterRoutes(api, authH, cfg.JWTSecret, authLimiter)
-	
+
 	candidate.RegisterRoutes(api, candH, cfg.JWTSecret)
 	exam.RegisterRoutes(api, examH, cfg.JWTSecret)
 	registration.RegisterRoutes(api, regH, cfg.JWTSecret)
@@ -110,7 +110,7 @@ func main() {
 	result.RegisterRoutes(api, resH, cfg.JWTSecret)
 	certificate.RegisterRoutes(api, certH, cfg.JWTSecret)
 	notification.RegisterRoutes(api, notifH, cfg.JWTSecret)
-	location.RegisterRoutes(api, locH)
+	location.RegisterRoutes(api, locH, cfg.JWTSecret)
 
 	// ── HTTP Server ───────────────────────────────────────────────────────
 	srv := &http.Server{

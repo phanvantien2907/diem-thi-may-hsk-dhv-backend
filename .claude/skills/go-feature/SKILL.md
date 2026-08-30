@@ -36,7 +36,7 @@ description: |
    cat internal/<domain>/service.go
    cat internal/<domain>/handler.go
    cat internal/<domain>/route.go
-   cat internal/<domain>/model.go
+   ls internal/<domain>/entities/
    cat internal/<domain>/mapper.go
    ```
 
@@ -88,7 +88,7 @@ Before proposing anything, answer these questions explicitly:
 
 Write a concise implementation plan covering:
 - Files to create (new domain, new migration, new DTOs, new enums).
-- Files to modify (existing service, handler, route, mapper, model).
+- Files to modify (existing service, handler, route, mapper, entities).
 - Wire-up changes in `cmd/api/main.go`.
 - Any migration.
 

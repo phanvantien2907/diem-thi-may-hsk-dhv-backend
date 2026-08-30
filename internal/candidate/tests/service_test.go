@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"database/sql"
+	"github.com/DATA-DOG/go-sqlmock"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditres "github.com/hskvinh/backend/internal/audit/dto/response"
 	"github.com/hskvinh/backend/internal/candidate"
@@ -60,7 +60,7 @@ func TestService_GetUploadSignature(t *testing.T) {
 	if res.Signature != "fake_signature" || res.APIKey != "fake_key" || res.CloudName != "fake_cloud" {
 		t.Errorf("unexpected signature response: %+v", res)
 	}
-	
+
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %s", err)
 	}

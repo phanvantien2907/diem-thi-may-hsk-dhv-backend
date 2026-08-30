@@ -51,12 +51,12 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppPort:       getEnv("APP_PORT", "8080"),
-		AppEnv:        getEnv("APP_ENV", "production"),
-		DatabaseURL:   mustGetEnv("DATABASE_URL"),
-		JWTSecret:     mustGetEnv("JWT_SECRET"),
-		CloudinaryURL: mustGetEnv("CLOUDINARY_URL"),
-		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
+		AppPort:            getEnv("APP_PORT", "8080"),
+		AppEnv:             getEnv("APP_ENV", "production"),
+		DatabaseURL:        mustGetEnv("DATABASE_URL"),
+		JWTSecret:          mustGetEnv("JWT_SECRET"),
+		CloudinaryURL:      mustGetEnv("CLOUDINARY_URL"),
+		WebhookSecret:      getEnv("WEBHOOK_SECRET", ""),
 		CORSAllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 	}
 
