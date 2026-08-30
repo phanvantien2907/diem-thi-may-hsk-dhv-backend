@@ -83,7 +83,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	engine := gin.New()
-	engine.Use(middleware.CORS(), middleware.Logger(), gin.Recovery(), limiter.RateLimit())
+	engine.Use(middleware.CORS(cfg.CORSAllowedOrigins), middleware.Logger(), gin.Recovery(), limiter.RateLimit())
 
 	// ── Health ────────────────────────────────────────────────────────────
 	engine.GET("/health", func(c *gin.Context) {
@@ -99,7 +99,10 @@ func main() {
 	api := engine.Group("/api/v1")
 
 	audit.RegisterRoutes(api, auditH, cfg.JWTSecret)
-	auth.RegisterRoutes(api, authH, cfg.JWTSecret)
+	
+	authLimiter := middleware.NewRateLimiter(3, 5) // 3 RPS / 5 burst for auth
+	auth.RegisterRoutes(api, authH, cfg.JWTSecret, authLimiter)
+	
 	candidate.RegisterRoutes(api, candH, cfg.JWTSecret)
 	exam.RegisterRoutes(api, examH, cfg.JWTSecret)
 	registration.RegisterRoutes(api, regH, cfg.JWTSecret)

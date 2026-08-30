@@ -751,7 +751,8 @@ go test ./...
 go test -race ./...
 ```
 
-**The project currently has no test files.** When writing tests, place them in the same package (`package <domain>`) using the standard `testing` package. Table-driven tests are preferred when the case set is meaningful.
+**The project mandates test files to be placed in a dedicated `tests/` subdirectory within each domain** (e.g. `internal/<domain>/tests/`).
+These tests run in a separate package (e.g. `package tests`), enforcing **black-box testing** where only exported identifiers can be tested. We use `go-sqlmock` and the standard `testing` package. Table-driven tests are preferred when the case set is meaningful.
 
 ---
 

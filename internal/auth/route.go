@@ -6,15 +6,21 @@ import (
 )
 
 // RegisterRoutes mounts all auth routes on the given router group.
-func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
+func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string, authLimiter *middleware.RateLimiter) {
 	auth := middleware.JWTAuth(jwtSecret)
 	admin := middleware.RequireRole("admin")
 
 	// ── Public (no auth) ───────────────────────────────────────────────────
-	r.POST("/auth/register", h.Register)
-	r.POST("/auth/login", h.Login)
-	r.POST("/auth/refresh", h.RefreshToken)
-	r.POST("/auth/force-password-change", h.ForceChangePassword)
+	publicAuth := r.Group("/auth")
+	if authLimiter != nil {
+		publicAuth.Use(authLimiter.RateLimit())
+	}
+	{
+		publicAuth.POST("/register", h.Register)
+		publicAuth.POST("/login", h.Login)
+		publicAuth.POST("/refresh", h.RefreshToken)
+		publicAuth.POST("/force-password-change", h.ForceChangePassword)
+	}
 
 	// ── Authenticated ─────────────────────────────────────────────────────
 	protected := r.Group("")

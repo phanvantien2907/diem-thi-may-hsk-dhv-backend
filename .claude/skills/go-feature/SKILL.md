@@ -103,14 +103,22 @@ Follow the exact file layout from CLAUDE.md §2 and these rules:
 ### New domain checklist
 ```
 internal/<domain>/
-├── dto/request/<domain>_request.go   # validate tags on all fields
-├── dto/response/<domain>_response.go # json tags
+├── dto/
+│   ├── request/
+│   │   ├── <action>_request.go       # one DTO per file, validate tags on all fields
+│   │   └── ...
+│   └── response/
+│       ├── <entity>_response.go      # one DTO per file, json tags
+│       └── ...
 ├── enum/<domain>_enum.go             # Valid() + String() on every type
 ├── entities/<table>_entities.go      # *Entity structs + optional input structs (CreateXInput, etc.)
 ├── mapper.go                         # pure To<X>ResponseDTO functions
 ├── service.go                        # NewService(db, auditSvc) *Service
 ├── handler.go                        # NewHandler(svc) *Handler
-└── route.go                          # RegisterRoutes(r, h, jwtSecret)
+├── route.go                          # RegisterRoutes(r, h, jwtSecret)
+└── tests/                            # Black-box testing package
+    ├── handler_test.go
+    └── ...
 ```
 
 Wire in `cmd/api/main.go` last.

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -34,6 +35,9 @@ type Config struct {
 	// Cloudinary
 	CloudinaryURL string
 
+	// CORS
+	CORSAllowedOrigins []string
+
 	// Webhook
 	WebhookSecret string
 }
@@ -53,6 +57,7 @@ func Load() (*Config, error) {
 		JWTSecret:     mustGetEnv("JWT_SECRET"),
 		CloudinaryURL: mustGetEnv("CLOUDINARY_URL"),
 		WebhookSecret: getEnv("WEBHOOK_SECRET", ""),
+		CORSAllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 	}
 
 	var err error

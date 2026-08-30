@@ -27,11 +27,12 @@ description: |
 ## Baseline Facts
 
 - The project has **no existing test files**. There are no established test helpers to inherit.
-- Testing package: standard library `testing` only.
-- Test location: same package as the code under test (e.g., `package registration`).
-- Test file naming: `<subject>_test.go` (e.g., `service_test.go`, `handler_test.go`).
+- Testing package: standard library `testing` and `go-sqlmock`.
+- Test location: dedicated `tests/` subdirectory inside each domain (`internal/<domain>/tests/`).
+- Test package name: `package tests` (implying black-box testing; only exported identifiers can be tested).
+- Test file naming: `<subject>_test.go` (e.g., `service_test.go`, `handler_test.go`, `enum_test.go`).
 - Preferred style: **table-driven tests** when testing multiple cases of the same behavior.
-- No mocking framework — use interfaces or function injection where the existing code supports it.
+- Use `go-sqlmock` for isolating DB dependencies in service and handler tests.
 
 ---
 
@@ -41,7 +42,10 @@ Read the implementation first:
 ```bash
 cat internal/<domain>/service.go
 cat internal/<domain>/handler.go
-cat internal/<domain>/model.go
+cat internal/<domain>/mapper.go
+cat internal/<domain>/entities/*_entities.go
+cat internal/<domain>/dto/request/*_request.go
+cat internal/<domain>/dto/response/*_response.go
 cat internal/<domain>/enum/<domain>_enum.go
 ```
 

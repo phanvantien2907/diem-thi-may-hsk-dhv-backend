@@ -63,6 +63,7 @@ cat internal/<domain>/mapper.go       # mapping functions
 cat internal/<domain>/enum/           # typed enums
 cat internal/<domain>/dto/request/    # input types
 cat internal/<domain>/dto/response/   # output types
+cat internal/<domain>/tests # testing
 ```
 
 Also find all callers of the target function across the codebase:

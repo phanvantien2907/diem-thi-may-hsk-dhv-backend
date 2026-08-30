@@ -47,6 +47,7 @@ Supporting layers (no logic):
 - `dto/request/` — input types with validate tags.
 - `dto/response/` — output types with json tags.
 - `enum/` — typed string constants with `Valid()` + `String()`.
+- `tests/` — isolated test package for black-box testing.
 
 Cross-cutting (shared across domains):
 - `internal/middleware/` — HTTP middleware.

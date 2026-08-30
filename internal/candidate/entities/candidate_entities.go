@@ -22,8 +22,6 @@ type CandidateEntity struct {
 	CandidateChineseStudyYears *int16
 	CandidateIsDeleted         bool
 	CandidateDeletedAt         *time.Time
-	CandidateCreatedAt         time.Time
-	CandidateUpdatedAt         time.Time
 }
 
 // CreateProfileInput carries validated data from CreateProfileRequestDTO.

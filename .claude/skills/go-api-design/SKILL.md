@@ -84,9 +84,7 @@ For implementation-time verification of an already-coded endpoint, see `go-revie
 | Convention | Status |
 |---|---|
 | Primary key: `"id"` | ✓ Consistent across all DTOs |
-| Timestamps: `"created_at"`, `"updated_at"` | Mostly consistent — see Phase 5 for gaps |
-| Status fields: `"status"` | ✓ Consistent |
-| Foreign key names: domain-prefixed in JSON | Mostly consistent (`"exam_registration_id"`, `"exam_result_id"`, `"exam_session_id"`) |
+| Timestamps: `"created_at"`, `"updated_at"` | Do NOT return these to save memory (GC optimization) |
 | JSON tag casing: `snake_case` | ✓ Consistent across all DTOs |
 | Nullable fields: `omitempty` | ✓ Consistent on pointer types |
 
@@ -197,29 +195,11 @@ If a new endpoint is described as "admin-only" but the path does not start with 
 
 ---
 
-## Phase 5 — Response DTO Field Consistency
+## Phase 5 — DTO Consistency
 
-### Timestamp fields
+**Rule for new DTOs:** Do NOT include `created_at` and `updated_at` in response DTOs or entity structs. This minimizes memory allocation, struct size, and garbage collection overhead. Only select these fields in SQL when explicitly needed for `ORDER BY` or business logic, but do not return them to the client.
 
-**Gap found in existing code (report but do not silently add to existing DTOs — breaking change):**
-
-| DTO | `created_at` | `updated_at` |
-|---|---|---|
-| `AccountResponseDTO` | ✓ | ✓ |
-| `CandidateResponseDTO` | ✓ | ✓ |
-| `DocumentResponseDTO` | ✓ | ✓ |
-| `ExamRegistrationResponseDTO` | ✓ | ✗ missing |
-| `PaymentResponseDTO` | ✓ | ✗ missing |
-| `ExamResultResponseDTO` | ✓ | ✗ missing |
-| `RecheckResponseDTO` | ✓ | ✗ missing |
-| `CertificateResponseDTO` | ✓ | ✗ missing |
-| `DeliveryResponseDTO` | ✓ | ✓ |
-| `ExamSessionResponseDTO` | ✗ missing | ✗ missing |
-| `NotificationResponseDTO` | ✓ | ✗ missing |
-
-**Rule for new DTOs:** Every new response DTO for a mutable resource must include both `created_at` and `updated_at`. Omitting either is a deviation.
-
-### Foreign-key field naming
+## Output Formateign-key field naming
 
 **Convention confirmed:** Foreign key JSON fields use the full domain-qualified name of the referenced entity's ID: `"exam_registration_id"`, `"exam_result_id"`, `"exam_session_id"`, `"exam_seat_id"`, `"candidate_id"`, `"certificate_id"`.
 

@@ -18,12 +18,9 @@ type CandidateDocumentEntity struct {
 	CandidateDocumentBackImageURL       *string
 	CandidateDocumentPortraitImageURL   string
 	CandidateDocumentVerificationStatus enum.DocumentVerificationStatus
+	CandidateDocumentRejectionReason    *string
 	CandidateDocumentWardID             *int64
 	CandidateDocumentAddressDetail      *string
-	CandidateDocumentIsDeleted          bool
-	CandidateDocumentDeletedAt          *time.Time
-	CandidateDocumentCreatedAt          time.Time
-	CandidateDocumentUpdatedAt          time.Time
 }
 
 // UploadDocumentInput carries validated data from UploadDocumentRequestDTO.

@@ -3,9 +3,12 @@ package media
 import (
 	"context"
 	"fmt"
-	"mime/multipart"
+	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2"
+	"github.com/cloudinary/cloudinary-go/v2/api"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 )
 
@@ -21,19 +24,18 @@ func NewService(cloudinaryURL string) (*Service, error) {
 	return &Service{cld: cld}, nil
 }
 
-// UploadImage uploads a file to Cloudinary and returns the secure URL.
-func (s *Service) UploadImage(ctx context.Context, file multipart.File) (string, error) {
-	// send file to Cloudinary, folder hsk_vinh_university
-	resp, err := s.cld.Upload.Upload(ctx, file, uploader.UploadParams{
-		Folder: "hsk_vinh_university/candidates",
-		Format: "jpg",
-	})
-	if err != nil {
-		return "", fmt.Errorf("media: upload failed: %w", err)
-	}
+// GenerateSignature creates a signature for direct uploads from the client.
+func (s *Service) GenerateSignature() (string, int64, string, string, error) {
+	timestamp := time.Now().Unix()
+	params := url.Values{}
+	params.Set("timestamp", strconv.FormatInt(timestamp, 10))
+	params.Set("folder", "hsk_vinh_university/candidates")
 
-	// return image url to save to database
-	return resp.SecureURL, nil
+	signature, err := api.SignParameters(params, s.cld.Config.Cloud.APISecret)
+	if err != nil {
+		return "", 0, "", "", fmt.Errorf("media: generate signature: %w", err)
+	}
+	return signature, timestamp, s.cld.Config.Cloud.APIKey, s.cld.Config.Cloud.CloudName, nil
 }
 
 // DeleteImage removes an image from Cloudinary if a DB transaction fails.

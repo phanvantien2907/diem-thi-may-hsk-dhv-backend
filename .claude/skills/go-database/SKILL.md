@@ -109,13 +109,11 @@ err := tx.QueryRowContext(ctx, `
            (some_thing_field_a, some_thing_field_b)
     VALUES ($1, $2)
     RETURNING some_thing_id, some_thing_field_a, some_thing_field_b,
-              some_thing_is_deleted, some_thing_deleted_at,
-              some_thing_created_at, some_thing_updated_at`,
+              some_thing_status, some_thing_capacity`,
     valueA, valueB,
 ).Scan(
     &e.SomeThingID, &e.SomeThingFieldA, &e.SomeThingFieldB,
-    &e.SomeThingIsDeleted, &e.SomeThingDeletedAt,
-    &e.SomeThingCreatedAt, &e.SomeThingUpdatedAt,
+    &e.SomeThingStatus, &e.SomeThingCapacity,
 )
 ```
 

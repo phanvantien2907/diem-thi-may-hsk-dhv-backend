@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS candidate_documents (
     candidate_document_portrait_image_url  VARCHAR(255) NOT NULL,
     candidate_document_verification_status VARCHAR(20)  NOT NULL DEFAULT 'pending'
                                                 CHECK (candidate_document_verification_status IN ('pending', 'verified', 'rejected')),
+    candidate_document_rejection_reason    TEXT,
     candidate_document_ward_id             BIGINT       REFERENCES wards (ward_id),
     candidate_document_address_detail      VARCHAR(255),
     candidate_document_is_deleted          BOOLEAN      NOT NULL DEFAULT FALSE,

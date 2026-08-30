@@ -20,8 +20,22 @@ func ToCandidateResponseDTO(e entities.CandidateEntity) response.CandidateRespon
 		Nationality:       e.CandidateNationality,
 		MotherTongue:      e.CandidateMotherTongue,
 		ChineseStudyYears: e.CandidateChineseStudyYears,
-		CreatedAt:         e.CandidateCreatedAt,
-		UpdatedAt:         e.CandidateUpdatedAt,
+	}
+}
+
+// ToAdminCandidateResponseDTO maps a CandidateEntity to the admin full-view DTO (without document).
+func ToAdminCandidateResponseDTO(e entities.CandidateEntity) response.AdminCandidateResponseDTO {
+	return response.AdminCandidateResponseDTO{
+		ID:                e.CandidateID,
+		AccountID:         e.CandidateAccountID,
+		FullName:          e.CandidateFullName,
+		FullNameCN:        e.CandidateFullNameCN,
+		DOB:               e.CandidateDOB,
+		Gender:            string(e.CandidateGender),
+		Ethnicity:         e.CandidateEthnicity,
+		Religion:          e.CandidateReligion,
+		Nationality:       e.CandidateNationality,
+		ChineseStudyYears: e.CandidateChineseStudyYears,
 	}
 }
 
@@ -38,7 +52,6 @@ func ToDocumentResponseDTO(e entities.CandidateDocumentEntity) response.Document
 		BackImageURL:       e.CandidateDocumentBackImageURL,
 		PortraitImageURL:   e.CandidateDocumentPortraitImageURL,
 		VerificationStatus: string(e.CandidateDocumentVerificationStatus),
-		CreatedAt:          e.CandidateDocumentCreatedAt,
-		UpdatedAt:          e.CandidateDocumentUpdatedAt,
+		RejectionReason:    e.CandidateDocumentRejectionReason,
 	}
 }
