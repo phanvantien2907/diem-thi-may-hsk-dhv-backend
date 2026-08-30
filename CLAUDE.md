@@ -40,19 +40,20 @@ cmd/
 
 internal/
 ├── audit/                  # Cross-cutting audit log domain (only domain with an exported interface)
-├── auth/                   # Account management, JWT issuance
-├── candidate/              # Candidate profile and identity documents
+├── auth/                   # Account management, JWT issuance, session management
+├── candidate/              # Candidate profile and identity documents (with Cloudinary upload)
 ├── certificate/            # Certificate issuance and delivery
 ├── config/                 # Configuration loading (config.go)
 ├── database/               # PostgreSQL connection pool (postgres.go)
 ├── exam/                   # Exam types, rooms, sessions, seat generation
 ├── location/               # Provinces and wards (public reference data)
+├── media/                  # Cloudinary file upload/delete service (shared infrastructure)
 ├── middleware/              # auth.go, cors.go, logger.go, ratelimit.go
 ├── notification/           # System notifications
 ├── payment/                # Payment creation and gateway callback handling
 ├── registration/           # Exam registration and seat reservation
 ├── result/                 # Exam results and recheck requests
-└── utils/                  # Shared HTTP response helpers, validation, password hashing
+└── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
 
 migrations/
 ├── 001_schema.sql          # Full DB schema (applied first)
@@ -72,13 +73,15 @@ internal/<domain>/
 ├── dto/
 │   ├── request/            # Request DTOs (one file per concern)
 │   └── response/           # Response DTOs (one file per concern)
+├── entities/               # *Entity structs mirroring DB tables 1:1 (one file per table)
 ├── enum/                   # Domain-scoped typed string enums
 ├── handler.go              # HTTP handlers — thin, no business logic
 ├── mapper.go               # Entity → response DTO mapping functions
-├── model.go                # *Entity structs that mirror DB tables 1:1
 ├── route.go                # Route registration via RegisterRoutes(...)
 └── service.go              # Business logic + raw SQL queries
 ```
+
+> **Note:** The subdirectory is `entities/` (not a flat `model.go`). Entity structs live in separate files within that package (e.g., `account_entities.go`, `session_entities.go`). Some domains also define input structs in `entities/` (e.g., `CreateProfileInput`, `UploadDocumentInput`) when the service needs a normalized form of the request DTO.
 
 All new features must follow this layout exactly.
 
@@ -106,7 +109,7 @@ PostgreSQL 16
 
 - **Handler** — bind JSON/params/query, call `utils.Validate.Struct()`, call service, call `utils.*` response helper, return. Nothing else.
 - **Service** — owns all business logic, SQL queries, transaction management, audit logging. Receives and returns domain types and DTOs.
-- **Model** (`*Entity`) — plain structs mirroring DB columns 1:1. Some domains also define internal input structs (e.g., `CreateProfileInput`) in `model.go` when the service needs a validated form of the request that differs from the DTO.
+- **Entity** (`*Entity`) — plain structs mirroring DB columns 1:1, living in the `entities/` subdirectory. Some domains also define internal input structs (e.g., `CreateProfileInput`, `UploadDocumentInput`) in the same `entities/` package when the service needs a normalized form of the request DTO.
 - **Mapper** — pure functions converting `*Entity → ResponseDTO`. No business logic.
 - **DTO** — transport layer only. Request DTOs carry `validate` struct tags. Response DTOs carry `json` tags.
 - **Route** — registers URL paths, HTTP methods, attaches middleware. No logic.
@@ -226,9 +229,18 @@ All API routes are mounted under `/api/v1`.
 |---|---|---|---|
 | auth | POST | `/auth/register` | public |
 | auth | POST | `/auth/login` | public |
+| auth | POST | `/auth/refresh` | public |
+| auth | POST | `/auth/force-password-change` | public |
+| auth | POST | `/auth/logout` | JWT |
+| auth | POST | `/auth/logout-all` | JWT |
 | auth | GET | `/me` | JWT |
 | auth | PUT | `/me` | JWT |
 | auth | DELETE | `/me` | JWT |
+| auth | PATCH | `/me/password` | JWT |
+| auth | GET | `/me/sessions` | JWT |
+| auth | DELETE | `/me/sessions/:id` | JWT |
+| auth | DELETE | `/admin/delete-account/:id` | JWT + admin |
+| auth | POST | `/admin/staff-accounts` | JWT + admin |
 | candidate | POST | `/candidates` | JWT |
 | candidate | PUT | `/candidates/:id` | JWT |
 | candidate | POST | `/candidates/:id/documents` | JWT |
@@ -291,7 +303,7 @@ Middleware-level error responses (e.g., 401 from `JWTAuth`, 429 from `RateLimit`
 
 ### Path and query parameters
 
-Path params: parsed with `strconv.ParseInt` via a local `paramID(c, "key") (int64, bool)` helper defined in each handler file.
+Path params: parsed via the shared helper `utils.ParamID(c, "key") (int64, bool)` in `internal/utils/param.go`. Do **not** define per-domain local `paramID` functions.
 
 Query params: bound with `c.ShouldBindQuery(&q)`.
 
@@ -321,7 +333,7 @@ Always bind first, then validate. `utils.Validate` is a package-level `*validato
 
 JWT, HMAC-SHA256 (`jwt.SigningMethodHS256`). Access token TTL: 24 h. Refresh token TTL: 168 h.
 
-**Important implementation note:** `auth.Service.issueToken` embeds only `sub` (account ID), `exp`, and `iat` in the token payload. It does **not** embed `user_role`. The middleware `Claims` struct has `UserID` and `UserRole` fields, but `UserRole` will deserialize to the zero value (empty string) for tokens issued by the current implementation. The `RequireRole` middleware therefore operates on the role extracted from the token — which is empty unless this is explicitly fixed. Be aware of this when implementing or testing role-based access.
+**Token claims:** `auth.Service.issueAccessToken` embeds `sub` (account ID), `user_id`, `user_role`, `exp`, and `iat`. The role is fetched via a JOIN on the `roles` table at login/refresh time. `RequireRole` middleware reads `user_role` from the token claims.
 
 ### Protecting routes
 
@@ -337,23 +349,13 @@ Applied at the group level in `route.go`. Public routes receive no middleware.
 
 ### Extracting the authenticated user in handlers
 
-Each handler file defines a local helper. The name varies slightly by domain:
+Use the shared helper in `internal/utils/account_id.go`:
 
 ```go
-// Used in auth, exam:
-func mustAccountID(c *gin.Context) int64 {
-    v, _ := c.Get(middleware.ContextKeyUserID)
-    return v.(int64)
-}
-
-// Used in candidate, result, certificate, notification:
-func accountID(c *gin.Context) int64 {
-    v, _ := c.Get(middleware.ContextKeyUserID)
-    return v.(int64)
-}
+accountID := utils.MustAccountID(c)  // panics if not authenticated — only use behind JWTAuth middleware
 ```
 
-Both functions are identical in logic. When adding a new handler, follow the naming convention already used in that domain's handler file. Do not create a shared helper for this — the existing pattern is per-domain local functions.
+Do **not** define per-domain local `mustAccountID` / `accountID` helpers. The shared `utils.MustAccountID` is the established pattern across all domains.
 
 ### Roles
 
@@ -363,8 +365,8 @@ Known roles seeded in `002_seed_data.sql`: `admin`, `candidate`.
 
 - Never log tokens, passwords, or the JWT secret.
 - Never expose bcrypt hashes or internal error details to clients.
-- Login failures always return generic "invalid credentials" — do not distinguish between "user not found" and "wrong password."
-- Account statuses `locked` and `pending` (in addition to absence of the record) prevent normal access.
+- Login failures always return generic "thông tin đăng nhập không chính xác" — do not distinguish between "user not found" and "wrong password."
+- Account status `locked` prevents normal access. The `pending` status is no longer enforced at login (OTP verification was removed).
 
 ---
 
@@ -435,16 +437,16 @@ Complete enum reference:
 
 ---
 
-## 11. Models
+## 11. Entities
 
-Entity structs live in `<domain>/model.go`. They mirror database tables 1:1:
+Entity structs live in `<domain>/entities/` as a Go package (one file per table, e.g., `account_entities.go`, `session_entities.go`). They mirror database tables 1:1:
 
-- Named `<TableName>Entity` (e.g., `AccountEntity`, `ExamSeatEntity`).
-- All fields prefixed with the table name in PascalCase (e.g., `AccountEmail`, `ExamSeatStatus`).
+- Named `<TableName>Entity` (e.g., `AccountEntity`, `SessionEntity`, `CandidateDocumentEntity`).
+- All fields prefixed with the table name in PascalCase (e.g., `AccountEmail`, `SessionDeviceInfo`).
 - Nullable columns use pointer types (`*string`, `*time.Time`, `*int64`).
 - Soft-delete fields (`IsDeleted bool`, `DeletedAt *time.Time`) are included on every entity.
 
-Some domains also define **internal input structs** in `model.go` (e.g., `CreateProfileInput`, `UpdateProfileInput`, `UploadDocumentInput` in the candidate domain). These carry validated, parsed data from request DTOs and are used as service method parameters when the service needs a form that differs from the raw DTO.
+Some domains also define **internal input structs** in the `entities/` package (e.g., `CreateProfileInput`, `UpdateProfileInput`, `UploadDocumentInput`). These carry validated, parsed data from request DTOs and are used as service method parameters when the service needs a form that differs from the raw DTO.
 
 Do not add methods to entity structs. Do not expose entity structs as API responses.
 
@@ -692,16 +694,17 @@ Do not duplicate validation between the handler and the service for the same inp
 Checklist:
 
 1. Create `internal/<domain>/` directory.
-2. Create `model.go` with `*Entity` structs mirroring the DB tables.
+2. Create `entities/<table>_entities.go` with `*Entity` structs and optional input structs.
 3. Create `dto/request/<domain>_request.go` and `dto/response/<domain>_response.go`.
 4. Create `enum/<domain>_enum.go` if the domain has typed string states.
 5. Create `service.go`: `Service` struct, `NewService(db *sql.DB, auditSvc audit.Service) *Service`, business methods.
 6. Create `mapper.go`: `To<Domain>ResponseDTO(e Entity) ResponseDTO` functions.
-7. Create `handler.go`: `Handler` struct, `NewHandler(svc *Service) *Handler`, HTTP method functions.
+7. Create `handler.go`: `Handler` struct, `NewHandler(svc *Service) *Handler`, HTTP method functions using `utils.MustAccountID(c)` for auth context.
 8. Create `route.go`: `RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string)` with appropriate middleware.
 9. Wire in `cmd/api/main.go`: service → handler → RegisterRoutes.
 10. Add migration SQL if new tables are required.
 
+If the new domain needs file uploads, inject `*media.Service` into the constructor (see `candidate.Service`).
 If the new domain does not need audit logging (like `location` or `notification`), omit `auditSvc` from the constructor — follow the pattern of those domains.
 
 ---

@@ -25,7 +25,7 @@ description: |
 ## Phase 1 — Understand
 
 1. Read the requirement carefully. Identify:
-   - The owning domain(s) from `internal/`: `auth`, `candidate`, `exam`, `registration`, `payment`, `result`, `certificate`, `notification`, `location`, `audit`.
+   - The owning domain(s) from `internal/`: `auth`, `candidate`, `exam`, `registration`, `payment`, `result`, `certificate`, `notification`, `location`, `audit`, `media`.
    - Whether this touches an existing domain or requires a new one.
    - All HTTP endpoints affected (method, path, auth level).
    - All database tables affected.
@@ -106,7 +106,7 @@ internal/<domain>/
 ├── dto/request/<domain>_request.go   # validate tags on all fields
 ├── dto/response/<domain>_response.go # json tags
 ├── enum/<domain>_enum.go             # Valid() + String() on every type
-├── model.go                          # *Entity structs + optional input structs
+├── entities/<table>_entities.go      # *Entity structs + optional input structs (CreateXInput, etc.)
 ├── mapper.go                         # pure To<X>ResponseDTO functions
 ├── service.go                        # NewService(db, auditSvc) *Service
 ├── handler.go                        # NewHandler(svc) *Handler
@@ -126,14 +126,14 @@ Wire in `cmd/api/main.go` last.
 func (h *Handler) DoThing(c *gin.Context) {
     var req request.DoThingRequestDTO
     if err := c.ShouldBindJSON(&req); err != nil {
-        utils.BadRequest(c, "invalid request body")
+        utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
         return
     }
     if err := utils.Validate.Struct(req); err != nil {
         utils.BadRequest(c, err.Error())
         return
     }
-    result, err := h.svc.DoThing(c.Request.Context(), req)
+    result, err := h.svc.DoThing(c.Request.Context(), req, utils.MustAccountID(c))
     if err != nil {
         utils.Conflict(c, err.Error()) // or NotFound, InternalServerError
         return
@@ -189,7 +189,8 @@ g.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 ### Do not
 - Write business logic in handlers.
 - Call `c.JSON` directly — use `utils.*`.
-- Use `context.Background()` inside request processing.
+- Use `context.Background()` inside request processing (exception: Cloudinary cleanup on rollback in `candidate.Service`).
+- Define per-domain local `mustAccountID` or `paramID` helpers — use `utils.MustAccountID(c)` and `utils.ParamID(c, "key")`.
 - Add repositories, interfaces, or DI frameworks.
 - Touch unrelated files.
 
