@@ -516,15 +516,20 @@ Do not reorder global middleware without understanding the security and logging 
 
 ## 15. Error Handling
 
+### Localization (Tiếng Việt)
+
+- **All user-facing error messages must be in Vietnamese.** This includes any `errors.New("...")` returned from the service layer that is destined to bubble up to the client (e.g., via `utils.BadRequest(c, err.Error())`).
+- Internal error wrapping (e.g., `fmt.Errorf("domain: operation: %w", err)`) and log messages should remain in English for developer traceability.
+
 ### In services
 
 Wrap errors with `fmt.Errorf("domain: operation: %w", err)`.
 
-Detect not-found with `errors.Is(err, sql.ErrNoRows)`, then return a plain `errors.New("entity not found")`:
+Detect not-found with `errors.Is(err, sql.ErrNoRows)`, then return a plain `errors.New("Không tìm thấy thực thể")`:
 
 ```go
 if errors.Is(err, sql.ErrNoRows) {
-    return ..., errors.New("account not found")
+    return ..., errors.New("Không tìm thấy tài khoản")
 } else if err != nil {
     return ..., fmt.Errorf("auth: get account: %w", err)
 }

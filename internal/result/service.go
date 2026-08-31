@@ -103,7 +103,7 @@ func (s *Service) GetResultByRegistration(ctx context.Context, registrationID in
 		&e.ExamResultCreatedAt, &e.ExamResultUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return response.ExamResultResponseDTO{}, errors.New("result not found")
+		return response.ExamResultResponseDTO{}, errors.New("Không tìm thấy kết quả thi")
 	}
 	if err != nil {
 		return response.ExamResultResponseDTO{}, fmt.Errorf("result: get: %w", err)
@@ -191,7 +191,7 @@ func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInpu
 		&e.ExamRecheckCreatedAt, &e.ExamRecheckUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return response.RecheckResponseDTO{}, errors.New("recheck request not found")
+		return response.RecheckResponseDTO{}, errors.New("Không tìm thấy yêu cầu phúc khảo")
 	}
 	if err != nil {
 		return response.RecheckResponseDTO{}, fmt.Errorf("result: review: %w", err)

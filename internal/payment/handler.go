@@ -16,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) CreatePayment(c *gin.Context) {
 	var req request.CreatePaymentRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -35,7 +35,7 @@ func (h *Handler) CreatePayment(c *gin.Context) {
 func (h *Handler) Callback(c *gin.Context) {
 	var req request.PaymentCallbackRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -57,12 +57,12 @@ func (h *Handler) GetPaymentHistory(c *gin.Context) {
 	}
 	_ = c.ShouldBindQuery(&q)
 	if q.CandidateID <= 0 {
-		utils.BadRequest(c, "candidate_id query param required")
+		utils.BadRequest(c, "Tham số candidate_id là bắt buộc")
 		return
 	}
 	list, err := h.svc.GetPaymentHistory(c.Request.Context(), q.CandidateID)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch payment history")
+		utils.InternalServerError(c, "Lấy lịch sử giao dịch thất bại")
 		return
 	}
 	utils.OK(c, list)

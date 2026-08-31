@@ -35,7 +35,7 @@ func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceRespons
 		WHERE province_is_deleted = FALSE
 		ORDER BY province_name ASC`)
 	if err != nil {
-		return nil, fmt.Errorf("location: list provinces: %w", err)
+		return nil, fmt.Errorf("location: lấy danh sách tỉnh thất bại: %w", err)
 	}
 	defer rows.Close()
 
@@ -43,7 +43,7 @@ func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceRespons
 	for rows.Next() {
 		var e entities.ProvinceEntity
 		if err := rows.Scan(&e.ProvinceID, &e.ProvinceCode, &e.ProvinceName); err != nil {
-			return nil, fmt.Errorf("location: scan province: %w", err)
+			return nil, fmt.Errorf("location: quét dữ liệu tỉnh thất bại: %w", err)
 		}
 		list = append(list, ToProvinceResponseDTO(e))
 	}
@@ -59,7 +59,7 @@ func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.W
 		WHERE ward_province_id = $1 AND ward_is_deleted = FALSE
 		ORDER BY ward_name ASC`, provinceID)
 	if err != nil {
-		return nil, fmt.Errorf("location: list wards: %w", err)
+		return nil, fmt.Errorf("location: lấy danh sách xã/phường thất bại: %w", err)
 	}
 	defer rows.Close()
 
@@ -69,7 +69,7 @@ func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.W
 		if err := rows.Scan(
 			&e.WardID, &e.WardProvinceID, &e.WardCode, &e.WardName, &e.WardType,
 		); err != nil {
-			return nil, fmt.Errorf("location: scan ward: %w", err)
+			return nil, fmt.Errorf("location: quét dữ liệu xã/phường thất bại: %w", err)
 		}
 		list = append(list, ToWardResponseDTO(e))
 	}
@@ -92,7 +92,7 @@ func (s *Service) GetWardDeliveryCoverage(ctx context.Context, wardID int64) (en
 		return entities.WardCoverageEntity{}, errors.New("xã/phường không tồn tại")
 	}
 	if err != nil {
-		return entities.WardCoverageEntity{}, fmt.Errorf("location: get ward coverage: %w", err)
+		return entities.WardCoverageEntity{}, fmt.Errorf("location: lấy thông tin giao hàng: %w", err)
 	}
 	return e, nil
 }
@@ -103,22 +103,26 @@ func (s *Service) GetWardDeliveryCoverage(ctx context.Context, wardID int64) (en
 func (s *Service) StatsCandidatesByProvince(ctx context.Context) ([]response.ProvinceStatsResponseDTO, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.province_id, p.province_code, p.province_name,
-		       COUNT(DISTINCT c.candidate_id) AS total
+       COALESCE(sub.total, 0) AS total
 		FROM provinces p
-		LEFT JOIN wards w
-		       ON w.ward_province_id = p.province_id
-		      AND w.ward_is_deleted = FALSE
-		LEFT JOIN candidate_documents cd
-		       ON cd.candidate_document_ward_id = w.ward_id
-		      AND cd.candidate_document_is_deleted = FALSE
-		LEFT JOIN candidates c
-		       ON c.candidate_id = cd.candidate_document_candidate_id
-		      AND c.candidate_is_deleted = FALSE
+		LEFT JOIN (	
+			SELECT
+				w.ward_province_id AS province_id,
+				COUNT(DISTINCT c.candidate_id) AS total
+			FROM wards w
+			JOIN candidate_documents cd
+			ON cd.candidate_document_ward_id = w.ward_id
+			AND cd.candidate_document_is_deleted = FALSE
+			JOIN candidates c
+			ON c.candidate_id = cd.candidate_document_candidate_id
+			AND c.candidate_is_deleted = FALSE
+			WHERE w.ward_is_deleted = FALSE
+			GROUP BY w.ward_province_id
+		) sub ON sub.province_id = p.province_id
 		WHERE p.province_is_deleted = FALSE
-		GROUP BY p.province_id, p.province_code, p.province_name
-		ORDER BY total DESC, p.province_name ASC`)
+		ORDER BY total DESC, p.province_name ASC;`)
 	if err != nil {
-		return nil, fmt.Errorf("location: stats by province: %w", err)
+		return nil, fmt.Errorf("location: lấy thống kê theo tỉnh thất bại: %w", err)
 	}
 	defer rows.Close()
 
@@ -128,7 +132,7 @@ func (s *Service) StatsCandidatesByProvince(ctx context.Context) ([]response.Pro
 		if err := rows.Scan(
 			&e.ProvinceID, &e.ProvinceCode, &e.ProvinceName, &e.Total,
 		); err != nil {
-			return nil, fmt.Errorf("location: scan stats: %w", err)
+			return nil, fmt.Errorf("location: quét dữ liệu thống kê thất bại: %w", err)
 		}
 		list = append(list, ToProvinceStatsResponseDTO(e))
 	}
@@ -148,7 +152,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 		return errors.New("xã/phường đích không tồn tại")
 	}
 	if err != nil {
-		return fmt.Errorf("location: validate target ward: %w", err)
+		return fmt.Errorf("location: kiểm tra xã/phường đích thất bại: %w", err)
 	}
 
 	// Validate source ward exists
@@ -160,7 +164,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 		return errors.New("xã/phường nguồn không tồn tại")
 	}
 	if err != nil {
-		return fmt.Errorf("location: validate source ward: %w", err)
+		return fmt.Errorf("location: kiểm tra xã/phường nguồn thất bại: %w", err)
 	}
 
 	if sourceWardID == req.TargetWardID {
@@ -169,7 +173,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("location: begin tx: %w", err)
+		return fmt.Errorf("location: khởi tạo transaction thất bại: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
@@ -180,7 +184,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 		 WHERE candidate_document_ward_id = $2
 		   AND candidate_document_is_deleted = FALSE`,
 		req.TargetWardID, sourceWardID); err != nil {
-		return fmt.Errorf("location: update candidate_documents: %w", err)
+		return fmt.Errorf("location: cập nhật hồ sơ thí sinh thất bại: %w", err)
 	}
 
 	// Re-point certificate_deliveries
@@ -190,7 +194,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 		 WHERE certificate_delivery_ward_id = $2
 		   AND certificate_delivery_is_deleted = FALSE`,
 		req.TargetWardID, sourceWardID); err != nil {
-		return fmt.Errorf("location: update certificate_deliveries: %w", err)
+		return fmt.Errorf("location: cập nhật địa chỉ giao chứng chỉ thất bại: %w", err)
 	}
 
 	// Soft-delete source ward
@@ -200,7 +204,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 		   SET ward_is_deleted = TRUE, ward_deleted_at = $1
 		 WHERE ward_id = $2`,
 		now, sourceWardID); err != nil {
-		return fmt.Errorf("location: soft-delete source ward: %w", err)
+		return fmt.Errorf("location: xóa mềm xã/phường nguồn thất bại: %w", err)
 	}
 
 	_ = s.auditSvc.Log(ctx, tx, auditdto.CreateAuditLogRequestDTO{
@@ -212,7 +216,7 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 	})
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("location: commit: %w", err)
+		return fmt.Errorf("location: commit transaction thất bại: %w", err)
 	}
 	return nil
 }

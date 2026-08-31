@@ -10,5 +10,4 @@ type ExamRegistrationResponseDTO struct {
 	SeatID       int64     `json:"exam_seat_id"`
 	Status       string    `json:"status"`
 	RegisteredAt time.Time `json:"registered_at"`
-	CreatedAt    time.Time `json:"created_at"`
 }

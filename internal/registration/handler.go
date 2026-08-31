@@ -16,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) ReserveSeat(c *gin.Context) {
 	var req request.ReserveSeatRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -35,28 +35,28 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 func (h *Handler) ConfirmRegistration(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid registration id")
+		utils.BadRequest(c, "ID phiếu đăng ký không hợp lệ")
 		return
 	}
 	if err := h.svc.ConfirmRegistration(c.Request.Context(), id); err != nil {
 		utils.Conflict(c, err.Error())
 		return
 	}
-	utils.OK(c, gin.H{"message": "registration confirmed"})
+	utils.OK(c, gin.H{"message": "Xác nhận phiếu đăng ký thành công"})
 }
 
 // CancelRegistration DELETE /registrations/:id
 func (h *Handler) CancelRegistration(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid registration id")
+		utils.BadRequest(c, "ID phiếu đăng ký không hợp lệ")
 		return
 	}
 	if err := h.svc.CancelRegistration(c.Request.Context(), id); err != nil {
 		utils.Conflict(c, err.Error())
 		return
 	}
-	utils.OK(c, gin.H{"message": "registration cancelled"})
+	utils.OK(c, gin.H{"message": "Đã hủy phiếu đăng ký"})
 }
 
 // GetMyRegistrations GET /registrations?candidate_id=X
@@ -66,12 +66,12 @@ func (h *Handler) GetMyRegistrations(c *gin.Context) {
 	}
 	_ = c.ShouldBindQuery(&q)
 	if q.CandidateID <= 0 {
-		utils.BadRequest(c, "candidate_id query param required")
+		utils.BadRequest(c, "Tham số candidate_id là bắt buộc")
 		return
 	}
 	list, err := h.svc.GetMyRegistrations(c.Request.Context(), q.CandidateID)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch registrations")
+		utils.InternalServerError(c, "Lấy danh sách phiếu đăng ký thất bại")
 		return
 	}
 	utils.OK(c, list)

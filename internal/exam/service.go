@@ -104,7 +104,7 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSe
 		&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return response.ExamSessionResponseDTO{}, errors.New("exam session not found")
+		return response.ExamSessionResponseDTO{}, errors.New("Không tìm thấy ca thi")
 	}
 	if err != nil {
 		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: get session: %w", err)
@@ -145,7 +145,7 @@ func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64, actorI
 		`SELECT exam_session_capacity FROM exam_sessions
 		 WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE`, sessionID,
 	).Scan(&capacity); errors.Is(err, sql.ErrNoRows) {
-		return 0, errors.New("exam session not found")
+		return 0, errors.New("Không tìm thấy ca thi")
 	} else if err != nil {
 		return 0, fmt.Errorf("exam: get capacity: %w", err)
 	}

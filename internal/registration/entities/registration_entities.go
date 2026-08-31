@@ -1,4 +1,4 @@
-package registration
+package entities
 
 import (
 	"time"
@@ -6,7 +6,7 @@ import (
 	"github.com/hskvinh/backend/internal/registration/enum"
 )
 
-// ExamRegistrationEntity mirrors the exam_registrations table 1:1.
+// ExamRegistrationEntity holds the minimal projection used for registration operations.
 type ExamRegistrationEntity struct {
 	ExamRegistrationID            int64
 	ExamRegistrationCandidateID   int64
@@ -14,8 +14,4 @@ type ExamRegistrationEntity struct {
 	ExamRegistrationExamSeatID    int64
 	ExamRegistrationStatus        enum.ExamRegistrationStatus
 	ExamRegistrationRegisteredAt  time.Time
-	ExamRegistrationIsDeleted     bool
-	ExamRegistrationDeletedAt     *time.Time
-	ExamRegistrationCreatedAt     time.Time
-	ExamRegistrationUpdatedAt     time.Time
 }

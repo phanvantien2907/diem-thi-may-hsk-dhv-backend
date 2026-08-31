@@ -17,7 +17,7 @@ func (h *Handler) GetMyNotifications(c *gin.Context) {
 	id := accountID(c)
 	list, err := h.svc.GetMyNotifications(c.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch notifications")
+		utils.InternalServerError(c, "Lấy danh sách thông báo thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -27,14 +27,14 @@ func (h *Handler) GetMyNotifications(c *gin.Context) {
 func (h *Handler) MarkRead(c *gin.Context) {
 	nid, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid notification id")
+		utils.BadRequest(c, "ID thông báo không hợp lệ")
 		return
 	}
 	if err := h.svc.MarkSent(c.Request.Context(), nid); err != nil {
 		utils.NotFound(c, err.Error())
 		return
 	}
-	utils.OK(c, gin.H{"message": "notification marked as read"})
+	utils.OK(c, gin.H{"message": "Đã đánh dấu thông báo là đã đọc"})
 }
 
 func accountID(c *gin.Context) int64 {

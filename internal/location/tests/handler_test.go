@@ -131,7 +131,7 @@ func TestHandler_MergeWard_Validation(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			c.Request = req
 			c.Params = []gin.Param{{Key: "id", Value: "10"}}
-			
+
 			// Mock token claims to bypass utils.MustGetAccountID panics
 			c.Set("account_id", int64(1))
 

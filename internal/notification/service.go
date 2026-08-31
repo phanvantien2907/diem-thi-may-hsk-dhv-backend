@@ -51,7 +51,7 @@ func (s *Service) MarkSent(ctx context.Context, notificationID int64) error {
 		return fmt.Errorf("notification: mark sent: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("notification not found")
+		return errors.New("Không tìm thấy thông báo")
 	}
 	return nil
 }

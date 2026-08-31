@@ -16,7 +16,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) ListProvinces(c *gin.Context) {
 	list, err := h.svc.ListProvinces(c.Request.Context())
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch provinces")
+		utils.InternalServerError(c, "Lấy danh sách tỉnh/thành phố thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -26,12 +26,12 @@ func (h *Handler) ListProvinces(c *gin.Context) {
 func (h *Handler) ListWards(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid province id")
+		utils.BadRequest(c, "ID tỉnh/thành phố không hợp lệ")
 		return
 	}
 	list, err := h.svc.ListWards(c.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch wards")
+		utils.InternalServerError(c, "Lấy danh sách xã/phường thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -41,7 +41,7 @@ func (h *Handler) ListWards(c *gin.Context) {
 func (h *Handler) GetWardDeliveryCoverage(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid ward id")
+		utils.BadRequest(c, "ID xã/phường không hợp lệ")
 		return
 	}
 	courier := c.Query("courier") // optional: "ghn" or "ghtk"
@@ -58,7 +58,7 @@ func (h *Handler) GetWardDeliveryCoverage(c *gin.Context) {
 func (h *Handler) StatsCandidatesByProvince(c *gin.Context) {
 	list, err := h.svc.StatsCandidatesByProvince(c.Request.Context())
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch candidate stats")
+		utils.InternalServerError(c, "Lấy thống kê thí sinh thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -68,13 +68,13 @@ func (h *Handler) StatsCandidatesByProvince(c *gin.Context) {
 func (h *Handler) MergeWard(c *gin.Context) {
 	sourceID, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid ward id")
+		utils.BadRequest(c, "ID xã/phường không hợp lệ")
 		return
 	}
 
 	var req locreq.MergeWardRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "invalid request body")
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {

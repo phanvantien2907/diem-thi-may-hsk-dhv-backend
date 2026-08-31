@@ -41,12 +41,12 @@ func (s *Service) CreatePayment(ctx context.Context, req request.CreatePaymentRe
 		 WHERE exam_registration_id=$1 AND exam_registration_is_deleted=FALSE`,
 		req.ExamRegistrationID,
 	).Scan(&regStatus); errors.Is(err, sql.ErrNoRows) {
-		return response.PaymentResponseDTO{}, errors.New("registration not found")
+		return response.PaymentResponseDTO{}, errors.New("Không tìm thấy phiếu đăng ký")
 	} else if err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: check reg: %w", err)
 	}
 	if regStatus == regenum.RegStatusCancelled {
-		return response.PaymentResponseDTO{}, errors.New("cannot pay for a cancelled registration")
+		return response.PaymentResponseDTO{}, errors.New("Không thể thanh toán cho phiếu đăng ký đã hủy")
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -106,7 +106,7 @@ func (s *Service) ProcessCallback(ctx context.Context, req request.PaymentCallba
 		WHERE payment_transaction_ref=$1 AND payment_is_deleted=FALSE
 		FOR UPDATE`, req.TransactionRef,
 	).Scan(&pay.PaymentID, &pay.PaymentExamRegistrationID, &pay.PaymentStatus); errors.Is(err, sql.ErrNoRows) {
-		return response.PaymentResponseDTO{}, errors.New("payment not found for this transaction reference")
+		return response.PaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch với mã tham chiếu này")
 	} else if err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: lock: %w", err)
 	}
