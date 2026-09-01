@@ -16,3 +16,12 @@ func ToRegistrationResponseDTO(e entities.ExamRegistrationEntity) response.ExamR
 		RegisteredAt: e.ExamRegistrationRegisteredAt,
 	}
 }
+
+// ToWaitlistResponseDTO maps an ExamWaitlistEntity to its public DTO.
+func ToWaitlistResponseDTO(e entities.ExamWaitlistEntity) response.WaitlistResponseDTO {
+	return response.WaitlistResponseDTO{
+		ID:        e.ExamWaitlistID,
+		SessionID: e.ExamWaitlistExamSessionID,
+		JoinedAt:  e.ExamWaitlistJoinedAt,
+	}
+}

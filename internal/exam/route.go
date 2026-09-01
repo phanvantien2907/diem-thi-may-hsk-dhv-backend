@@ -7,8 +7,17 @@ import (
 
 // RegisterRoutes mounts exam routes.
 //
-//	public:  /exam-types, /exam-rooms, /exam-sessions, /exam-sessions/:id, /exam-sessions/:id/seats
-//	admin:   /admin/exam-sessions/:id/seats/generate
+//	public:
+//	  GET  /exam-types
+//	  GET  /exam-rooms
+//	  GET  /exam-sessions                   (filter: exam_type_id, from, to)
+//	  GET  /exam-sessions/:id
+//	  GET  /exam-sessions/:id/seats
+//
+//	admin:
+//	  POST /admin/exam-sessions/batch-create
+//	  POST /admin/exam-sessions/:id/seats/generate
+//	  POST /admin/exam-sessions/:id/cancel
 func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	// Public read endpoints
 	r.GET("/exam-types", h.ListExamTypes)
@@ -17,9 +26,13 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	r.GET("/exam-sessions/:id", h.GetExamSession)
 	r.GET("/exam-sessions/:id/seats", h.ListExamSeats)
 
-	// Admin-only seat generation
-	admin := r.Group("/admin/exam-sessions/:id/seats/generate")
-	admin.Use(middleware.JWTAuth(jwtSecret))
-	admin.Use(middleware.RequireRole("admin"))
-	admin.POST("", h.GenerateSeats)
+	// Admin-only
+	admin := r.Group("/admin")
+	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
+	{
+		// batch-create must be registered BEFORE /:id routes to avoid conflict
+		admin.POST("/exam-sessions/batch-create", h.BatchCreateExamSessions)
+		admin.POST("/exam-sessions/:id/seats/generate", h.GenerateSeats)
+		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)
+	}
 }

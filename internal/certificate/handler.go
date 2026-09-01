@@ -266,7 +266,7 @@ func (h *Handler) PrintBatch(c *gin.Context) {
 
 // GetCertificate GET /certificates/:result_id (legacy – kept for backward compat)
 func (h *Handler) GetCertificate(c *gin.Context) {
-	id, ok := utils.ParamID(c, "result_id")
+	id, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "ID kết quả thi không hợp lệ")
 		return

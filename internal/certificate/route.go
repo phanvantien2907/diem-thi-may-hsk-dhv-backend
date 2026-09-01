@@ -34,7 +34,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	adminG.Use(auth, admin)
 	{
 		adminG.POST("/certificates/issue-batch", h.IssueBatch)
-		adminG.POST("/certificates/:result_id/issue", h.IssueCertificate)
+		adminG.POST("/certificates/:id/issue", h.IssueCertificate)
 		adminG.POST("/certificates/:id/revoke", h.RevokeCertificate)
 		adminG.GET("/certificates", h.ListCertificates)
 		adminG.GET("/certificates/print-batch", h.PrintBatch)

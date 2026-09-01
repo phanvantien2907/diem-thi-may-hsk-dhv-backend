@@ -2,6 +2,7 @@ package exam
 
 import (
 	"github.com/gin-gonic/gin"
+	examreq "github.com/hskvinh/backend/internal/exam/dto/request"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -16,7 +17,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 func (h *Handler) ListExamTypes(c *gin.Context) {
 	list, err := h.svc.ListExamTypes(c.Request.Context())
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch exam types")
+		utils.InternalServerError(c, "Lấy danh sách loại thi thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -26,17 +27,19 @@ func (h *Handler) ListExamTypes(c *gin.Context) {
 func (h *Handler) ListExamRooms(c *gin.Context) {
 	list, err := h.svc.ListExamRooms(c.Request.Context())
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch exam rooms")
+		utils.InternalServerError(c, "Lấy danh sách phòng thi thất bại")
 		return
 	}
 	utils.OK(c, list)
 }
 
-// ListExamSessions GET /exam-sessions
+// ListExamSessions GET /exam-sessions?exam_type_id=&from=&to=
 func (h *Handler) ListExamSessions(c *gin.Context) {
-	list, err := h.svc.ListExamSessions(c.Request.Context())
+	var f examreq.ListExamSessionsFilterDTO
+	_ = c.ShouldBindQuery(&f) // all params optional
+	list, err := h.svc.ListExamSessionsFiltered(c.Request.Context(), f)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch exam sessions")
+		utils.InternalServerError(c, "Lấy danh sách ca thi thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -46,7 +49,7 @@ func (h *Handler) ListExamSessions(c *gin.Context) {
 func (h *Handler) GetExamSession(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid session id")
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
 		return
 	}
 	sess, err := h.svc.GetExamSession(c.Request.Context(), id)
@@ -61,12 +64,12 @@ func (h *Handler) GetExamSession(c *gin.Context) {
 func (h *Handler) ListExamSeats(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid session id")
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
 		return
 	}
 	seats, err := h.svc.ListExamSeats(c.Request.Context(), id)
 	if err != nil {
-		utils.InternalServerError(c, "failed to fetch seats")
+		utils.InternalServerError(c, "Lấy danh sách ghế thi thất bại")
 		return
 	}
 	utils.OK(c, seats)
@@ -76,7 +79,7 @@ func (h *Handler) ListExamSeats(c *gin.Context) {
 func (h *Handler) GenerateSeats(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
-		utils.BadRequest(c, "invalid session id")
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
 		return
 	}
 	actorID := utils.MustAccountID(c)
@@ -86,4 +89,39 @@ func (h *Handler) GenerateSeats(c *gin.Context) {
 		return
 	}
 	utils.Created(c, response.GenerateSeatsResponseDTO{SessionID: id, CreatedSeats: created})
+}
+
+// CancelExamSession POST /admin/exam-sessions/:id/cancel
+func (h *Handler) CancelExamSession(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	if err := h.svc.CancelExamSession(c.Request.Context(), id, actorID); err != nil {
+		utils.Conflict(c, err.Error())
+		return
+	}
+	utils.OK(c, gin.H{"message": "Ca thi đã được hủy"})
+}
+
+// BatchCreateExamSessions POST /admin/exam-sessions/batch-create
+func (h *Handler) BatchCreateExamSessions(c *gin.Context) {
+	var req examreq.BatchCreateExamSessionsRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	list, err := h.svc.BatchCreateExamSessions(c.Request.Context(), req.Sessions, actorID)
+	if err != nil {
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.Created(c, list)
 }
