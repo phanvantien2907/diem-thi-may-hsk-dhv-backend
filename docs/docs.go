@@ -1838,7 +1838,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lấy thông tin profile của user đang đăng nhập (dựa trên token).",
+                "description": "Lấy thông tin tài khoản của người dùng đang đăng nhập (dựa trên token).",
                 "consumes": [
                     "application/json"
                 ],
@@ -1848,7 +1848,7 @@ const docTemplate = `{
                 "tags": [
                     "Auth"
                 ],
-                "summary": "Lấy thông tin tài khoản hiện tại",
+                "summary": "Tài khoản của tôi",
                 "responses": {
                     "200": {
                         "description": "Thành công",

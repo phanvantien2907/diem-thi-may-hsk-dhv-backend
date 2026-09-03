@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/hskvinh/backend/internal/exception"
 )
 
 // Meta holds optional pagination or extra metadata for a response.
@@ -39,35 +40,35 @@ func Created(c *gin.Context, data any) {
 
 // BadRequest sends a 400 response with the provided error message.
 func BadRequest(c *gin.Context, msg string) {
-	c.JSON(http.StatusBadRequest, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusBadRequest, msg)
 }
 
 // Unauthorized sends a 401 response.
 func Unauthorized(c *gin.Context, msg string) {
-	c.JSON(http.StatusUnauthorized, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusUnauthorized, msg)
 }
 
 // Forbidden sends a 403 response.
 func Forbidden(c *gin.Context, msg string) {
-	c.JSON(http.StatusForbidden, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusForbidden, msg)
 }
 
 // NotFound sends a 404 response.
 func NotFound(c *gin.Context, msg string) {
-	c.JSON(http.StatusNotFound, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusNotFound, msg)
 }
 
 // Conflict sends a 409 response.
 func Conflict(c *gin.Context, msg string) {
-	c.JSON(http.StatusConflict, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusConflict, msg)
 }
 
 // TooManyRequests sends a 429 response.
 func TooManyRequests(c *gin.Context, msg string) {
-	c.JSON(http.StatusTooManyRequests, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusTooManyRequests, msg)
 }
 
 // InternalServerError sends a 500 response and keeps the raw error server-side.
 func InternalServerError(c *gin.Context, msg string) {
-	c.JSON(http.StatusInternalServerError, response{Success: false, Error: &msg})
+	exception.Send(c, http.StatusInternalServerError, msg)
 }

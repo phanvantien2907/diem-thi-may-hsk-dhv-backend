@@ -1622,7 +1622,8 @@ paths:
     get:
       consumes:
       - application/json
-      description: Lấy thông tin profile của user đang đăng nhập (dựa trên token).
+      description: Lấy thông tin tài khoản của người dùng đang đăng nhập (dựa trên
+        token).
       produces:
       - application/json
       responses:
@@ -1643,7 +1644,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Lấy thông tin tài khoản hiện tại
+      summary: Tài khoản của tôi
       tags:
       - Auth
     put:

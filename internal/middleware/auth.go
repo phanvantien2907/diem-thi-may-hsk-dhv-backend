@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hskvinh/backend/internal/exception"
 )
 
 const (
@@ -28,12 +29,7 @@ func JWTAuth(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error":   "authorization header is required",
-				"data":    nil,
-				"meta":    nil,
-			})
+			exception.Send(c, http.StatusUnauthorized, "authorization header is required")
 			return
 		}
 
@@ -45,12 +41,7 @@ func JWTAuth(secret string) gin.HandlerFunc {
 			// Fallback: accept token without prefix (convenience for Swagger UI)
 			tokenStr = parts[0]
 		} else {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error":   "authorization header must be in the format: Bearer <token>",
-				"data":    nil,
-				"meta":    nil,
-			})
+			exception.Send(c, http.StatusUnauthorized, "authorization header must be in the format: Bearer <token>")
 			return
 		}
 
@@ -64,12 +55,7 @@ func JWTAuth(secret string) gin.HandlerFunc {
 		})
 
 		if err != nil || !token.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"error":   "invalid or expired token",
-				"data":    nil,
-				"meta":    nil,
-			})
+			exception.Send(c, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
 
@@ -92,12 +78,7 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 		roleStr, _ := role.(string)
 
 		if _, ok := allowed[roleStr]; !ok {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"error":   "insufficient permissions",
-				"data":    nil,
-				"meta":    nil,
-			})
+			exception.Send(c, http.StatusForbidden, "insufficient permissions")
 			return
 		}
 

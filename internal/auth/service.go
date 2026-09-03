@@ -163,7 +163,7 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 	// Check lockout
 	if e.AccountLockedUntil != nil && time.Now().Before(*e.AccountLockedUntil) {
 		remaining := time.Until(*e.AccountLockedUntil).Round(time.Second)
-		return response.TokenPairResponseDTO{}, fmt.Errorf("tài khoản bị khóa tạm thời, thử lại sau %s", remaining)
+		return response.TokenPairResponseDTO{}, fmt.Errorf("tài khoản bị khóa tạm thời, thử lại sau %s", formatDurationVN(remaining))
 	}
 
 	// Verify password
@@ -681,4 +681,16 @@ func (s *Service) parseTempToken(tokenStr string) (int64, error) {
 func mustMarshal(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// formatDurationVN formats a time.Duration into a Vietnamese string (e.g., "10 phút 30 giây").
+func formatDurationVN(d time.Duration) string {
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	if m > 0 && s > 0 {
+		return fmt.Sprintf("%d phút %d giây", m, s)
+	} else if m > 0 {
+		return fmt.Sprintf("%d phút", m)
+	}
+	return fmt.Sprintf("%d giây", s)
 }

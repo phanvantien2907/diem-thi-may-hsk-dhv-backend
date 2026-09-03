@@ -274,14 +274,26 @@ All API routes are mounted under `/api/v1`.
 
 ### Response envelope
 
-Every endpoint returns the same JSON envelope:
+**Success Responses (HTTP 2xx):**
+Every successful endpoint returns the standard JSON envelope:
 
 ```json
 {
   "success": true,
   "data":    <payload>,
-  "error":   null,
   "meta":    null
+}
+```
+
+**Exception Responses (HTTP 4xx, 5xx):**
+All error responses use the `internal/exception` module and return the RESTful error envelope:
+
+```json
+{
+  "statusCode": 400,
+  "timestamp": "2026-09-03T16:17:02+07:00",
+  "path": "/api/v1/...",
+  "msg": "Thông báo lỗi chi tiết"
 }
 ```
 
@@ -370,6 +382,8 @@ Known roles seeded in `002_seed_data.sql`: `admin`, `candidate`.
 - Never expose bcrypt hashes or internal error details to clients.
 - Login failures always return generic "thông tin đăng nhập không chính xác" — do not distinguish between "user not found" and "wrong password."
 - Account status `locked` prevents normal access. The `pending` status is no longer enforced at login (OTP verification was removed).
+- **Authentication Identifiers:** Candidates login using CCCD (12 digits) or Email.
+- **Passwords:** Must contain both letters and numbers, minimum 8 characters, at least one uppercase letter, and at least one special symbol (!, @, #, etc).
 
 ---
 
