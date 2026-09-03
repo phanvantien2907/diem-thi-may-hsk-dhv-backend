@@ -19,6 +19,18 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // ─── Me endpoints ─────────────────────────────────────────────────────────────
 
 // ListMyCertificates GET /me/certificates
+// @Summary Danh sách chứng chỉ
+// @Description Xem các chứng chỉ đã được cấp của bản thân.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/certificates [get]
 func (h *Handler) ListMyCertificates(c *gin.Context) {
 	page, limit := utils.PageLimit(c)
 	dtos, meta, err := h.svc.ListMyCertificates(c.Request.Context(), utils.MustAccountID(c), page, limit)
@@ -45,6 +57,19 @@ func (h *Handler) GetMyCertificate(c *gin.Context) {
 }
 
 // DownloadMyCertificatePDF GET /me/certificates/:id/pdf
+// @Summary Tải bản mềm (PDF)
+// @Description Tải file PDF của chứng chỉ.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/certificates/:id/pdf [get]
 func (h *Handler) DownloadMyCertificatePDF(c *gin.Context) {
 	certID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -61,6 +86,20 @@ func (h *Handler) DownloadMyCertificatePDF(c *gin.Context) {
 }
 
 // CreateDelivery POST /me/certificates/:id/deliveries
+// @Summary Yêu cầu gửi chứng chỉ
+// @Description Tạo đơn yêu cầu chuyển phát cứng chứng chỉ về nhà.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Param request body request.CreateDeliveryRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/certificates/:id/deliveries [post]
 func (h *Handler) CreateDelivery(c *gin.Context) {
 	certID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -85,6 +124,19 @@ func (h *Handler) CreateDelivery(c *gin.Context) {
 }
 
 // GetMyDelivery GET /me/certificates/:id/deliveries
+// @Summary Xem vận đơn
+// @Description Xem trạng thái giao hàng của chứng chỉ.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/certificates/:id/deliveries [get]
 func (h *Handler) GetMyDelivery(c *gin.Context) {
 	certID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -124,6 +176,19 @@ func (h *Handler) UpdateMyDeliveryAddress(c *gin.Context) {
 }
 
 // ReissueRequest POST /me/certificates/:id/reissue-request
+// @Summary Yêu cầu cấp lại
+// @Description Xin cấp lại bản cứng chứng chỉ (nếu mất/hỏng).
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/certificates/:id/reissue-request [post]
 func (h *Handler) ReissueRequest(c *gin.Context) {
 	certID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -142,6 +207,16 @@ func (h *Handler) ReissueRequest(c *gin.Context) {
 // ─── Public endpoints ─────────────────────────────────────────────────────────
 
 // VerifyCertificate GET /public/certificates/verify
+// @Summary Xác minh chứng chỉ
+// @Description API công khai để tra cứu/xác minh tính hợp lệ của chứng chỉ.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Param request body request.VerifyCertRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /public/certificates/verify [get]
 func (h *Handler) VerifyCertificate(c *gin.Context) {
 	var req request.VerifyCertRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -177,6 +252,19 @@ func (h *Handler) VerifyCertificate(c *gin.Context) {
 // ─── Admin endpoints ──────────────────────────────────────────────────────────
 
 // IssueCertificate POST /admin/certificates/:result_id/issue
+// @Summary Cấp chứng chỉ đơn lẻ (Admin)
+// @Description Cấp chứng chỉ cho một thí sinh cụ thể.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.IssueCertificateRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/certificates/:result_id/issue [post]
 func (h *Handler) IssueCertificate(c *gin.Context) {
 	var req request.IssueCertificateRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -196,6 +284,19 @@ func (h *Handler) IssueCertificate(c *gin.Context) {
 }
 
 // IssueBatch POST /admin/certificates/issue-batch
+// @Summary Cấp chứng chỉ hàng loạt (Admin)
+// @Description Cấp chứng chỉ cho nhiều thí sinh cùng lúc sau khi có kết quả.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.BatchIssueRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/certificates/issue-batch [post]
 func (h *Handler) IssueBatch(c *gin.Context) {
 	var req request.BatchIssueRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -215,6 +316,20 @@ func (h *Handler) IssueBatch(c *gin.Context) {
 }
 
 // RevokeCertificate POST /admin/certificates/:id/revoke
+// @Summary Thu hồi chứng chỉ (Admin)
+// @Description Vô hiệu hóa một chứng chỉ do sai sót hoặc vi phạm.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Param request body request.RevokeCertificateRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/certificates/:id/revoke [post]
 func (h *Handler) RevokeCertificate(c *gin.Context) {
 	certID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -238,6 +353,19 @@ func (h *Handler) RevokeCertificate(c *gin.Context) {
 }
 
 // ListCertificates GET /admin/certificates
+// @Summary Danh sách chứng chỉ (Admin)
+// @Description Admin xem toàn bộ chứng chỉ trên hệ thống.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.ListCertificatesRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/certificates [get]
 func (h *Handler) ListCertificates(c *gin.Context) {
 	var req request.ListCertificatesRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -259,6 +387,18 @@ func (h *Handler) ListCertificates(c *gin.Context) {
 }
 
 // PrintBatch GET /admin/certificates/print-batch
+// @Summary In chứng chỉ hàng loạt
+// @Description Xuất file in cứng cho các chứng chỉ mới cấp.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/certificates/print-batch [get]
 func (h *Handler) PrintBatch(c *gin.Context) {
 	// TODO: parse ?ids=1,2,3 and generate merged PDF
 	utils.OK(c, gin.H{"message": "Tính năng xuất PDF hàng loạt đang được phát triển"})
@@ -280,6 +420,19 @@ func (h *Handler) GetCertificate(c *gin.Context) {
 }
 
 // ListDeliveries GET /admin/deliveries
+// @Summary Danh sách vận đơn (Admin)
+// @Description Quản lý các yêu cầu chuyển phát chứng chỉ.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.ListDeliveriesRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/deliveries [get]
 func (h *Handler) ListDeliveries(c *gin.Context) {
 	var req request.ListDeliveriesRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -301,6 +454,20 @@ func (h *Handler) ListDeliveries(c *gin.Context) {
 }
 
 // AdminUpdateDelivery PATCH /admin/deliveries/:id
+// @Summary Cập nhật vận đơn (Admin)
+// @Description Cập nhật mã vận đơn (tracking_no) và trạng thái giao hàng.
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Param request body request.AdminUpdateDeliveryRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/deliveries/:id [patch]
 func (h *Handler) AdminUpdateDelivery(c *gin.Context) {
 	deliveryID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -327,6 +494,18 @@ func (h *Handler) AdminUpdateDelivery(c *gin.Context) {
 // ─── Webhook endpoint ─────────────────────────────────────────────────────────
 
 // ShippingWebhook POST /webhooks/shipping/:courier
+// @Summary Webhook Giao Hàng
+// @Description Nhận trạng thái cập nhật từ đơn vị vận chuyển (GHN, ViettelPost...).
+// @Tags Certificate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /webhooks/shipping/:courier [post]
 func (h *Handler) ShippingWebhook(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {

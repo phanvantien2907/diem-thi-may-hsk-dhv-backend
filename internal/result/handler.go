@@ -13,6 +13,19 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateResult POST /admin/results
+// @Summary Nhập điểm (Admin)
+// @Description Admin nhập/cập nhật điểm thi cho thí sinh.
+// @Tags Result
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.CreateResultRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/results [post]
 func (h *Handler) CreateResult(c *gin.Context) {
 	var req request.CreateResultRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -32,6 +45,20 @@ func (h *Handler) CreateResult(c *gin.Context) {
 }
 
 // GetResult GET /results/:registration_id
+// @Summary Xem điểm thi
+// @Description Thí sinh tra cứu điểm thi của mình.
+// @Tags Result
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param registration_id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Chưa có điểm"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /results/:registration_id [get]
 func (h *Handler) GetResult(c *gin.Context) {
 	id, ok := utils.ParamID(c, "registration_id")
 	if !ok {

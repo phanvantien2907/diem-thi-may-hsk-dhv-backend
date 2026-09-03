@@ -14,6 +14,18 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // ListExamTypes GET /exam-types
+// @Summary Danh sách loại kỳ thi
+// @Description Lấy danh sách các loại chứng chỉ/kỳ thi (HSK 1, HSK 2...).
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /exam-types [get]
 func (h *Handler) ListExamTypes(c *gin.Context) {
 	list, err := h.svc.ListExamTypes(c.Request.Context())
 	if err != nil {
@@ -34,6 +46,18 @@ func (h *Handler) ListExamRooms(c *gin.Context) {
 }
 
 // ListExamSessions GET /exam-sessions?exam_type_id=&from=&to=
+// @Summary Danh sách ca thi
+// @Description Xem các ca thi đang mở hoặc sắp diễn ra.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /exam-sessions [get]
 func (h *Handler) ListExamSessions(c *gin.Context) {
 	var f examreq.ListExamSessionsFilterDTO
 	_ = c.ShouldBindQuery(&f) // all params optional
@@ -61,6 +85,19 @@ func (h *Handler) GetExamSession(c *gin.Context) {
 }
 
 // ListExamSeats GET /exam-sessions/:id/seats
+// @Summary Sơ đồ ghế ngồi
+// @Description Xem danh sách ghế và trạng thái (trống, đang giữ, đã đặt) của một ca thi.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /exam-sessions/:id/seats [get]
 func (h *Handler) ListExamSeats(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -92,6 +129,19 @@ func (h *Handler) GenerateSeats(c *gin.Context) {
 }
 
 // CancelExamSession POST /admin/exam-sessions/:id/cancel
+// @Summary Hủy ca thi (Admin)
+// @Description Admin hủy một ca thi (khi chưa có ai đăng ký).
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/:id/cancel [post]
 func (h *Handler) CancelExamSession(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {

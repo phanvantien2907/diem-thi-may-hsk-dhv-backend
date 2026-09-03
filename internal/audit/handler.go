@@ -14,6 +14,19 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 
 // List GET /admin/audit-logs
 // Accepts query params: actor_id, action, entity_table, entity_id, from, to, page, limit.
+// @Summary Nhật ký hệ thống (Admin)
+// @Description Tra cứu lịch sử hoạt động (Audit Logs) của người dùng và admin.
+// @Tags Audit
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.ListAuditLogRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/audit-logs [get]
 func (h *Handler) List(c *gin.Context) {
 	var req request.ListAuditLogRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {

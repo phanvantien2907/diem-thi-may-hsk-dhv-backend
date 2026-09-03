@@ -17,6 +17,20 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ReserveSeat POST /me/registrations
+// @Summary Giữ chỗ / Đăng ký thi
+// @Description Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái chờ thanh toán.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.ReserveSeatRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 409 {object} map[string]interface{} "Ghế đã có người giữ/đặt"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/registrations [post]
 func (h *Handler) ReserveSeat(c *gin.Context) {
 	var req request.ReserveSeatRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -37,6 +51,18 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 }
 
 // GetMyRegistrations GET /me/registrations
+// @Summary Danh sách đăng ký thi
+// @Description Xem lịch sử đăng ký thi của bản thân.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/registrations [get]
 func (h *Handler) GetMyRegistrations(c *gin.Context) {
 	candidateID := utils.MustAccountID(c)
 	list, err := h.svc.GetMyRegistrations(c.Request.Context(), candidateID)
@@ -72,6 +98,20 @@ func (h *Handler) PaymentConfirm(c *gin.Context) {
 }
 
 // TransferRegistration POST /me/registrations/:id/transfer
+// @Summary Chuyển ca thi
+// @Description Thí sinh xin chuyển sang ca thi khác (nếu đủ điều kiện).
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Param request body request.TransferRegistrationRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/registrations/:id/transfer [post]
 func (h *Handler) TransferRegistration(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -97,6 +137,19 @@ func (h *Handler) TransferRegistration(c *gin.Context) {
 }
 
 // CancelRegistration POST /me/registrations/:id/cancel
+// @Summary Hủy đăng ký thi
+// @Description Thí sinh hủy đơn đăng ký thi (hoàn trả ghế trống).
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/registrations/:id/cancel [post]
 func (h *Handler) CancelRegistration(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -112,6 +165,19 @@ func (h *Handler) CancelRegistration(c *gin.Context) {
 }
 
 // GetAdmissionSlip GET /me/registrations/:id/admission-slip
+// @Summary Lấy Thẻ dự thi
+// @Description Lấy thông tin thẻ dự thi (SBD, phòng thi, giờ thi) sau khi đã đăng ký thành công.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/registrations/:id/admission-slip [get]
 func (h *Handler) GetAdmissionSlip(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -132,6 +198,19 @@ func (h *Handler) GetAdmissionSlip(c *gin.Context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // JoinWaitlist POST /me/exam-sessions/:id/waitlist
+// @Summary Đăng ký danh sách chờ
+// @Description Đăng ký nhận thông báo khi có ghế trống trong ca thi đã đầy.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/exam-sessions/:id/waitlist [post]
 func (h *Handler) JoinWaitlist(c *gin.Context) {
 	sessionID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -152,6 +231,20 @@ func (h *Handler) JoinWaitlist(c *gin.Context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // MarkAttendance PATCH /proctor/exam-sessions/:id/attendance/:registration_id
+// @Summary Điểm danh
+// @Description Giám thị đánh dấu có mặt/vắng mặt của thí sinh tại phòng thi.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Param registration_id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /proctor/exam-sessions/:id/attendance/:registration_id [patch]
 func (h *Handler) MarkAttendance(c *gin.Context) {
 	sessionID, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -176,6 +269,19 @@ func (h *Handler) MarkAttendance(c *gin.Context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // GetSessionDashboard GET /admin/exam-sessions/:id/dashboard
+// @Summary Thống kê ca thi (Admin)
+// @Description Xem thống kê nhanh (số ghế trống, số đăng ký...) của ca thi.
+// @Tags Registration
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/:id/dashboard [get]
 func (h *Handler) GetSessionDashboard(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {

@@ -13,6 +13,18 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // GetMyNotifications GET /notifications
+// @Summary Danh sách thông báo
+// @Description Lấy danh sách thông báo hệ thống (hộp thư đến).
+// @Tags Notification
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /notifications [get]
 func (h *Handler) GetMyNotifications(c *gin.Context) {
 	id := accountID(c)
 	list, err := h.svc.GetMyNotifications(c.Request.Context(), id)

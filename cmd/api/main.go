@@ -23,8 +23,20 @@ import (
 	"github.com/hskvinh/backend/internal/payment"
 	"github.com/hskvinh/backend/internal/registration"
 	"github.com/hskvinh/backend/internal/result"
+
+	_ "github.com/hskvinh/backend/docs"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// @title Vinh University HSK Computer-based Test Registration System API
+// @version 1.0
+// @description This is the backend API for Vinh University HSK Computer-based Test Registration System.
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	// ── Config ────────────────────────────────────────────────────────────
 	cfg, err := config.Load()
@@ -85,6 +97,11 @@ func main() {
 	engine := gin.New()
 	engine.Use(middleware.CORS(cfg.CORSAllowedOrigins), middleware.Logger(), gin.Recovery(), limiter.RateLimit())
 
+	// Redirect Root to Swagger UI
+	engine.GET("/", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/swagger/index.html")
+	})
+
 	// ── Health ────────────────────────────────────────────────────────────
 	engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -94,6 +111,9 @@ func main() {
 			"meta":    nil,
 		})
 	})
+
+	// ── Swagger API Docs ──────────────────────────────────────────────────
+	engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// ── Feature Routes ────────────────────────────────────────────────────
 	api := engine.Group("/api/v1")

@@ -15,6 +15,19 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // CreateProfile POST /me/candidate-profile
+// @Summary Tạo hồ sơ thí sinh
+// @Description Khởi tạo hồ sơ chi tiết cho thí sinh (sau khi đăng ký tài khoản).
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.CreateProfileRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/candidate-profile [post]
 func (h *Handler) CreateProfile(c *gin.Context) {
 	var req request.CreateProfileRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -34,6 +47,19 @@ func (h *Handler) CreateProfile(c *gin.Context) {
 }
 
 // GetMyProfile GET /me/candidate-profile
+// @Summary Lấy hồ sơ thí sinh
+// @Description Xem hồ sơ chi tiết của bản thân.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy hồ sơ"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/candidate-profile [get]
 func (h *Handler) GetMyProfile(c *gin.Context) {
 	cand, err := h.svc.GetMyProfile(c.Request.Context(), utils.MustAccountID(c))
 	if err != nil {
@@ -68,6 +94,15 @@ func (h *Handler) PatchMyProfile(c *gin.Context) {
 
 // UploadDocument POST /me/candidate-profile/documents
 // GetUploadSignature GET /candidates/upload-signature
+// @Summary GetUploadSignature
+// @Description Endpoint for GetUploadSignature
+// @Tags candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /candidates/upload-signature [get]
 func (h *Handler) GetUploadSignature(c *gin.Context) {
 	sig, err := h.svc.GetUploadSignature(c.Request.Context())
 	if err != nil {
@@ -97,6 +132,19 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 }
 
 // AdminListCandidates GET /admin/candidates
+// @Summary Danh sách thí sinh (Admin)
+// @Description Lọc, phân trang và xem danh sách toàn bộ thí sinh trên hệ thống.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.AdminListCandidatesRequestDTO true "Dữ liệu yêu cầu"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/candidates [get]
 func (h *Handler) AdminListCandidates(c *gin.Context) {
 	var req request.AdminListCandidatesRequestDTO
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -117,6 +165,15 @@ func (h *Handler) AdminListCandidates(c *gin.Context) {
 
 // AdminListDuplicates GET /admin/candidates/duplicates
 // NOTE: This route must be registered BEFORE /admin/candidates/:id to avoid path conflict.
+// @Summary AdminListDuplicates
+// @Description Endpoint for AdminListDuplicates
+// @Tags candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /admin/candidates/duplicates [get]
 func (h *Handler) AdminListDuplicates(c *gin.Context) {
 	items, err := h.svc.AdminListDuplicates(c.Request.Context())
 	if err != nil {
@@ -142,6 +199,19 @@ func (h *Handler) AdminGetCandidate(c *gin.Context) {
 }
 
 // AdminApproveDocument POST /admin/candidates/:id/approve
+// @Summary Duyệt giấy tờ
+// @Description Admin phê duyệt giấy tờ tùy thân của thí sinh.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/candidates/:id/approve [post]
 func (h *Handler) AdminApproveDocument(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -179,6 +249,19 @@ func (h *Handler) AdminRejectDocument(c *gin.Context) {
 }
 
 // AdminGetRoster GET /admin/exam-sessions/:id/roster
+// @Summary Danh sách phòng thi
+// @Description Admin xem danh sách thí sinh trong một phòng thi.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/:id/roster [get]
 func (h *Handler) AdminGetRoster(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {

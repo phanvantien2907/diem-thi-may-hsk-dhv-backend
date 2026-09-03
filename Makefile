@@ -1,7 +1,11 @@
 .PHONY: run build test loadtest-setup loadtest-run dev down
 
-# Chạy API Server
-run:
+# Sinh file Swagger Docs
+swag:
+	go run github.com/swaggo/swag/cmd/swag@latest init -g cmd/api/main.go
+
+# Chạy API Server (tự động cập nhật docs)
+run: swag
 	go run cmd/api/main.go
 
 # Chế độ Dev (nếu bạn có dùng air để live-reload)

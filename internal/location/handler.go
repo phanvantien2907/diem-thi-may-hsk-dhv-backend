@@ -13,6 +13,18 @@ type Handler struct{ svc *Service }
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // ListProvinces GET /locations/provinces
+// @Summary Danh sách Tỉnh/Thành phố
+// @Description Lấy dữ liệu Tỉnh/Thành phố.
+// @Tags Location
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /locations/provinces [get]
 func (h *Handler) ListProvinces(c *gin.Context) {
 	list, err := h.svc.ListProvinces(c.Request.Context())
 	if err != nil {
@@ -38,6 +50,19 @@ func (h *Handler) ListWards(c *gin.Context) {
 }
 
 // GetWardDeliveryCoverage GET /locations/wards/:id/delivery-coverage?courier=ghn
+// @Summary Kiểm tra tuyến giao hàng
+// @Description Kiểm tra xem đơn vị vận chuyển có hỗ trợ giao tới xã/phường này không.
+// @Tags Location
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID tham số định danh"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /locations/wards/:id/delivery-coverage [get]
 func (h *Handler) GetWardDeliveryCoverage(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -55,6 +80,18 @@ func (h *Handler) GetWardDeliveryCoverage(c *gin.Context) {
 }
 
 // StatsCandidatesByProvince GET /admin/locations/stats/candidates-by-province
+// @Summary Thống kê theo Tỉnh (Admin)
+// @Description Thống kê số lượng thí sinh theo khu vực địa lý.
+// @Tags Location
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/locations/stats/candidates-by-province [get]
 func (h *Handler) StatsCandidatesByProvince(c *gin.Context) {
 	list, err := h.svc.StatsCandidatesByProvince(c.Request.Context())
 	if err != nil {

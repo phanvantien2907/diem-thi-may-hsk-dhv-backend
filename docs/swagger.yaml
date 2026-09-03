@@ -1,0 +1,2662 @@
+basePath: /api/v1
+definitions:
+  request.AdminListCandidatesRequestDTO:
+    properties:
+      limit:
+        maximum: 100
+        minimum: 1
+        type: integer
+      page:
+        minimum: 1
+        type: integer
+      status:
+        enum:
+        - pending
+        - verified
+        - rejected
+        type: string
+    type: object
+  request.AdminUpdateDeliveryRequestDTO:
+    properties:
+      courier:
+        maxLength: 50
+        type: string
+      tracking_no:
+        maxLength: 50
+        type: string
+    required:
+    - courier
+    - tracking_no
+    type: object
+  request.BatchIssueRequestDTO:
+    properties:
+      exam_session_id:
+        minimum: 1
+        type: integer
+      issue_date:
+        description: YYYY-MM-DD
+        type: string
+    required:
+    - exam_session_id
+    - issue_date
+    type: object
+  request.ChangePasswordRequestDTO:
+    properties:
+      new_password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      old_password:
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  request.CreateDeliveryRequestDTO:
+    properties:
+      address_detail:
+        maxLength: 255
+        type: string
+      courier:
+        maxLength: 50
+        type: string
+      ward_id:
+        minimum: 1
+        type: integer
+    required:
+    - address_detail
+    type: object
+  request.CreatePaymentRequestDTO:
+    properties:
+      amount:
+        minimum: 1
+        type: integer
+      exam_registration_id:
+        minimum: 1
+        type: integer
+      method:
+        enum:
+        - vnpay
+        - momo
+        - zalopay
+        - bank_transfer
+        - cash
+        type: string
+    required:
+    - amount
+    - exam_registration_id
+    - method
+    type: object
+  request.CreateProfileRequestDTO:
+    properties:
+      chinese_study_years:
+        minimum: 0
+        type: integer
+      dob:
+        description: YYYY-MM-DD
+        type: string
+      ethnicity:
+        maxLength: 50
+        type: string
+      full_name:
+        maxLength: 150
+        type: string
+      full_name_cn:
+        maxLength: 150
+        type: string
+      gender:
+        enum:
+        - male
+        - female
+        - other
+        type: string
+      nationality:
+        maxLength: 50
+        type: string
+      religion:
+        maxLength: 50
+        type: string
+    required:
+    - dob
+    - full_name
+    - gender
+    type: object
+  request.CreateResultRequestDTO:
+    properties:
+      exam_registration_id:
+        minimum: 1
+        type: integer
+      listening_score:
+        maximum: 100
+        minimum: 0
+        type: number
+      reading_score:
+        maximum: 100
+        minimum: 0
+        type: number
+      status:
+        enum:
+        - pass
+        - fail
+        type: string
+      total_score:
+        minimum: 0
+        type: number
+      writing_score:
+        maximum: 100
+        minimum: 0
+        type: number
+    required:
+    - exam_registration_id
+    - status
+    type: object
+  request.CreateStaffRequestDTO:
+    properties:
+      email:
+        maxLength: 150
+        type: string
+      phone:
+        maxLength: 20
+        type: string
+      role_code:
+        type: string
+      username:
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - email
+    - role_code
+    - username
+    type: object
+  request.ForceChangePasswordRequestDTO:
+    properties:
+      new_password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      temp_token:
+        type: string
+    required:
+    - new_password
+    - temp_token
+    type: object
+  request.IssueCertificateRequestDTO:
+    properties:
+      certificate_no:
+        maxLength: 30
+        type: string
+      exam_result_id:
+        minimum: 1
+        type: integer
+      issue_date:
+        description: YYYY-MM-DD
+        type: string
+      verification_code:
+        maxLength: 64
+        type: string
+    required:
+    - certificate_no
+    - exam_result_id
+    - issue_date
+    - verification_code
+    type: object
+  request.ListAuditLogRequestDTO:
+    properties:
+      action:
+        type: string
+      actor_id:
+        type: integer
+      entity_id:
+        type: integer
+      entity_table:
+        type: string
+      from:
+        description: YYYY-MM-DD
+        type: string
+      limit:
+        type: integer
+      page:
+        type: integer
+      to:
+        description: YYYY-MM-DD
+        type: string
+    type: object
+  request.ListCertificatesRequestDTO:
+    properties:
+      exam_session_id:
+        minimum: 1
+        type: integer
+      from:
+        description: YYYY-MM-DD
+        type: string
+      limit:
+        maximum: 100
+        minimum: 1
+        type: integer
+      page:
+        minimum: 1
+        type: integer
+      status:
+        enum:
+        - issued
+        - revoked
+        type: string
+      to:
+        description: YYYY-MM-DD
+        type: string
+    type: object
+  request.ListDeliveriesRequestDTO:
+    properties:
+      limit:
+        maximum: 100
+        minimum: 1
+        type: integer
+      page:
+        minimum: 1
+        type: integer
+      status:
+        enum:
+        - requested
+        - shipped
+        - delivered
+        - failed
+        type: string
+    type: object
+  request.LoginRequestDTO:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  request.PaymentCallbackRequestDTO:
+    properties:
+      status:
+        enum:
+        - pending
+        - success
+        - failed
+        - refunded
+        type: string
+      transaction_ref:
+        type: string
+    required:
+    - status
+    - transaction_ref
+    type: object
+  request.RefreshTokenRequestDTO:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  request.RegisterRequestDTO:
+    properties:
+      email:
+        maxLength: 150
+        type: string
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      phone:
+        maxLength: 20
+        type: string
+    required:
+    - password
+    - phone
+    type: object
+  request.ReserveSeatRequestDTO:
+    properties:
+      exam_session_id:
+        minimum: 1
+        type: integer
+    required:
+    - exam_session_id
+    type: object
+  request.RevokeCertificateRequestDTO:
+    properties:
+      reason:
+        maxLength: 500
+        type: string
+    required:
+    - reason
+    type: object
+  request.TransferRegistrationRequestDTO:
+    properties:
+      new_exam_session_id:
+        minimum: 1
+        type: integer
+    required:
+    - new_exam_session_id
+    type: object
+  request.UpdateAccountRequestDTO:
+    properties:
+      email:
+        maxLength: 150
+        type: string
+      phone:
+        maxLength: 20
+        type: string
+    type: object
+  request.VerifyCertRequestDTO:
+    properties:
+      certificate_no:
+        type: string
+      code:
+        type: string
+      dob:
+        description: YYYY-MM-DD — required when certificate_no is used
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: This is the backend API for Vinh University HSK Computer-based Test
+    Registration System.
+  title: Vinh University HSK Computer-based Test Registration System API
+  version: "1.0"
+paths:
+  /admin/audit-logs:
+    get:
+      consumes:
+      - application/json
+      description: Tra cứu lịch sử hoạt động (Audit Logs) của người dùng và admin.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ListAuditLogRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Nhật ký hệ thống (Admin)
+      tags:
+      - Audit
+  /admin/candidates:
+    get:
+      consumes:
+      - application/json
+      description: Lọc, phân trang và xem danh sách toàn bộ thí sinh trên hệ thống.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminListCandidatesRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách thí sinh (Admin)
+      tags:
+      - Candidate
+  /admin/candidates/:id/approve:
+    post:
+      consumes:
+      - application/json
+      description: Admin phê duyệt giấy tờ tùy thân của thí sinh.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Duyệt giấy tờ
+      tags:
+      - Candidate
+  /admin/candidates/duplicates:
+    get:
+      consumes:
+      - application/json
+      description: Endpoint for AdminListDuplicates
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: AdminListDuplicates
+      tags:
+      - candidate
+  /admin/certificates:
+    get:
+      consumes:
+      - application/json
+      description: Admin xem toàn bộ chứng chỉ trên hệ thống.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ListCertificatesRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách chứng chỉ (Admin)
+      tags:
+      - Certificate
+  /admin/certificates/:id/revoke:
+    post:
+      consumes:
+      - application/json
+      description: Vô hiệu hóa một chứng chỉ do sai sót hoặc vi phạm.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.RevokeCertificateRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Thu hồi chứng chỉ (Admin)
+      tags:
+      - Certificate
+  /admin/certificates/:result_id/issue:
+    post:
+      consumes:
+      - application/json
+      description: Cấp chứng chỉ cho một thí sinh cụ thể.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.IssueCertificateRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cấp chứng chỉ đơn lẻ (Admin)
+      tags:
+      - Certificate
+  /admin/certificates/issue-batch:
+    post:
+      consumes:
+      - application/json
+      description: Cấp chứng chỉ cho nhiều thí sinh cùng lúc sau khi có kết quả.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.BatchIssueRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cấp chứng chỉ hàng loạt (Admin)
+      tags:
+      - Certificate
+  /admin/certificates/print-batch:
+    get:
+      consumes:
+      - application/json
+      description: Xuất file in cứng cho các chứng chỉ mới cấp.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: In chứng chỉ hàng loạt
+      tags:
+      - Certificate
+  /admin/deliveries:
+    get:
+      consumes:
+      - application/json
+      description: Quản lý các yêu cầu chuyển phát chứng chỉ.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ListDeliveriesRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách vận đơn (Admin)
+      tags:
+      - Certificate
+  /admin/deliveries/:id:
+    patch:
+      consumes:
+      - application/json
+      description: Cập nhật mã vận đơn (tracking_no) và trạng thái giao hàng.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminUpdateDeliveryRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật vận đơn (Admin)
+      tags:
+      - Certificate
+  /admin/exam-sessions/:id/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Admin hủy một ca thi (khi chưa có ai đăng ký).
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Hủy ca thi (Admin)
+      tags:
+      - Exam
+  /admin/exam-sessions/:id/dashboard:
+    get:
+      consumes:
+      - application/json
+      description: Xem thống kê nhanh (số ghế trống, số đăng ký...) của ca thi.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Thống kê ca thi (Admin)
+      tags:
+      - Registration
+  /admin/exam-sessions/:id/roster:
+    get:
+      consumes:
+      - application/json
+      description: Admin xem danh sách thí sinh trong một phòng thi.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách phòng thi
+      tags:
+      - Candidate
+  /admin/locations/stats/candidates-by-province:
+    get:
+      consumes:
+      - application/json
+      description: Thống kê số lượng thí sinh theo khu vực địa lý.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Thống kê theo Tỉnh (Admin)
+      tags:
+      - Location
+  /admin/results:
+    post:
+      consumes:
+      - application/json
+      description: Admin nhập/cập nhật điểm thi cho thí sinh.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateResultRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Nhập điểm (Admin)
+      tags:
+      - Result
+  /admin/staff-accounts:
+    post:
+      consumes:
+      - application/json
+      description: Admin tạo tài khoản cho nhân viên/cán bộ. Trả về mật khẩu tạm.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateStaffRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Tài khoản đã tồn tại
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo tài khoản nhân viên
+      tags:
+      - Auth
+  /auth/force-password-change:
+    post:
+      consumes:
+      - application/json
+      description: Sử dụng cho nhân viên đổi mật khẩu tạm thời lần đầu đăng nhập.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ForceChangePasswordRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bắt buộc đổi mật khẩu
+      tags:
+      - Auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Xác thực người dùng và trả về JWT Tokens (Access/Refresh).
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.LoginRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Thông tin đăng nhập không chính xác
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Đăng nhập
+      tags:
+      - Auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Đăng xuất khỏi thiết bị hiện tại bằng session_id.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đăng xuất (1 phiên)
+      tags:
+      - Auth
+  /auth/logout-all:
+    post:
+      consumes:
+      - application/json
+      description: Đăng xuất khỏi toàn bộ các thiết bị (xóa tất cả session).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đăng xuất (tất cả)
+      tags:
+      - Auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Sử dụng Refresh Token để cấp lại Access Token mới khi hết hạn.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.RefreshTokenRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Token không hợp lệ hoặc đã hết hạn
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Làm mới Token
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Tạo một tài khoản thí sinh mới trong hệ thống.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.RegisterRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Tài khoản đã tồn tại
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Đăng ký tài khoản
+      tags:
+      - Auth
+  /candidates/upload-signature:
+    get:
+      consumes:
+      - application/json
+      description: Endpoint for GetUploadSignature
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: GetUploadSignature
+      tags:
+      - candidate
+  /exam-sessions:
+    get:
+      consumes:
+      - application/json
+      description: Xem các ca thi đang mở hoặc sắp diễn ra.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách ca thi
+      tags:
+      - Exam
+  /exam-sessions/:id/seats:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách ghế và trạng thái (trống, đang giữ, đã đặt) của một
+        ca thi.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sơ đồ ghế ngồi
+      tags:
+      - Exam
+  /exam-types:
+    get:
+      consumes:
+      - application/json
+      description: Lấy danh sách các loại chứng chỉ/kỳ thi (HSK 1, HSK 2...).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách loại kỳ thi
+      tags:
+      - Exam
+  /locations/provinces:
+    get:
+      consumes:
+      - application/json
+      description: Lấy dữ liệu Tỉnh/Thành phố.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách Tỉnh/Thành phố
+      tags:
+      - Location
+  /locations/wards/:id/delivery-coverage:
+    get:
+      consumes:
+      - application/json
+      description: Kiểm tra xem đơn vị vận chuyển có hỗ trợ giao tới xã/phường này
+        không.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Kiểm tra tuyến giao hàng
+      tags:
+      - Location
+  /me:
+    delete:
+      consumes:
+      - application/json
+      description: Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xóa tài khoản cá nhân
+      tags:
+      - Auth
+    put:
+      consumes:
+      - application/json
+      description: Cập nhật các thông tin cơ bản của tài khoản đang đăng nhập.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.UpdateAccountRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật thông tin cá nhân
+      tags:
+      - Auth
+  /me/candidate-profile:
+    get:
+      consumes:
+      - application/json
+      description: Xem hồ sơ chi tiết của bản thân.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy hồ sơ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy hồ sơ thí sinh
+      tags:
+      - Candidate
+    post:
+      consumes:
+      - application/json
+      description: Khởi tạo hồ sơ chi tiết cho thí sinh (sau khi đăng ký tài khoản).
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateProfileRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo hồ sơ thí sinh
+      tags:
+      - Candidate
+  /me/certificates:
+    get:
+      consumes:
+      - application/json
+      description: Xem các chứng chỉ đã được cấp của bản thân.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách chứng chỉ
+      tags:
+      - Certificate
+  /me/certificates/:id/deliveries:
+    get:
+      consumes:
+      - application/json
+      description: Xem trạng thái giao hàng của chứng chỉ.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem vận đơn
+      tags:
+      - Certificate
+    post:
+      consumes:
+      - application/json
+      description: Tạo đơn yêu cầu chuyển phát cứng chứng chỉ về nhà.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateDeliveryRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Yêu cầu gửi chứng chỉ
+      tags:
+      - Certificate
+  /me/certificates/:id/pdf:
+    get:
+      consumes:
+      - application/json
+      description: Tải file PDF của chứng chỉ.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tải bản mềm (PDF)
+      tags:
+      - Certificate
+  /me/certificates/:id/reissue-request:
+    post:
+      consumes:
+      - application/json
+      description: Xin cấp lại bản cứng chứng chỉ (nếu mất/hỏng).
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Yêu cầu cấp lại
+      tags:
+      - Certificate
+  /me/exam-sessions/:id/waitlist:
+    post:
+      consumes:
+      - application/json
+      description: Đăng ký nhận thông báo khi có ghế trống trong ca thi đã đầy.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đăng ký danh sách chờ
+      tags:
+      - Registration
+  /me/password:
+    patch:
+      consumes:
+      - application/json
+      description: Thay đổi mật khẩu của người dùng đang đăng nhập.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ChangePasswordRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đổi mật khẩu
+      tags:
+      - Auth
+  /me/registrations:
+    get:
+      consumes:
+      - application/json
+      description: Xem lịch sử đăng ký thi của bản thân.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách đăng ký thi
+      tags:
+      - Registration
+    post:
+      consumes:
+      - application/json
+      description: Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái
+        chờ thanh toán.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.ReserveSeatRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Ghế đã có người giữ/đặt
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Giữ chỗ / Đăng ký thi
+      tags:
+      - Registration
+  /me/registrations/:id/admission-slip:
+    get:
+      consumes:
+      - application/json
+      description: Lấy thông tin thẻ dự thi (SBD, phòng thi, giờ thi) sau khi đã đăng
+        ký thành công.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy Thẻ dự thi
+      tags:
+      - Registration
+  /me/registrations/:id/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Thí sinh hủy đơn đăng ký thi (hoàn trả ghế trống).
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Hủy đăng ký thi
+      tags:
+      - Registration
+  /me/registrations/:id/transfer:
+    post:
+      consumes:
+      - application/json
+      description: Thí sinh xin chuyển sang ca thi khác (nếu đủ điều kiện).
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.TransferRegistrationRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Chuyển ca thi
+      tags:
+      - Registration
+  /me/sessions:
+    get:
+      consumes:
+      - application/json
+      description: Lấy danh sách các phiên đăng nhập (thiết bị) hiện tại của người
+        dùng.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách phiên đăng nhập
+      tags:
+      - Auth
+  /notifications:
+    get:
+      consumes:
+      - application/json
+      description: Lấy danh sách thông báo hệ thống (hộp thư đến).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách thông báo
+      tags:
+      - Notification
+  /payments:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách các giao dịch thanh toán của thí sinh.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lịch sử thanh toán
+      tags:
+      - Payment
+    post:
+      consumes:
+      - application/json
+      description: Tạo giao dịch thanh toán (VNPay, Momo...) cho một đơn đăng ký.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreatePaymentRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo yêu cầu thanh toán
+      tags:
+      - Payment
+  /payments/callback:
+    post:
+      consumes:
+      - application/json
+      description: Endpoint nhận IPN/Callback từ cổng thanh toán để cập nhật trạng
+        thái tự động.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.PaymentCallbackRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Giao dịch đã được xử lý
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xử lý Webhook Thanh toán
+      tags:
+      - Payment
+  /proctor/exam-sessions/:id/attendance/:registration_id:
+    patch:
+      consumes:
+      - application/json
+      description: Giám thị đánh dấu có mặt/vắng mặt của thí sinh tại phòng thi.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: ID tham số định danh
+        in: path
+        name: registration_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Điểm danh
+      tags:
+      - Registration
+  /public/certificates/verify:
+    get:
+      consumes:
+      - application/json
+      description: API công khai để tra cứu/xác minh tính hợp lệ của chứng chỉ.
+      parameters:
+      - description: Dữ liệu yêu cầu
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.VerifyCertRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Xác minh chứng chỉ
+      tags:
+      - Certificate
+  /results/:registration_id:
+    get:
+      consumes:
+      - application/json
+      description: Thí sinh tra cứu điểm thi của mình.
+      parameters:
+      - description: ID tham số định danh
+        in: path
+        name: registration_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Chưa có điểm
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem điểm thi
+      tags:
+      - Result
+  /webhooks/shipping/:courier:
+    post:
+      consumes:
+      - application/json
+      description: Nhận trạng thái cập nhật từ đơn vị vận chuyển (GHN, ViettelPost...).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Webhook Giao Hàng
+      tags:
+      - Certificate
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
