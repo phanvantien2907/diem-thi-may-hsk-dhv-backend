@@ -15,12 +15,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Runs in alphabetical order → schema first, seed second
-      - ./migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
-      - ./migrations/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql:ro
-      - ./migrations/003_ward_delivery_coverage.sql:/docker-entrypoint-initdb.d/003_ward_delivery_coverage.sql:ro
-      - ./migrations/004_location_module_indexes.sql:/docker-entrypoint-initdb.d/004_location_module_indexes.sql:ro
-      - ./migrations/005_booking_procedures.sql:/docker-entrypoint-initdb.d/005_booking_procedures.sql:ro
-      - ./migrations/006_registration_v2.sql:/docker-entrypoint-initdb.d/006_registration_v2.sql:ro
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-hsk_vinh}"]
       interval: 10s

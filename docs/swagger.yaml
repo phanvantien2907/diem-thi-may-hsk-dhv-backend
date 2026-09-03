@@ -152,7 +152,12 @@ definitions:
     type: object
   request.CreateStaffRequestDTO:
     properties:
+      cccd:
+        type: string
       email:
+        maxLength: 150
+        type: string
+      full_name:
         maxLength: 150
         type: string
       phone:
@@ -160,14 +165,11 @@ definitions:
         type: string
       role_code:
         type: string
-      username:
-        maxLength: 50
-        minLength: 3
-        type: string
     required:
+    - cccd
     - email
+    - full_name
     - role_code
-    - username
     type: object
   request.ForceChangePasswordRequestDTO:
     properties:
@@ -265,13 +267,14 @@ definitions:
     type: object
   request.LoginRequestDTO:
     properties:
+      identifier:
+        description: Can be Email or CCCD
+        type: string
       password:
         type: string
-      username:
-        type: string
     required:
+    - identifier
     - password
-    - username
     type: object
   request.PaymentCallbackRequestDTO:
     properties:
@@ -297,17 +300,24 @@ definitions:
     type: object
   request.RegisterRequestDTO:
     properties:
+      cccd:
+        type: string
       email:
+        maxLength: 150
+        type: string
+      full_name:
         maxLength: 150
         type: string
       password:
         maxLength: 72
-        minLength: 8
         type: string
       phone:
         maxLength: 20
         type: string
     required:
+    - cccd
+    - email
+    - full_name
     - password
     - phone
     type: object
@@ -1607,6 +1617,33 @@ paths:
       security:
       - BearerAuth: []
       summary: Xóa tài khoản cá nhân
+      tags:
+      - Auth
+    get:
+      consumes:
+      - application/json
+      description: Lấy thông tin profile của user đang đăng nhập (dựa trên token).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy thông tin tài khoản hiện tại
       tags:
       - Auth
     put:

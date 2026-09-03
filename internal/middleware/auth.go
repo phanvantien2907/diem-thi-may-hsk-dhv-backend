@@ -38,7 +38,13 @@ func JWTAuth(secret string) gin.HandlerFunc {
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		var tokenStr string
+		if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") { // auto parse Bearer token from header
+			tokenStr = parts[1]
+		} else if len(parts) == 1 {
+			// Fallback: accept token without prefix (convenience for Swagger UI)
+			tokenStr = parts[0]
+		} else {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error":   "authorization header must be in the format: Bearer <token>",
@@ -48,7 +54,6 @@ func JWTAuth(secret string) gin.HandlerFunc {
 			return
 		}
 
-		tokenStr := parts[1]
 		claims := &Claims{}
 
 		token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (any, error) {

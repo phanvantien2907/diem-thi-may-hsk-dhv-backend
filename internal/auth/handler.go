@@ -267,6 +267,16 @@ func (h *Handler) LogoutAll(c *gin.Context) {
 }
 
 // Me GET /me
+// @Summary Tài khoản của tôi
+// @Description Lấy thông tin tài khoản của người dùng đang đăng nhập (dựa trên token).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Not Found"
+// @Router /me [get]
 func (h *Handler) Me(c *gin.Context) {
 	acc, err := h.svc.GetAccount(c.Request.Context(), utils.MustAccountID(c))
 	if err != nil {

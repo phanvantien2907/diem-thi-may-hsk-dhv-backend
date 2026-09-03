@@ -10,6 +10,7 @@ func ToAccountResponseDTO(e entities.AccountEntity) response.AccountResponseDTO 
 	return response.AccountResponseDTO{
 		ID:        e.AccountID,
 		Username:  e.AccountUsername,
+		FullName:  e.AccountFullName,
 		Email:     e.AccountEmail,
 		Phone:     e.AccountPhone,
 		Status:    string(e.AccountStatus),

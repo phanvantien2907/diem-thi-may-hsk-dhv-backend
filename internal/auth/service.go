@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,15 +64,16 @@ func generateTempPassword() (string, error) {
 	return string(b), nil
 }
 
-// scanAccount scans the standard 9-column projection for public account queries.
-// Projection: id, role_id, username, email, phone, status, last_login_at, created_at, updated_at
+// scanAccount scans the standard 10-column projection for public account queries.
+// Projection: id, role_id, username, full_name, email, phone, status, last_login_at, created_at, updated_at
 func scanAccount(row *sql.Row, e *entities.AccountEntity) error {
 	return row.Scan(
-		&e.AccountID, &e.AccountRoleID, &e.AccountUsername,
+		&e.AccountID, &e.AccountRoleID, &e.AccountUsername, &e.AccountFullName,
 		&e.AccountEmail, &e.AccountPhone, &e.AccountStatus,
 		&e.AccountLastLoginAt, &e.AccountCreatedAt, &e.AccountUpdatedAt,
 	)
 }
+
 
 // Register creates a pending account and sends an OTP to the phone number.
 // The account is activated only after VerifyOTP succeeds.
@@ -91,8 +93,8 @@ func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) 
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
 	}
 
-	// Username = phone number for candidates
-	username := req.Phone
+	// Username = CCCD for candidates
+	username := req.Cccd
 	email := req.Email
 	if email == "" {
 		email = req.Phone + "@placeholder.hsk.vn" // placeholder nếu không có email
@@ -107,13 +109,13 @@ func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) 
 	var e entities.AccountEntity
 	err = scanAccount(tx.QueryRowContext(ctx, `
 		INSERT INTO accounts
-		       (account_role_id, account_username, account_password_hash,
+		       (account_role_id, account_username, account_full_name, account_password_hash,
 		        account_email, account_phone, account_status)
-		VALUES ($1,$2,$3,$4,$5,'active')
-		RETURNING account_id, account_role_id, account_username,
+		VALUES ($1,$2,$3,$4,$5,$6,'active')
+		RETURNING account_id, account_role_id, account_username, account_full_name,
 		          account_email, account_phone, account_status,
 		          account_last_login_at, account_created_at, account_updated_at`,
-		roleID, username, hash, email, req.Phone,
+		roleID, username, req.FullName, hash, email, req.Phone,
 	), &e)
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_accounts") {
@@ -145,8 +147,8 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 		SELECT account_id, account_password_hash, account_status,
 		       account_failed_login_count, account_locked_until, account_must_change_password
 		FROM accounts
-		WHERE account_username = $1 AND account_is_deleted = FALSE`,
-		req.Username,
+		WHERE (account_username = $1 OR account_email = $1) AND account_is_deleted = FALSE`,
+		req.Identifier,
 	).Scan(
 		&e.AccountID, &e.AccountPasswordHash, &e.AccountStatus,
 		&e.AccountFailedLoginCount, &e.AccountLockedUntil, &e.AccountMustChangePassword,
@@ -484,13 +486,13 @@ func (s *Service) CreateStaffAccount(ctx context.Context, req request.CreateStaf
 	var e entities.AccountEntity
 	err = scanAccount(tx.QueryRowContext(ctx, `
 		INSERT INTO accounts
-		       (account_role_id, account_username, account_password_hash,
+		       (account_role_id, account_username, account_full_name, account_password_hash,
 		        account_email, account_phone, account_status, account_must_change_password)
-		VALUES ($1,$2,$3,$4,NULLIF($5,''),'active',TRUE)
-		RETURNING account_id, account_role_id, account_username,
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),'active',TRUE)
+		RETURNING account_id, account_role_id, account_username, account_full_name,
 		          account_email, account_phone, account_status,
 		          account_last_login_at, account_created_at, account_updated_at`,
-		roleID, req.Username, hash, req.Email, req.Phone,
+		roleID, req.Cccd, req.FullName, hash, req.Email, req.Phone,
 	), &e)
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_accounts") {
@@ -518,7 +520,7 @@ func (s *Service) CreateStaffAccount(ctx context.Context, req request.CreateStaf
 func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.AccountResponseDTO, error) {
 	var e entities.AccountEntity
 	err := scanAccount(s.db.QueryRowContext(ctx, `
-		SELECT account_id, account_role_id, account_username,
+		SELECT account_id, account_role_id, account_username, account_full_name,
 		       account_email, account_phone, account_status,
 		       account_last_login_at, account_created_at, account_updated_at
 		FROM accounts
@@ -633,7 +635,7 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 // issueAccessToken signs an access token with sub + role claims.
 func (s *Service) issueAccessToken(accountID int64, roleCode string) (string, error) {
 	claims := jwt.MapClaims{
-		"sub":       accountID,
+		"sub":       strconv.FormatInt(accountID, 10),
 		"user_id":   accountID,
 		"user_role": roleCode,
 		"exp":       time.Now().Add(s.accessTTL).Unix(),
@@ -645,7 +647,7 @@ func (s *Service) issueAccessToken(accountID int64, roleCode string) (string, er
 // issueRawToken signs a raw JWT for refresh tokens.
 func (s *Service) issueRawToken(accountID int64, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
-		"sub": accountID,
+		"sub": strconv.FormatInt(accountID, 10),
 		"exp": time.Now().Add(ttl).Unix(),
 		"iat": time.Now().Unix(),
 	}

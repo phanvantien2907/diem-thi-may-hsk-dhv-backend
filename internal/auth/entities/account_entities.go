@@ -11,6 +11,7 @@ type AccountEntity struct {
 	AccountID                 int64
 	AccountRoleID             int64
 	AccountUsername           string
+	AccountFullName           string
 	AccountPasswordHash       string
 	AccountEmail              string
 	AccountPhone              *string

@@ -1832,6 +1832,47 @@ const docTemplate = `{
             }
         },
         "/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy thông tin profile của user đang đăng nhập (dựa trên token).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Lấy thông tin tài khoản hiện tại",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -3658,12 +3699,20 @@ const docTemplate = `{
         "request.CreateStaffRequestDTO": {
             "type": "object",
             "required": [
+                "cccd",
                 "email",
-                "role_code",
-                "username"
+                "full_name",
+                "role_code"
             ],
             "properties": {
+                "cccd": {
+                    "type": "string"
+                },
                 "email": {
+                    "type": "string",
+                    "maxLength": 150
+                },
+                "full_name": {
                     "type": "string",
                     "maxLength": 150
                 },
@@ -3673,11 +3722,6 @@ const docTemplate = `{
                 },
                 "role_code": {
                     "type": "string"
-                },
-                "username": {
-                    "type": "string",
-                    "maxLength": 50,
-                    "minLength": 3
                 }
             }
         },
@@ -3815,14 +3859,15 @@ const docTemplate = `{
         "request.LoginRequestDTO": {
             "type": "object",
             "required": [
-                "password",
-                "username"
+                "identifier",
+                "password"
             ],
             "properties": {
-                "password": {
+                "identifier": {
+                    "description": "Can be Email or CCCD",
                     "type": "string"
                 },
-                "username": {
+                "password": {
                     "type": "string"
                 }
             }
@@ -3862,18 +3907,27 @@ const docTemplate = `{
         "request.RegisterRequestDTO": {
             "type": "object",
             "required": [
+                "cccd",
+                "email",
+                "full_name",
                 "password",
                 "phone"
             ],
             "properties": {
+                "cccd": {
+                    "type": "string"
+                },
                 "email": {
+                    "type": "string",
+                    "maxLength": 150
+                },
+                "full_name": {
                     "type": "string",
                     "maxLength": 150
                 },
                 "password": {
                     "type": "string",
-                    "maxLength": 72,
-                    "minLength": 8
+                    "maxLength": 72
                 },
                 "phone": {
                     "type": "string",

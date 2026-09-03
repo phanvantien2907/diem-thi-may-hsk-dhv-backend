@@ -27,8 +27,8 @@ func TestService_Login_NotFound(t *testing.T) {
 		WillReturnError(errors.New("sql: no rows in result set")) // typically sql.ErrNoRows
 
 	req := request.LoginRequestDTO{
-		Username: "test@hsk.com",
-		Password: "password",
+		Identifier: "test@hsk.com",
+		Password:   "password",
 	}
 
 	_, err = svc.Login(context.Background(), req, "127.0.0.1", "test-agent")
