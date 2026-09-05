@@ -281,20 +281,29 @@ CREATE TABLE IF NOT EXISTS payments (
     payment_exam_registration_id BIGINT        NOT NULL REFERENCES exam_registrations (exam_registration_id),
     payment_amount               NUMERIC(12,0) NOT NULL CHECK (payment_amount >= 0),
     payment_method               VARCHAR(20)   NOT NULL
-                                      CHECK (payment_method IN ('vnpay', 'momo', 'zalopay', 'bank_transfer', 'cash')),
+                                      CHECK (payment_method IN ('bank_transfer', 'e_wallet')),
+    payment_gateway              VARCHAR(50),
     payment_transaction_ref      VARCHAR(100),
+    payment_gateway_trans_id     VARCHAR(100),
+    payment_content              VARCHAR(255),
     payment_status               VARCHAR(20)   NOT NULL DEFAULT 'pending'
-                                      CHECK (payment_status IN ('pending', 'success', 'failed', 'refunded')),
+                                      CHECK (payment_status IN ('pending', 'success', 'failed', 'refunded', 'expired')),
+    payment_expires_at           TIMESTAMPTZ,
     payment_paid_at              TIMESTAMPTZ,
     payment_is_deleted           BOOLEAN       NOT NULL DEFAULT FALSE,
     payment_deleted_at           TIMESTAMPTZ,
     payment_created_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    payment_updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now()
+    payment_updated_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_payments_transaction_ref  UNIQUE (payment_transaction_ref),
+    CONSTRAINT uq_payments_gateway_trans_id UNIQUE (payment_gateway_trans_id)
 );
 CREATE INDEX IF NOT EXISTS idx_payments_registration
     ON payments (payment_exam_registration_id) WHERE payment_is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_payments_transaction_ref
     ON payments (payment_transaction_ref) WHERE payment_is_deleted = FALSE;
+CREATE INDEX IF NOT EXISTS idx_payments_pending_expiry 
+    ON payments (payment_status, payment_expires_at) 
+    WHERE payment_status = 'pending' AND payment_is_deleted = FALSE;
 CREATE OR REPLACE TRIGGER trg_payments_updated_at
     BEFORE UPDATE ON payments
     FOR EACH ROW EXECUTE FUNCTION fn_touch_updated_at('payment_updated_at');
@@ -441,6 +450,33 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     audit_log_created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (audit_log_id, audit_log_created_at)
 ) PARTITION BY RANGE (audit_log_created_at);
+
+-- 6.3 payment_webhook_logs — partitioned by month; IMMUTABLE (no soft-delete)
+CREATE TABLE IF NOT EXISTS payment_webhook_logs (
+    webhook_log_id               BIGINT GENERATED ALWAYS AS IDENTITY,
+    webhook_log_payment_id       BIGINT,
+    webhook_log_gateway          VARCHAR(50) NOT NULL,
+    webhook_log_transaction_ref  VARCHAR(100),
+    webhook_log_payload          JSONB       NOT NULL,
+    webhook_log_created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (webhook_log_id, webhook_log_created_at)
+) PARTITION BY RANGE (webhook_log_created_at);
+
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_default
+    PARTITION OF payment_webhook_logs DEFAULT;
+
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2026_08
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2026_09
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2026_10
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2026_11
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2026_12
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
+CREATE TABLE IF NOT EXISTS payment_webhook_logs_2027_01
+    PARTITION OF payment_webhook_logs FOR VALUES FROM ('2027-01-01') TO ('2027-02-01');
 
 -- 7.1 auth_sessions (replacement for revoked tokens)
 CREATE TABLE auth_sessions (

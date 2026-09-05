@@ -74,7 +74,6 @@ func scanAccount(row *sql.Row, e *entities.AccountEntity) error {
 	)
 }
 
-
 // Register creates a pending account and sends an OTP to the phone number.
 // The account is activated only after VerifyOTP succeeds.
 func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) (response.AccountResponseDTO, error) {
@@ -189,16 +188,21 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 		return response.TokenPairResponseDTO{}, errors.New("thông tin đăng nhập không chính xác")
 	}
 
-	// Reset failed count + unlock on success
-	_, _ = s.db.ExecContext(ctx, `
+	// Reset failed count, unlock on success, and update last login time.
+	// Using time.Now().UTC() instead of NOW() ensures the Go application controls the exact timestamp,
+	// which is a best practice for globally distributed systems and makes debugging/testing easier.
+	if _, err := s.db.ExecContext(ctx, `
 		UPDATE accounts
 		SET account_failed_login_count = 0,
 		    account_locked_until       = NULL,
 		    account_status             = 'active',
-		    account_last_login_at      = NOW()
+		    account_last_login_at      = $2
 		WHERE account_id = $1`,
-		e.AccountID,
-	)
+		e.AccountID, time.Now().UTC(),
+	); err != nil {
+		// Do not silently ignore errors in production.
+		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: update account login success: %w", err)
+	}
 
 	// Create session with refresh token
 	rawRefresh, err := s.issueRawToken(e.AccountID, s.refreshTTL)
@@ -229,6 +233,8 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 	if err != nil {
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
 	}
+
+
 
 	// Audit login
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{

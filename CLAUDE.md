@@ -22,7 +22,7 @@ The existing implementation is the source of truth. Rules here describe what the
 | Validation | `github.com/go-playground/validator/v10 v10.22.0` via `utils.Validate.Struct()` |
 | Configuration | `github.com/joho/godotenv v1.5.1` + `os.LookupEnv` |
 | Logging | Standard library `log` package only |
-| Migration tool | Plain SQL files applied via PostgreSQL `docker-entrypoint-initdb.d` |
+| Migration tool | `golang-migrate/migrate` via Docker compose |
 | Rate limiting | Custom in-memory token bucket (`internal/middleware/ratelimit.go`) |
 | Redis | **Not used** — commented out in `docker-compose.yml` |
 | Dependency injection | Manual constructor wiring in `cmd/api/main.go` |
@@ -56,8 +56,10 @@ internal/
 └── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
 
 migrations/
-├── 001_schema.sql          # Full DB schema (applied first)
-└── 002_seed_data.sql       # Seed / reference data (applied second)
+├── 000001_schema.up.sql          # Full DB schema (applied first)
+├── 000001_schema.down.sql        # Rollback for schema
+├── 000002_seed_data.up.sql       # Seed / reference data
+└── 000002_seed_data.down.sql     # Rollback for seed data
 
 Dockerfile                  # Multi-stage build
 docker-compose.yml          # PostgreSQL 16, Go API, Adminer
@@ -211,7 +213,7 @@ For any new feature touching `exam_seats`, `exam_registrations`, or `payments` t
 - `updated_at` is maintained by the shared `fn_touch_updated_at()` trigger
 - All column names are prefixed with the table name (e.g., `account_username`, `exam_seat_status`)
 - **All queries must include `AND <table>_is_deleted = FALSE`** when soft-delete applies — omitting this leaks deleted records
-- Migrations are plain `.sql` files applied in numeric order
+- Migrations are managed by `golang-migrate` using `*.<up/down>.sql` files
 
 **Never modify the schema directly.** Add a new numbered `.sql` migration file.
 
@@ -751,18 +753,29 @@ If the new domain does not need audit logging (like `location` or `notification`
 
 ## 24. Database Migrations
 
-Migrations are plain SQL files under `migrations/`. Applied at container startup via PostgreSQL `docker-entrypoint-initdb.d` in alphabetical order.
+Migrations are managed by `golang-migrate/migrate`. They are automatically applied at container startup via the `migrate` service in `docker-compose.yml`.
 
-- `001_schema.sql` — full schema, all tables, indexes, triggers.
-- `002_seed_data.sql` — roles, exam types, provinces, wards, reference data.
+- `000001_schema.up.sql` — full schema, all tables, indexes, triggers.
+- `000002_seed_data.up.sql` — roles, exam types, provinces, wards, reference data.
 
 To add a schema change:
-1. Create `migrations/003_<description>.sql`.
-2. Write idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`).
-3. **Never modify `001_schema.sql` or `002_seed_data.sql`** after they have been applied to production.
+1. Run `make migrate-create name=<description>` to generate empty `.up.sql` and `.down.sql` files.
+2. Write idempotent SQL in the `.up.sql` file.
+3. Write the corresponding rollback SQL in the `.down.sql` file.
+4. **Never modify existing migration files** after they have been applied to production.
 
-Reset local database:
+Useful commands:
 ```bash
+# Run all pending migrations
+make migrate-up
+
+# Rollback migrations
+make migrate-down
+
+# Restart DB without wiping volume
+make db-reup
+
+# Reset database (destroys all data)
 docker compose down -v && docker compose up -d
 ```
 

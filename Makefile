@@ -41,6 +41,24 @@ dbr:
 	docker-compose restart
 
 # Xóa hoàn toàn Database và khởi tạo lại từ đầu (Xóa Volume)
-db-reset:
+db-rs:
 	docker-compose down -v
 	docker-compose up -d
+
+# Tắt và Khởi động lại Database (KHÔNG xóa Volume)
+db-reup:
+	docker-compose down
+	docker-compose up -d
+
+# ── Migrations ─────────────────────────────────────────────────────────────
+MIGRATE_DSN="postgres://postgres:postgres@localhost:5432/hsk_vinh?sslmode=disable"
+
+mig-up:
+	migrate -path migrations -database $(MIGRATE_DSN) up
+
+mig-down:
+	migrate -path migrations -database $(MIGRATE_DSN) down -all
+
+mig-create:
+	@read -p "Enter migration name: " name; \
+	migrate create -ext sql -dir migrations -seq $$name

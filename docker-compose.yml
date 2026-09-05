@@ -14,13 +14,24 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Runs in alphabetical order → schema first, seed second
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-hsk_vinh}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - hsk_net
+
+  # ── Migrate ──────────────────────────────────────────────────────────────
+  migrate:
+    image: migrate/migrate:v4.17.0
+    container_name: hsk_vinh_migrate
+    volumes:
+      - ./migrations:/migrations
+    command: ["-path", "/migrations", "-database", "postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hsk_vinh}?sslmode=disable", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - hsk_net
 
@@ -35,8 +46,8 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - hsk_net
 
