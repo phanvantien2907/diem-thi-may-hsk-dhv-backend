@@ -759,7 +759,7 @@ Migrations are managed by `golang-migrate/migrate`. They are automatically appli
 - `000002_seed_data.up.sql` — roles, exam types, provinces, wards, reference data.
 
 To add a schema change:
-1. Run `make migrate-create name=<description>` to generate empty `.up.sql` and `.down.sql` files.
+1. Run `make mig-create name=<description>` to generate empty `.up.sql` and `.down.sql` files.
 2. Write idempotent SQL in the `.up.sql` file.
 3. Write the corresponding rollback SQL in the `.down.sql` file.
 4. **Never modify existing migration files** after they have been applied to production.
@@ -767,10 +767,10 @@ To add a schema change:
 Useful commands:
 ```bash
 # Run all pending migrations
-make migrate-up
+make mig-up
 
 # Rollback migrations
-make migrate-down
+make mig-down
 
 # Restart DB without wiping volume
 make db-reup
@@ -868,3 +868,20 @@ When reviewing any change, check in this order:
 8. **Enum validation** — are enum values validated before persistence?
 9. **Architecture boundaries** — no business logic in handlers, no HTTP in services?
 10. **Tests** — are observable behaviors verified?
+
+---
+
+## 30. Webhook Testing
+
+When developing or debugging third-party webhook integrations (such as payment gateways like VNPAY, Momo, or delivery services), the external service requires a public URL to send requests to.
+
+**Rule:** Always use `localtunnel` to expose your local environment for webhook testing.
+
+**How to use:**
+1. Run your local server (usually on port 8080).
+2. Start localtunnel via `pnpm`:
+   ```bash
+   pnpm dlx localtunnel --port 8080
+   ```
+3. Copy the generated `loca.lt` URL and use it in your payment gateway/webhook configuration (appending the specific API path, e.g., `/api/v1/payments/callback`).
+4. Always terminate the tunnel (`Ctrl+C`) when testing is complete to prevent exposing your local development environment to the public internet.

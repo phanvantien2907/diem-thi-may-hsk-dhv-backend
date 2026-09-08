@@ -330,7 +330,7 @@ INSERT INTO payments
 SELECT
     er.exam_registration_id,
     es.exam_session_fee,
-    (ARRAY['vnpay','momo','bank_transfer'])[er.exam_registration_id % 3 + 1],
+    (ARRAY['bank_transfer','e_wallet'])[er.exam_registration_id % 2 + 1],
     'TXN' || LPAD(er.exam_registration_id::TEXT, 10, '0'),
     CASE er.exam_registration_status
         WHEN 'confirmed'      THEN 'success'
