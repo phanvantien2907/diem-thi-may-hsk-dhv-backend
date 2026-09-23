@@ -143,6 +143,57 @@ func (s *Service) GetMyProfile(ctx context.Context, accountID int64) (response.C
 	return ToCandidateResponseDTO(e), nil
 }
 
+// GetMyDocuments returns all non-deleted identity documents for the authenticated account.
+func (s *Service) GetMyDocuments(ctx context.Context, accountID int64) ([]entities.CandidateDocumentEntity, error) {
+	// Resolve candidate_id from accountID (ownership check)
+	var candidateID int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT candidate_id FROM candidates WHERE candidate_account_id = $1 AND candidate_is_deleted = FALSE`,
+		accountID,
+	).Scan(&candidateID); errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("chưa có hồ sơ thí sinh")
+	} else if err != nil {
+		return nil, fmt.Errorf("candidate: lookup: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+docSelectCols+`
+		FROM candidate_documents
+		WHERE candidate_document_candidate_id = $1
+		  AND candidate_document_is_deleted = FALSE
+		ORDER BY candidate_document_created_at DESC`,
+		candidateID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("candidate: get documents: %w", err)
+	}
+	defer rows.Close()
+
+	var docs []entities.CandidateDocumentEntity
+	for rows.Next() {
+		var d entities.CandidateDocumentEntity
+		if err := rows.Scan(
+			&d.CandidateDocumentID, &d.CandidateDocumentCandidateID,
+			&d.CandidateDocumentType, &d.CandidateDocumentNumber,
+			&d.CandidateDocumentIssueDate, &d.CandidateDocumentIssuePlace,
+			&d.CandidateDocumentFrontImageURL, &d.CandidateDocumentBackImageURL,
+			&d.CandidateDocumentPortraitImageURL,
+			&d.CandidateDocumentVerificationStatus, &d.CandidateDocumentRejectionReason,
+			&d.CandidateDocumentWardID, &d.CandidateDocumentAddressDetail,
+		); err != nil {
+			return nil, fmt.Errorf("candidate: scan document: %w", err)
+		}
+		docs = append(docs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("candidate: documents rows: %w", err)
+	}
+	if docs == nil {
+		docs = []entities.CandidateDocumentEntity{}
+	}
+	return docs, nil
+}
+
 // PatchMyProfile applies partial updates to the authenticated candidate's profile.
 // Business rules:
 //  1. DOB and Gender are immutable (omitted from update).

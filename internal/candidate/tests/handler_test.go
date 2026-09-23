@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
@@ -67,5 +68,88 @@ func TestHandler_PatchMyProfile_Validation(t *testing.T) {
 				t.Errorf("expected status %d, got %d", tt.wantStatus, w.Code)
 			}
 		})
+	}
+}
+
+func TestHandler_GetMyDocuments_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, nil, nil)
+	h := candidate.NewHandler(svc)
+	_, _, r := testutils.SetupTestRouter()
+
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set("user_id", int64(1))
+	})
+	r.GET("/me/candidate-profile/documents", h.GetMyDocuments)
+
+	// Mock candidate lookup
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
+		WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
+
+	// Mock document query returning 1 row
+	docCols := []string{
+		"candidate_document_id", "candidate_document_candidate_id",
+		"candidate_document_type", "candidate_document_number",
+		"candidate_document_issue_date", "candidate_document_issue_place",
+		"candidate_document_front_image_url", "candidate_document_back_image_url",
+		"candidate_document_portrait_image_url",
+		"candidate_document_verification_status", "candidate_document_rejection_reason",
+		"candidate_document_ward_id", "candidate_document_address_detail",
+	}
+	mock.ExpectQuery(`SELECT .+ FROM candidate_documents`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows(docCols).
+			AddRow(1, 10, "cccd", "012345678901", time.Now(), "Police", "http://img/front.jpg", nil, "http://img/portrait.jpg", "pending", nil, nil, nil))
+
+	w := httptest.NewRecorder()
+	req := testutils.BuildJSONRequest(http.MethodGet, "/me/candidate-profile/documents", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d; body: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}
+
+func TestHandler_GetMyDocuments_NoProfile(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, nil, nil)
+	h := candidate.NewHandler(svc)
+	_, _, r := testutils.SetupTestRouter()
+
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set("user_id", int64(99))
+	})
+	r.GET("/me/candidate-profile/documents", h.GetMyDocuments)
+
+	// Mock candidate lookup returning no rows → triggers "chưa có hồ sơ thí sinh"
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}))
+
+	w := httptest.NewRecorder()
+	req := testutils.BuildJSONRequest(http.MethodGet, "/me/candidate-profile/documents", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d; body: %s", http.StatusNotFound, w.Code, w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
 	}
 }

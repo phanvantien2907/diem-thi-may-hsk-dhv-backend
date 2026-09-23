@@ -55,3 +55,12 @@ func ToDocumentResponseDTO(e entities.CandidateDocumentEntity) response.Document
 		RejectionReason:    e.CandidateDocumentRejectionReason,
 	}
 }
+
+// ToDocumentResponseDTOList maps a slice of CandidateDocumentEntity to a slice of DocumentResponseDTO.
+func ToDocumentResponseDTOList(entities []entities.CandidateDocumentEntity) []response.DocumentResponseDTO {
+	dtos := make([]response.DocumentResponseDTO, len(entities))
+	for i, e := range entities {
+		dtos[i] = ToDocumentResponseDTO(e)
+	}
+	return dtos
+}

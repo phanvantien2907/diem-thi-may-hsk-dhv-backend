@@ -69,6 +69,33 @@ func (h *Handler) GetMyProfile(c *gin.Context) {
 	utils.OK(c, cand)
 }
 
+// GetMyDocuments GET /me/candidate-profile/documents
+// @Summary Lấy danh sách giấy tờ tùy thân
+// @Description Xem danh sách giấy tờ tùy thân (CCCD/Passport) của bản thân.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy hồ sơ thí sinh"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /me/candidate-profile/documents [get]
+func (h *Handler) GetMyDocuments(c *gin.Context) {
+	docs, err := h.svc.GetMyDocuments(c.Request.Context(), utils.MustAccountID(c))
+	if err != nil {
+		// Business error (no candidate profile) → 404
+		if err.Error() == "chưa có hồ sơ thí sinh" {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		// Infrastructure error → 500 with generic Vietnamese message
+		utils.InternalServerError(c, "Không thể tải danh sách giấy tờ")
+		return
+	}
+	utils.OK(c, ToDocumentResponseDTOList(docs))
+}
+
 // PatchMyProfile PATCH /me/candidate-profile
 func (h *Handler) PatchMyProfile(c *gin.Context) {
 	var req request.PatchProfileRequestDTO

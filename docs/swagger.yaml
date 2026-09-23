@@ -1778,6 +1778,39 @@ paths:
       summary: Tạo hồ sơ thí sinh
       tags:
       - Candidate
+  /me/candidate-profile/documents:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách giấy tờ tùy thân (CCCD/Passport) của bản thân.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy hồ sơ thí sinh
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy danh sách giấy tờ tùy thân
+      tags:
+      - Candidate
   /me/certificates:
     get:
       consumes:

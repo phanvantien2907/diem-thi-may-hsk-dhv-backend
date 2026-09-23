@@ -18,6 +18,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		me.GET("", h.GetMyProfile)
 		me.PATCH("", h.PatchMyProfile)
 		me.POST("/documents", h.UploadDocument)
+		me.GET("/documents", h.GetMyDocuments)
 		me.GET("/upload-signature", h.GetUploadSignature)
 	}
 

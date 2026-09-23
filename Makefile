@@ -50,6 +50,11 @@ db-reup:
 	docker-compose down
 	docker-compose up -d
 
+# Đóng gói lại (build) code mới và chạy lại Docker
+db-build:
+	docker-compose up --build -d
+
+
 # ── Migrations ─────────────────────────────────────────────────────────────
 MIGRATE_DSN="postgres://postgres:postgres@localhost:5432/hsk_vinh?sslmode=disable"
 

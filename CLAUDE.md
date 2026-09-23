@@ -246,6 +246,7 @@ All API routes are mounted under `/api/v1`.
 | candidate | POST | `/candidates` | JWT |
 | candidate | PUT | `/candidates/:id` | JWT |
 | candidate | POST | `/candidates/:id/documents` | JWT |
+| candidate | GET | `/candidates/:id/documents` | JWT |
 | exam | GET | `/exam-types` | public |
 | exam | GET | `/exam-rooms` | public |
 | exam | GET | `/exam-sessions` | public |

@@ -2119,6 +2119,56 @@
                 }
             }
         },
+        "/me/candidate-profile/documents": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách giấy tờ tùy thân (CCCD/Passport) của bản thân.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Lấy danh sách giấy tờ tùy thân",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy hồ sơ thí sinh",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/me/certificates": {
             "get": {
                 "security": [

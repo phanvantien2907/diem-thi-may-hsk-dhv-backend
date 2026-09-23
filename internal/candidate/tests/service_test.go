@@ -105,3 +105,81 @@ func TestService_UploadDocument_Success(t *testing.T) {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
 }
+
+func TestService_GetMyDocuments_Success(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+
+	// Mock candidate lookup
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
+		WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
+
+	// Mock document query returning 2 rows
+	docCols := []string{
+		"candidate_document_id", "candidate_document_candidate_id",
+		"candidate_document_type", "candidate_document_number",
+		"candidate_document_issue_date", "candidate_document_issue_place",
+		"candidate_document_front_image_url", "candidate_document_back_image_url",
+		"candidate_document_portrait_image_url",
+		"candidate_document_verification_status", "candidate_document_rejection_reason",
+		"candidate_document_ward_id", "candidate_document_address_detail",
+	}
+	issueDate := time.Date(2021, 6, 15, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT .+ FROM candidate_documents`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows(docCols).
+			AddRow(2, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front2.jpg", nil, "http://img/portrait2.jpg", "verified", nil, nil, nil).
+			AddRow(1, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front1.jpg", nil, "http://img/portrait1.jpg", "pending", nil, nil, nil))
+
+	docs, err := svc.GetMyDocuments(context.Background(), int64(1))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(docs) != 2 {
+		t.Fatalf("expected 2 documents, got %d", len(docs))
+	}
+	if docs[0].CandidateDocumentID != 2 {
+		t.Errorf("expected first doc ID 2, got %d", docs[0].CandidateDocumentID)
+	}
+	if string(docs[0].CandidateDocumentVerificationStatus) != "verified" {
+		t.Errorf("expected first doc status 'verified', got %s", docs[0].CandidateDocumentVerificationStatus)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}
+
+func TestService_GetMyDocuments_NoCandidateProfile(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to open sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+
+	// Mock candidate lookup returning no rows
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}))
+
+	_, err = svc.GetMyDocuments(context.Background(), int64(99))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err.Error() != "chưa có hồ sơ thí sinh" {
+		t.Errorf("expected Vietnamese not-found error, got: %s", err.Error())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}
