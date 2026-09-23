@@ -15,4 +15,7 @@ type DocumentResponseDTO struct {
 	PortraitImageURL   string    `json:"portrait_image_url"`
 	VerificationStatus string    `json:"verification_status"`
 	RejectionReason    *string   `json:"rejection_reason,omitempty"`
+	WardID             *int64    `json:"ward_id,omitempty"`
+	ProvinceID         *int64    `json:"province_id,omitempty"`
+	AddressDetail      *string   `json:"address_detail,omitempty"`
 }

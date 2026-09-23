@@ -100,12 +100,12 @@ func TestHandler_GetMyDocuments_Success(t *testing.T) {
 		"candidate_document_front_image_url", "candidate_document_back_image_url",
 		"candidate_document_portrait_image_url",
 		"candidate_document_verification_status", "candidate_document_rejection_reason",
-		"candidate_document_ward_id", "candidate_document_address_detail",
+		"candidate_document_ward_id", "candidate_document_province_id", "candidate_document_address_detail",
 	}
 	mock.ExpectQuery(`SELECT .+ FROM candidate_documents`).
 		WithArgs(int64(10)).
 		WillReturnRows(sqlmock.NewRows(docCols).
-			AddRow(1, 10, "cccd", "012345678901", time.Now(), "Police", "http://img/front.jpg", nil, "http://img/portrait.jpg", "pending", nil, nil, nil))
+			AddRow(1, 10, "cccd", "012345678901", time.Now(), "Police", "http://img/front.jpg", nil, "http://img/portrait.jpg", "pending", nil, nil, nil, nil))
 
 	w := httptest.NewRecorder()
 	req := testutils.BuildJSONRequest(http.MethodGet, "/me/candidate-profile/documents", nil)

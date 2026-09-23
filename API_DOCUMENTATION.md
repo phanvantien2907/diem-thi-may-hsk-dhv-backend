@@ -907,6 +907,9 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 | `portrait_image_url` | `string` | ❌ | URL ảnh chân dung |
 | `verification_status` | `string` | ❌ | `pending`, `verified`, `rejected` |
 | `rejection_reason` | `string` | ✅ | Lý do từ chối (chỉ khi `rejected`) |
+| `ward_id` | `integer` | ✅ | ID của Xã/Phường |
+| `province_id` | `integer` | ✅ | ID của Tỉnh/Thành phố |
+| `address_detail` | `string` | ✅ | Địa chỉ chi tiết |
 
 ---
 
@@ -934,7 +937,10 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
       "front_image_url": "https://res.cloudinary.com/.../front.jpg",
       "back_image_url": "https://res.cloudinary.com/.../back.jpg",
       "portrait_image_url": "https://res.cloudinary.com/.../portrait.jpg",
-      "verification_status": "verified"
+      "verification_status": "verified",
+      "ward_id": 123,
+      "province_id": 4,
+      "address_detail": "Số 123 Đường ABC"
     },
     {
       "id": 1,
@@ -945,7 +951,10 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
       "issue_place": "Cục Xuất nhập cảnh",
       "front_image_url": "https://res.cloudinary.com/.../pp_front.jpg",
       "portrait_image_url": "https://res.cloudinary.com/.../pp_portrait.jpg",
-      "verification_status": "pending"
+      "verification_status": "pending",
+      "ward_id": 456,
+      "province_id": 5,
+      "address_detail": "Thôn XYZ"
     }
   ],
   "error": null,

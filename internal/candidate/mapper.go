@@ -53,6 +53,9 @@ func ToDocumentResponseDTO(e entities.CandidateDocumentEntity) response.Document
 		PortraitImageURL:   e.CandidateDocumentPortraitImageURL,
 		VerificationStatus: string(e.CandidateDocumentVerificationStatus),
 		RejectionReason:    e.CandidateDocumentRejectionReason,
+		WardID:             e.CandidateDocumentWardID,
+		ProvinceID:         e.CandidateDocumentProvinceID,
+		AddressDetail:      e.CandidateDocumentAddressDetail,
 	}
 }
 

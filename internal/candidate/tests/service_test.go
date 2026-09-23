@@ -82,8 +82,8 @@ func TestService_UploadDocument_Success(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO candidate_documents`).
-		WillReturnRows(sqlmock.NewRows([]string{"candidate_document_id", "candidate_document_candidate_id", "candidate_document_type", "candidate_document_number", "candidate_document_issue_date", "candidate_document_issue_place", "candidate_document_front_image_url", "candidate_document_back_image_url", "candidate_document_portrait_image_url", "candidate_document_verification_status", "candidate_document_rejection_reason", "candidate_document_ward_id", "candidate_document_address_detail"}).
-			AddRow(1, 10, "cccd", "123456789", time.Now(), "Police", "http://fake.com/1", "http://fake.com/2", "http://fake.com/3", "pending", nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_document_id", "candidate_document_candidate_id", "candidate_document_type", "candidate_document_number", "candidate_document_issue_date", "candidate_document_issue_place", "candidate_document_front_image_url", "candidate_document_back_image_url", "candidate_document_portrait_image_url", "candidate_document_verification_status", "candidate_document_rejection_reason", "candidate_document_ward_id", "candidate_document_province_id", "candidate_document_address_detail"}).
+			AddRow(1, 10, "cccd", "123456789", time.Now(), "Police", "http://fake.com/1", "http://fake.com/2", "http://fake.com/3", "pending", nil, nil, nil, nil))
 	mock.ExpectCommit()
 
 	req := request.UploadDocumentRequestDTO{
@@ -128,14 +128,14 @@ func TestService_GetMyDocuments_Success(t *testing.T) {
 		"candidate_document_front_image_url", "candidate_document_back_image_url",
 		"candidate_document_portrait_image_url",
 		"candidate_document_verification_status", "candidate_document_rejection_reason",
-		"candidate_document_ward_id", "candidate_document_address_detail",
+		"candidate_document_ward_id", "candidate_document_province_id", "candidate_document_address_detail",
 	}
 	issueDate := time.Date(2021, 6, 15, 0, 0, 0, 0, time.UTC)
 	mock.ExpectQuery(`SELECT .+ FROM candidate_documents`).
 		WithArgs(int64(10)).
 		WillReturnRows(sqlmock.NewRows(docCols).
-			AddRow(2, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front2.jpg", nil, "http://img/portrait2.jpg", "verified", nil, nil, nil).
-			AddRow(1, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front1.jpg", nil, "http://img/portrait1.jpg", "pending", nil, nil, nil))
+			AddRow(2, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front2.jpg", nil, "http://img/portrait2.jpg", "verified", nil, nil, nil, nil).
+			AddRow(1, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front1.jpg", nil, "http://img/portrait1.jpg", "pending", nil, nil, nil, nil))
 
 	docs, err := svc.GetMyDocuments(context.Background(), int64(1))
 	if err != nil {

@@ -20,6 +20,7 @@ type CandidateDocumentEntity struct {
 	CandidateDocumentVerificationStatus enum.DocumentVerificationStatus
 	CandidateDocumentRejectionReason    *string
 	CandidateDocumentWardID             *int64
+	CandidateDocumentProvinceID         *int64
 	CandidateDocumentAddressDetail      *string
 }
 

@@ -67,7 +67,7 @@ const docSelectCols = `
 	candidate_document_front_image_url, candidate_document_back_image_url,
 	candidate_document_portrait_image_url,
 	candidate_document_verification_status, candidate_document_rejection_reason,
-	candidate_document_ward_id, candidate_document_address_detail`
+	candidate_document_ward_id, (SELECT ward_province_id FROM wards WHERE ward_id = candidate_document_ward_id) AS candidate_document_province_id, candidate_document_address_detail`
 
 func scanDocument(row *sql.Row, e *entities.CandidateDocumentEntity) error {
 	return row.Scan(
@@ -77,7 +77,7 @@ func scanDocument(row *sql.Row, e *entities.CandidateDocumentEntity) error {
 		&e.CandidateDocumentFrontImageURL, &e.CandidateDocumentBackImageURL,
 		&e.CandidateDocumentPortraitImageURL,
 		&e.CandidateDocumentVerificationStatus, &e.CandidateDocumentRejectionReason,
-		&e.CandidateDocumentWardID, &e.CandidateDocumentAddressDetail,
+		&e.CandidateDocumentWardID, &e.CandidateDocumentProvinceID, &e.CandidateDocumentAddressDetail,
 	)
 }
 
@@ -179,7 +179,7 @@ func (s *Service) GetMyDocuments(ctx context.Context, accountID int64) ([]entiti
 			&d.CandidateDocumentFrontImageURL, &d.CandidateDocumentBackImageURL,
 			&d.CandidateDocumentPortraitImageURL,
 			&d.CandidateDocumentVerificationStatus, &d.CandidateDocumentRejectionReason,
-			&d.CandidateDocumentWardID, &d.CandidateDocumentAddressDetail,
+			&d.CandidateDocumentWardID, &d.CandidateDocumentProvinceID, &d.CandidateDocumentAddressDetail,
 		); err != nil {
 			return nil, fmt.Errorf("candidate: scan document: %w", err)
 		}
@@ -420,7 +420,7 @@ func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminList
 				d.candidate_document_front_image_url, d.candidate_document_back_image_url,
 				d.candidate_document_portrait_image_url,
 				d.candidate_document_verification_status, d.candidate_document_rejection_reason,
-				d.candidate_document_ward_id, d.candidate_document_address_detail
+				d.candidate_document_ward_id, (SELECT ward_province_id FROM wards WHERE ward_id = d.candidate_document_ward_id) AS candidate_document_province_id, d.candidate_document_address_detail
 			FROM candidates c
 			JOIN candidate_documents d ON d.candidate_document_candidate_id = c.candidate_id
 			  AND d.candidate_document_is_deleted = FALSE
@@ -444,7 +444,7 @@ func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminList
 				d.candidate_document_front_image_url, d.candidate_document_back_image_url,
 				d.candidate_document_portrait_image_url,
 				d.candidate_document_verification_status, d.candidate_document_rejection_reason,
-				d.candidate_document_ward_id, d.candidate_document_address_detail
+				d.candidate_document_ward_id, (SELECT ward_province_id FROM wards WHERE ward_id = d.candidate_document_ward_id) AS candidate_document_province_id, d.candidate_document_address_detail
 			FROM candidates c
 			LEFT JOIN candidate_documents d ON d.candidate_document_candidate_id = c.candidate_id
 			  AND d.candidate_document_is_deleted = FALSE
@@ -472,7 +472,7 @@ func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminList
 			docFrontURL, docPortraitURL sql.NullString
 			docBackURL                  sql.NullString
 			docStatus, docRejection     sql.NullString
-			docWardID                   sql.NullInt64
+			docWardID, docProvinceID    sql.NullInt64
 			docAddressDetail            sql.NullString
 		)
 		if err := rows.Scan(
@@ -487,7 +487,7 @@ func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminList
 			&docFrontURL, &docBackURL,
 			&docPortraitURL,
 			&docStatus, &docRejection,
-			&docWardID, &docAddressDetail,
+			&docWardID, &docProvinceID, &docAddressDetail,
 		); err != nil {
 			return nil, utils.Meta{}, fmt.Errorf("candidate: admin list scan: %w", err)
 		}
@@ -511,6 +511,9 @@ func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminList
 			}
 			if docWardID.Valid {
 				d.CandidateDocumentWardID = &docWardID.Int64
+			}
+			if docProvinceID.Valid {
+				d.CandidateDocumentProvinceID = &docProvinceID.Int64
 			}
 			if docAddressDetail.Valid {
 				d.CandidateDocumentAddressDetail = &docAddressDetail.String
