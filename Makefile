@@ -28,6 +28,30 @@ lts:
 lt:
 	cd scripts && k6 run k6_test.js
 
+# Chạy setup dữ liệu k6 cho Payment Webhook
+ltps:
+	cd scripts && go run k6_payment_setup.go
+
+# Bắn test k6 cho Payment Webhook
+ltp:
+	cd scripts && k6 run k6_payment_test.js
+
+# Chạy setup dữ liệu Flash Sale (5 ghế, 2000 users)
+ltfs:
+	cd scripts && go run k6_flashsale_setup.go
+
+# Bắn test k6 Flash Sale + Thanh toán
+ltf:
+	cd scripts && k6 run k6_flashsale_test.js
+
+# Bắn test k6 Spam Click (Spam tạo link thanh toán)
+ltsp:
+	cd scripts && k6 run k6_spamclick_test.js
+
+# Bắn test k6 Nâng cao (Bảo mật & Cronjob Clash)
+ltadv:
+	cd scripts && k6 run k6_advanced_test.js
+
 # Khởi động Database bằng Docker
 dbu:
 	docker-compose up -d

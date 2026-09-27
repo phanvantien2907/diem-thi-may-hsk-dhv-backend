@@ -68,24 +68,11 @@ definitions:
     type: object
   request.CreatePaymentRequestDTO:
     properties:
-      amount:
-        minimum: 1
-        type: integer
       exam_registration_id:
         minimum: 1
         type: integer
-      method:
-        enum:
-        - vnpay
-        - momo
-        - zalopay
-        - bank_transfer
-        - cash
-        type: string
     required:
-    - amount
     - exam_registration_id
-    - method
     type: object
   request.CreateProfileRequestDTO:
     properties:
@@ -276,20 +263,53 @@ definitions:
     - identifier
     - password
     type: object
-  request.PaymentCallbackRequestDTO:
+  request.PayOSWebhookData:
     properties:
-      status:
-        enum:
-        - pending
-        - success
-        - failed
-        - refunded
+      accountNumber:
         type: string
-      transaction_ref:
+      amount:
+        type: integer
+      code:
         type: string
-    required:
-    - status
-    - transaction_ref
+      counterAccountBankId:
+        type: string
+      counterAccountBankName:
+        type: string
+      counterAccountName:
+        type: string
+      counterAccountNumber:
+        type: string
+      currency:
+        type: string
+      desc:
+        type: string
+      description:
+        type: string
+      orderCode:
+        type: integer
+      paymentLinkId:
+        type: string
+      reference:
+        type: string
+      transactionDateTime:
+        type: string
+      virtualAccountName:
+        type: string
+      virtualAccountNumber:
+        type: string
+    type: object
+  request.PayOSWebhookPayload:
+    properties:
+      code:
+        type: string
+      data:
+        $ref: '#/definitions/request.PayOSWebhookData'
+      desc:
+        type: string
+      signature:
+        type: string
+      success:
+        type: boolean
     type: object
   request.RefreshTokenRequestDTO:
     properties:
@@ -1017,6 +1037,122 @@ paths:
       summary: Thống kê theo Tỉnh (Admin)
       tags:
       - Location
+  /admin/payments:
+    get:
+      consumes:
+      - application/json
+      description: Lấy danh sách toàn bộ giao dịch (phân trang, lọc theo trạng thái).
+      parameters:
+      - default: 1
+        description: Trang
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Số lượng mỗi trang
+        in: query
+        name: limit
+        type: integer
+      - description: Lọc theo trạng thái (pending, success, failed, refunded)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Danh sách giao dịch'
+      tags:
+      - Payment
+  /admin/payments/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Admin hủy giao dịch (pending→failed, success→refunded).
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Trạng thái không cho phép hủy
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Hủy giao dịch'
+      tags:
+      - Payment
+  /admin/payments/{id}/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Admin xác nhận thanh toán thủ công (chuyển pending → success).
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Giao dịch không ở trạng thái chờ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Xác nhận thủ công'
+      tags:
+      - Payment
   /admin/results:
     post:
       consumes:
@@ -2441,16 +2577,6 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "401":
-          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
-          schema:
-            additionalProperties: true
-            type: object
-        "403":
-          description: Không có quyền truy cập
-          schema:
-            additionalProperties: true
-            type: object
         "500":
           description: Lỗi hệ thống nội bộ
           schema:
@@ -2461,10 +2587,40 @@ paths:
       summary: Lịch sử thanh toán
       tags:
       - Payment
+  /payments/callback:
     post:
       consumes:
       - application/json
-      description: Tạo giao dịch thanh toán (VNPay, Momo...) cho một đơn đăng ký.
+      description: Endpoint nhận IPN từ PayOS. Idempotent — luôn trả 200.
+      parameters:
+      - description: Webhook payload from PayOS
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.PayOSWebhookPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chữ ký không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Webhook PayOS
+      tags:
+      - Payment
+  /payments/payos/create:
+    post:
+      consumes:
+      - application/json
+      description: Thí sinh tạo link thanh toán qua PayOS cho phiếu đăng ký. Trả về
+        checkout URL.
       parameters:
       - description: Dữ liệu yêu cầu
         in: body
@@ -2475,74 +2631,18 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        "201":
           description: Thành công
           schema:
             additionalProperties: true
             type: object
         "400":
           description: Dữ liệu yêu cầu không hợp lệ
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
-          schema:
-            additionalProperties: true
-            type: object
-        "403":
-          description: Không có quyền truy cập
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Lỗi hệ thống nội bộ
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Tạo yêu cầu thanh toán
-      tags:
-      - Payment
-  /payments/callback:
-    post:
-      consumes:
-      - application/json
-      description: Endpoint nhận IPN/Callback từ cổng thanh toán để cập nhật trạng
-        thái tự động.
-      parameters:
-      - description: Dữ liệu yêu cầu
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/request.PaymentCallbackRequestDTO'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: Thành công
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Dữ liệu yêu cầu không hợp lệ
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
-          schema:
-            additionalProperties: true
-            type: object
-        "403":
-          description: Không có quyền truy cập
           schema:
             additionalProperties: true
             type: object
         "409":
-          description: Giao dịch đã được xử lý
+          description: Đã tồn tại giao dịch chờ thanh toán
           schema:
             additionalProperties: true
             type: object
@@ -2553,7 +2653,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Xử lý Webhook Thanh toán
+      summary: Tạo link thanh toán PayOS
       tags:
       - Payment
   /proctor/exam-sessions/:id/attendance/:registration_id:

@@ -63,6 +63,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks: 
+      - hsk_net
+
+  # ── Ngrok Tunnel (Webhook Testing) ───────────────────────────────────────
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: hsk_vinh_ngrok
+    restart: unless-stopped
+    command: http http://api:8080 --url=${NGROK_DOMAIN}
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - api
     networks:
       - hsk_net
 

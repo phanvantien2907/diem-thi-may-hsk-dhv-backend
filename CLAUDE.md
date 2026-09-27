@@ -257,9 +257,12 @@ All API routes are mounted under `/api/v1`.
 | registration | GET | `/registrations?candidate_id=X` | JWT |
 | registration | PUT | `/registrations/:id/confirm` | JWT |
 | registration | DELETE | `/registrations/:id` | JWT |
-| payment | POST | `/payments` | JWT |
-| payment | POST | `/payments/callback` | JWT |
+| payment | POST | `/payments/payos/create` | JWT |
+| payment | POST | `/payments/callback` | public |
 | payment | GET | `/payments?candidate_id=X` | JWT |
+| payment | GET | `/admin/payments` | JWT + admin |
+| payment | POST | `/admin/payments/:id/confirm` | JWT + admin |
+| payment | POST | `/admin/payments/:id/cancel` | JWT + admin |
 | result | GET | `/results/:registration_id` | JWT |
 | result | POST | `/rechecks` | JWT |
 | result | POST | `/admin/results` | JWT + admin |
@@ -876,13 +879,47 @@ When reviewing any change, check in this order:
 
 When developing or debugging third-party webhook integrations (such as payment gateways like VNPAY, Momo, or delivery services), the external service requires a public URL to send requests to.
 
-**Rule:** Always use `localtunnel` to expose your local environment for webhook testing.
+**Rule:** Use the integrated `ngrok` tunnel in `docker-compose.yml` to expose your local environment for webhook testing.
 
 **How to use:**
-1. Run your local server (usually on port 8080).
-2. Start localtunnel via `pnpm`:
-   ```bash
-   pnpm dlx localtunnel --port 8080
+1. Get your free static domain and authtoken from [ngrok.com](https://ngrok.com/).
+2. Add them to your `.env` file:
+   ```env
+   NGROK_AUTHTOKEN=your_ngrok_auth_token_here
+   NGROK_DOMAIN=your_ngrok_static_domain_here.ngrok-free.app
    ```
-3. Copy the generated `loca.lt` URL and use it in your payment gateway/webhook configuration (appending the specific API path, e.g., `/api/v1/payments/callback`).
-4. Always terminate the tunnel (`Ctrl+C`) when testing is complete to prevent exposing your local development environment to the public internet.
+3. Start your docker-compose stack:
+   ```bash
+   docker-compose up -d
+   ```
+4. Configure PayOS/Webhook providers to use your static Ngrok domain (e.g., `https://your-domain.ngrok-free.app/api/v1/payments/callback`).
+
+---
+
+## 13. Front-End Integration Guidelines (Tài liệu Tích hợp Front-end)
+
+Khi Front-end kết nối với Backend, đặc biệt trong các luồng nghiệp vụ nhạy cảm như Đăng ký thi (FlashSale) và Thanh toán, FE CẦN tuân thủ các quy tắc sau:
+
+### 13.1. Xử lý lỗi Đăng ký (HTTP 409 Conflict)
+Khi thí sinh bấm Đăng ký (`POST /api/v1/me/registrations`), Backend sử dụng Pessimistic Locking để cấp phát ghế.
+- **Nếu thành công (201 Created)**: FE nhận được `id` của phiếu đăng ký. Lập tức chuyển sang màn hình Thanh toán.
+- **Nếu thất bại (409 Conflict)**: Ghế đã được người khác lấy hoặc đã hết.
+  - **Quy tắc FE**: KHÔNG spam lại request liên tục (tránh Rate Limit 429). Phải hiển thị Toast/Modal báo lỗi rõ ràng: "Rất tiếc, đã hết ghế trống cho ca thi này!" và khóa nút Đăng ký.
+
+### 13.2. Luồng Thanh toán (Payment Flow)
+Sau khi có `exam_registration_id`, FE gọi `POST /api/v1/payments/payos/create`.
+- **Nếu thành công (200/201)**: Nhận `checkoutUrl`.
+  - **Quy tắc FE**: Lập tức chuyển hướng (Redirect) người dùng sang trang của PayOS, HOẶC mở Iframe PayOS để người dùng quét mã QR.
+- **Polling trạng thái thanh toán**:
+  - Khi Webhook PayOS gọi về Backend, Backend sẽ đổi trạng thái phiếu đăng ký sang `paid`.
+  - **Quy tắc FE**: FE cần thiết lập cơ chế Polling (gọi `GET /api/v1/me/registrations` mỗi 3-5 giây) để kiểm tra xem `status` đã đổi thành `paid` chưa. Nếu thành `paid`, lập tức hiển thị màn hình Chúc mừng và dừng Polling. (Tương lai có thể dùng WebSocket/SSE nếu cần Real-time).
+
+### 13.3. Xử lý Timeout (Flash Sale Overwhelm)
+Trong các đợt thi nóng (hàng chục ngàn người online), Backend có thể mất > 10 giây để trả lời request đăng ký do cơ chế Xếp hàng (Queueing).
+- **Quy tắc FE**: 
+  - Set HTTP Timeout của Axios/Fetch tối thiểu là **15 giây** (Không set quá ngắn gây lỗi Timeout oan).
+  - Khi người dùng bấm Đăng ký, hiển thị màn hình Loading (Loading Spinner hoặc "Đang xếp hàng... Vui lòng không tải lại trang") và **vô hiệu hóa (disable)** nút Đăng ký để chặn double-click.
+
+### 13.4. Định dạng dữ liệu (Data Types)
+- Các trường ID (`id`, `exam_session_id`, `exam_room_id`) trong Backend là `int64`. Tuy JavaScript hỗ trợ số lớn (BigInt), FE nên lưu ý khi làm việc với JSON để tránh tràn số (Precision loss).
+- Luôn gửi JWT Token vào header `Authorization: Bearer <token>`. Nếu nhận `401 Unauthorized`, FE phải tự động điều hướng người dùng về trang Đăng nhập.

@@ -70,7 +70,11 @@ func main() {
 	candSvc := candidate.NewService(db, auditSvc, mediaSvc)
 	examSvc := exam.NewService(db, auditSvc)
 	regSvc := registration.NewService(db, auditSvc)
-	paySvc := payment.NewService(db, auditSvc, regSvc)
+	paySvc := payment.NewService(db, auditSvc, payment.PayOSConfig{
+		ClientID:    cfg.PayOSClientID,
+		ApiKey:      cfg.PayOSApiKey,
+		ChecksumKey: cfg.PayOSChecksumKey,
+	})
 	resSvc := result.NewService(db, auditSvc)
 	certSvc := certificate.NewService(db, auditSvc, cfg.WebhookSecret)
 	notifSvc := notification.NewService(db)

@@ -981,6 +981,182 @@
                 }
             }
         },
+        "/admin/payments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy danh sách toàn bộ giao dịch (phân trang, lọc theo trạng thái).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Danh sách giao dịch",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Trang",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Số lượng mỗi trang",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc theo trạng thái (pending, success, failed, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin hủy giao dịch (pending→failed, success→refunded).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Hủy giao dịch",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Trạng thái không cho phép hủy",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/{id}/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin xác nhận thanh toán thủ công (chuyển pending → success).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Xác nhận thủ công",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Giao dịch không ở trạng thái chờ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/results": {
             "post": {
                 "security": [
@@ -3115,86 +3291,6 @@
                             "additionalProperties": true
                         }
                     },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Tạo giao dịch thanh toán (VNPay, Momo...) cho một đơn đăng ký.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Payment"
-                ],
-                "summary": "Tạo yêu cầu thanh toán",
-                "parameters": [
-                    {
-                        "description": "Dữ liệu yêu cầu",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/request.CreatePaymentRequestDTO"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Thành công",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
                         "schema": {
@@ -3207,12 +3303,7 @@
         },
         "/payments/callback": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Endpoint nhận IPN/Callback từ cổng thanh toán để cập nhật trạng thái tự động.",
+                "description": "Endpoint nhận IPN từ PayOS. Idempotent — luôn trả 200.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3222,7 +3313,54 @@
                 "tags": [
                     "Payment"
                 ],
-                "summary": "Xử lý Webhook Thanh toán",
+                "summary": "Webhook PayOS",
+                "parameters": [
+                    {
+                        "description": "Webhook payload from PayOS",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.PayOSWebhookPayload"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chữ ký không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/payos/create": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Thí sinh tạo link thanh toán qua PayOS cho phiếu đăng ký. Trả về checkout URL.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "Tạo link thanh toán PayOS",
                 "parameters": [
                     {
                         "description": "Dữ liệu yêu cầu",
@@ -3230,12 +3368,12 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/request.PaymentCallbackRequestDTO"
+                            "$ref": "#/definitions/request.CreatePaymentRequestDTO"
                         }
                     }
                 ],
                 "responses": {
-                    "200": {
+                    "201": {
                         "description": "Thành công",
                         "schema": {
                             "type": "object",
@@ -3249,22 +3387,8 @@
                             "additionalProperties": true
                         }
                     },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "409": {
-                        "description": "Giao dịch đã được xử lý",
+                        "description": "Đã tồn tại giao dịch chờ thanh toán",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3630,28 +3754,12 @@
         "request.CreatePaymentRequestDTO": {
             "type": "object",
             "required": [
-                "amount",
-                "exam_registration_id",
-                "method"
+                "exam_registration_id"
             ],
             "properties": {
-                "amount": {
-                    "type": "integer",
-                    "minimum": 1
-                },
                 "exam_registration_id": {
                     "type": "integer",
                     "minimum": 1
-                },
-                "method": {
-                    "type": "string",
-                    "enum": [
-                        "vnpay",
-                        "momo",
-                        "zalopay",
-                        "bank_transfer",
-                        "cash"
-                    ]
                 }
             }
         },
@@ -3916,24 +4024,76 @@
                 }
             }
         },
-        "request.PaymentCallbackRequestDTO": {
+        "request.PayOSWebhookData": {
             "type": "object",
-            "required": [
-                "status",
-                "transaction_ref"
-            ],
             "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": [
-                        "pending",
-                        "success",
-                        "failed",
-                        "refunded"
-                    ]
-                },
-                "transaction_ref": {
+                "accountNumber": {
                     "type": "string"
+                },
+                "amount": {
+                    "type": "integer"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "counterAccountBankId": {
+                    "type": "string"
+                },
+                "counterAccountBankName": {
+                    "type": "string"
+                },
+                "counterAccountName": {
+                    "type": "string"
+                },
+                "counterAccountNumber": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "desc": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "orderCode": {
+                    "type": "integer"
+                },
+                "paymentLinkId": {
+                    "type": "string"
+                },
+                "reference": {
+                    "type": "string"
+                },
+                "transactionDateTime": {
+                    "type": "string"
+                },
+                "virtualAccountName": {
+                    "type": "string"
+                },
+                "virtualAccountNumber": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.PayOSWebhookPayload": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/request.PayOSWebhookData"
+                },
+                "desc": {
+                    "type": "string"
+                },
+                "signature": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
                 }
             }
         },

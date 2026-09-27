@@ -9,12 +9,13 @@ const (
 	PayMethodZalopay      PaymentMethod = "zalopay"
 	PayMethodBankTransfer PaymentMethod = "bank_transfer"
 	PayMethodCash         PaymentMethod = "cash"
+	PayMethodPayOS        PaymentMethod = "payos"
 )
 
 // Valid reports whether m is a recognised PaymentMethod.
 func (m PaymentMethod) Valid() bool {
 	switch m {
-	case PayMethodVNPay, PayMethodMomo, PayMethodZalopay, PayMethodBankTransfer, PayMethodCash:
+	case PayMethodVNPay, PayMethodMomo, PayMethodZalopay, PayMethodBankTransfer, PayMethodCash, PayMethodPayOS:
 		return true
 	}
 	return false

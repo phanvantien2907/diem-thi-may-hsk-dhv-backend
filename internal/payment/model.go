@@ -12,8 +12,12 @@ type PaymentEntity struct {
 	PaymentExamRegistrationID int64
 	PaymentAmount             int64
 	PaymentMethod             enum.PaymentMethod
+	PaymentGateway            *string
 	PaymentTransactionRef     *string
+	PaymentGatewayTransID     *string
+	PaymentContent            *string
 	PaymentStatus             enum.PaymentStatus
+	PaymentExpiresAt          *time.Time
 	PaymentPaidAt             *time.Time
 	PaymentIsDeleted          bool
 	PaymentDeletedAt          *time.Time

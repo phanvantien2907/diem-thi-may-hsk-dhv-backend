@@ -40,6 +40,11 @@ type Config struct {
 
 	// Webhook
 	WebhookSecret string
+
+	// PayOS
+	PayOSClientID    string
+	PayOSApiKey      string
+	PayOSChecksumKey string
 }
 
 // Load reads configuration from the .env file and environment variables.
@@ -57,6 +62,9 @@ func Load() (*Config, error) {
 		JWTSecret:          mustGetEnv("JWT_SECRET"),
 		CloudinaryURL:      mustGetEnv("CLOUDINARY_URL"),
 		WebhookSecret:      getEnv("WEBHOOK_SECRET", ""),
+		PayOSClientID:      getEnv("PAY_OS_CLIENT_ID", ""),
+		PayOSApiKey:        getEnv("PAY_OS_API_KEY", ""),
+		PayOSChecksumKey:   getEnv("PAY_OS_CHECKSUM_KEY", ""),
 		CORSAllowedOrigins: strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 	}
 
