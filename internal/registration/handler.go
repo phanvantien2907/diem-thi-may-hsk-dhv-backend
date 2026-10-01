@@ -12,6 +12,16 @@ type Handler struct{ svc *Service }
 // NewHandler creates a registration Handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+func (h *Handler) getCandidateID(c *gin.Context) (int64, bool) {
+	accountID := utils.MustAccountID(c)
+	candidateID, err := h.svc.GetCandidateID(c.Request.Context(), accountID)
+	if err != nil {
+		utils.Forbidden(c, err.Error())
+		return 0, false
+	}
+	return candidateID, true
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Candidate: Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +51,10 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	reg, err := h.svc.ReserveSeat(c.Request.Context(), req, candidateID)
 	if err != nil {
 		utils.Conflict(c, err.Error())
@@ -64,7 +77,10 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 // @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
 // @Router /me/registrations [get]
 func (h *Handler) GetMyRegistrations(c *gin.Context) {
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	list, err := h.svc.GetMyRegistrations(c.Request.Context(), candidateID)
 	if err != nil {
 		utils.InternalServerError(c, "Lấy danh sách phiếu đăng ký thất bại")
@@ -89,7 +105,10 @@ func (h *Handler) PaymentConfirm(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	if err := h.svc.ConfirmPayment(c.Request.Context(), id, candidateID, req); err != nil {
 		utils.Conflict(c, err.Error())
 		return
@@ -127,7 +146,10 @@ func (h *Handler) TransferRegistration(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	reg, err := h.svc.TransferRegistration(c.Request.Context(), id, candidateID, req)
 	if err != nil {
 		utils.Conflict(c, err.Error())
@@ -156,7 +178,10 @@ func (h *Handler) CancelRegistration(c *gin.Context) {
 		utils.BadRequest(c, "ID phiếu đăng ký không hợp lệ")
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	if err := h.svc.CancelRegistrationByCandidate(c.Request.Context(), id, candidateID); err != nil {
 		utils.Conflict(c, err.Error())
 		return
@@ -184,7 +209,10 @@ func (h *Handler) GetAdmissionSlip(c *gin.Context) {
 		utils.BadRequest(c, "ID phiếu đăng ký không hợp lệ")
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	slip, err := h.svc.GetAdmissionSlip(c.Request.Context(), id, candidateID)
 	if err != nil {
 		utils.NotFound(c, err.Error())
@@ -217,7 +245,10 @@ func (h *Handler) JoinWaitlist(c *gin.Context) {
 		utils.BadRequest(c, "ID ca thi không hợp lệ")
 		return
 	}
-	candidateID := utils.MustAccountID(c)
+	candidateID, ok := h.getCandidateID(c)
+	if !ok {
+		return
+	}
 	entry, err := h.svc.JoinWaitlist(c.Request.Context(), sessionID, candidateID)
 	if err != nil {
 		utils.Conflict(c, err.Error())

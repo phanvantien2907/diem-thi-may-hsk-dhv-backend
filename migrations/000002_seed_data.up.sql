@@ -1,9 +1,3 @@
--- =============================================================================
--- 002_seed_data.sql
--- HSK Vinh Registration System – Realistic Vietnamese seed data
--- Depends on: 001_schema.sql
--- Password hash = bcrypt("Password@123", cost=10)
--- =============================================================================
 
 -- ── 1. Roles ─────────────────────────────────────────────────────────────────
 INSERT INTO roles (role_code, role_name) VALUES
@@ -15,16 +9,10 @@ ON CONFLICT (role_code) DO NOTHING;
 
 -- ── 2. Exam Types ────────────────────────────────────────────────────────────
 INSERT INTO exam_types (exam_type_code, exam_type_name, exam_type_description) VALUES
-    ('HSK1',      'HSK Cấp 1',          'Tiếng Trung sơ cấp thấp – khoảng 150 từ vựng'),
-    ('HSK2',      'HSK Cấp 2',          'Tiếng Trung sơ cấp – khoảng 300 từ vựng'),
-    ('HSK3',      'HSK Cấp 3',          'Tiếng Trung trung cấp thấp – khoảng 600 từ vựng'),
-    ('HSK4',      'HSK Cấp 4',          'Tiếng Trung trung cấp – khoảng 1200 từ vựng'),
-    ('HSK5',      'HSK Cấp 5',          'Tiếng Trung trung cấp cao – khoảng 2500 từ vựng'),
-    ('HSK6',      'HSK Cấp 6',          'Tiếng Trung nâng cao – trên 5000 từ vựng'),
-    ('HSKK_SO',   'HSKK Sơ cấp',        'Bài thi nói tiếng Trung sơ cấp'),
-    ('HSKK_TRUNG','HSKK Trung cấp',     'Bài thi nói tiếng Trung trung cấp'),
-    ('HSKK_CAO',  'HSKK Cao cấp',       'Bài thi nói tiếng Trung cao cấp'),
-    ('YCT4',      'YCT Cấp 4 – Thiếu nhi', 'Kỳ thi tiếng Trung dành cho học sinh phổ thông')
+    ('HSK3', 'HSK 3 (Cấp độ 3 + sơ cấp)', 'Cấp độ 3 + sơ cấp'),
+    ('HSK4', 'HSK 4 (Cấp độ 4 + trung cấp)', 'Cấp độ 4 + trung cấp'),
+    ('HSK5', 'HSK 5 (Cấp độ 5 + cao cấp)', 'Cấp độ 5 + cao cấp'),
+    ('HSK6', 'HSK 6 (Cấp độ 6 + cao cấp)', 'Cấp độ 6 + cao cấp')
 ON CONFLICT (exam_type_code) DO NOTHING;
 
 -- ── 3. Provinces (34 tỉnh/thành sau sáp nhập 01/07/2025) ───────────────────
@@ -136,11 +124,11 @@ ON CONFLICT (ward_code) DO NOTHING;
 
 -- ── 5. Exam Rooms ────────────────────────────────────────────────────────────
 INSERT INTO exam_rooms (exam_room_name, exam_room_location, exam_room_capacity) VALUES
-    ('Phòng thi 101',       'Tầng 1, Nhà A2, Trường Đại học Vinh, 182 Lê Duẩn, Tp. Vinh, Nghệ An', 30),
-    ('Phòng thi 102',       'Tầng 1, Nhà A2, Trường Đại học Vinh, 182 Lê Duẩn, Tp. Vinh, Nghệ An', 30),
-    ('Phòng thi 201',       'Tầng 2, Nhà A2, Trường Đại học Vinh, 182 Lê Duẩn, Tp. Vinh, Nghệ An', 25),
-    ('Phòng máy tính 301',  'Tầng 3, Nhà B1, Trường Đại học Vinh, 182 Lê Duẩn, Tp. Vinh, Nghệ An', 40),
-    ('Phòng máy tính 302',  'Tầng 3, Nhà B1, Trường Đại học Vinh, 182 Lê Duẩn, Tp. Vinh, Nghệ An', 40);
+    ('PM 101',       'Tầng 1, Nhà A2, Trường Đại học Vinh', 30),
+    ('PM 102',       'Tầng 1, Nhà A2, Trường Đại học Vinh', 30),
+    ('PM 201',       'Tầng 2, Nhà A2, Trường Đại học Vinh', 25),
+    ('PM 301',       'Tầng 3, Nhà B1, Trường Đại học Vinh', 40),
+    ('PM 302',       'Tầng 3, Nhà B1, Trường Đại học Vinh', 40);
 
 -- ── 6. Exam Sessions ─────────────────────────────────────────────────────────
 INSERT INTO exam_sessions (
@@ -160,19 +148,26 @@ SELECT
     s.shift,
     er.exam_room_capacity,
     s.fee,
-    (s.sess_date::DATE - INTERVAL '10 days' + TIME '23:59:59')::TIMESTAMPTZ,
+    (s.sess_date::DATE - INTERVAL '20 days' + TIME '23:59:59')::TIMESTAMPTZ,
     'open'
 FROM (VALUES
-    ('HSK1',      'Phòng máy tính 301', '2026-09-20', 'morning',   350000),
-    ('HSK2',      'Phòng máy tính 301', '2026-09-20', 'afternoon', 400000),
-    ('HSK3',      'Phòng thi 101',      '2026-09-21', 'morning',   500000),
-    ('HSK4',      'Phòng thi 102',      '2026-09-21', 'afternoon', 600000),
-    ('HSK5',      'Phòng thi 201',      '2026-11-15', 'morning',   700000),
-    ('HSK6',      'Phòng thi 201',      '2026-11-15', 'afternoon', 800000),
-    ('HSKK_SO',   'Phòng máy tính 302', '2026-09-20', 'evening',   350000),
-    ('HSKK_TRUNG','Phòng máy tính 302', '2026-11-15', 'morning',   450000),
-    ('HSKK_CAO',  'Phòng máy tính 302', '2026-11-15', 'evening',   500000),
-    ('HSK1',      'Phòng máy tính 301', '2026-12-13', 'morning',   350000)
+    -- Đợt thi: 17/10/2026 (Hạn đăng ký: 27/09/2026)
+    ('HSK3', 'PM 301', '2026-10-17', 'morning',   1330000),
+    ('HSK4', 'PM 301', '2026-10-17', 'afternoon', 1600000),
+    ('HSK5', 'PM 101',      '2026-10-17', 'morning',   1900000),
+    ('HSK6', 'PM 102',      '2026-10-17', 'afternoon', 2150000),
+    
+    -- Đợt thi: 07/11/2026 (Hạn đăng ký: 18/10/2026)
+    ('HSK3', 'PM 301', '2026-11-07', 'morning',   1330000),
+    ('HSK4', 'PM 301', '2026-11-07', 'afternoon', 1600000),
+    ('HSK5', 'PM 101',      '2026-11-07', 'morning',   1900000),
+    ('HSK6', 'PM 102',      '2026-11-07', 'afternoon', 2150000),
+
+    -- Đợt thi: 13/12/2026 (Hạn đăng ký: 23/11/2026)
+    ('HSK3', 'PM 301', '2026-12-13', 'morning',   1330000),
+    ('HSK4', 'PM 301', '2026-12-13', 'afternoon', 1600000),
+    ('HSK5', 'PM 101',      '2026-12-13', 'morning',   1900000),
+    ('HSK6', 'PM 102',      '2026-12-13', 'afternoon', 2150000)
 ) AS s(type_code, room_name, sess_date, shift, fee)
 JOIN exam_types et ON et.exam_type_code  = s.type_code  AND et.exam_type_is_deleted  = FALSE
 JOIN exam_rooms er ON er.exam_room_name  = s.room_name  AND er.exam_room_is_deleted  = FALSE;

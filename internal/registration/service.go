@@ -28,9 +28,18 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Candidate: Registration CRUD
-// ─────────────────────────────────────────────────────────────────────────────
+// GetCandidateID looks up the internal candidate_id for the given account_id.
+func (s *Service) GetCandidateID(ctx context.Context, accountID int64) (int64, error) {
+	var candidateID int64
+	err := s.db.QueryRowContext(ctx, "SELECT candidate_id FROM candidates WHERE candidate_account_id = $1 AND candidate_is_deleted = FALSE", accountID).Scan(&candidateID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, errors.New("Vui lòng cập nhật hồ sơ thí sinh trước khi thao tác")
+		}
+		return 0, fmt.Errorf("lookup candidate: %w", err)
+	}
+	return candidateID, nil
+}
 
 // ReserveSeat atomically books a seat via fn_book_exam_seat (FOR UPDATE SKIP LOCKED).
 // candidateID comes from the JWT — never from the request body.
