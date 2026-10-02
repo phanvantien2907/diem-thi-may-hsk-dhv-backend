@@ -21,6 +21,7 @@ import (
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/auth/dto/response"
 	"github.com/hskvinh/backend/internal/auth/entities"
+	"github.com/hskvinh/backend/internal/ws"
 
 	"github.com/hskvinh/backend/internal/utils"
 )
@@ -34,6 +35,7 @@ const (
 type Service struct {
 	db         *sql.DB
 	auditSvc   audit.Service
+	hub        *ws.Hub
 	jwtSecret  string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
@@ -42,6 +44,11 @@ type Service struct {
 // NewService creates an auth Service.
 func NewService(db *sql.DB, auditSvc audit.Service, jwtSecret string, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{db: db, auditSvc: auditSvc, jwtSecret: jwtSecret, accessTTL: accessTTL, refreshTTL: refreshTTL}
+}
+
+// SetHub injects the WebSocket hub instance.
+func (s *Service) SetHub(hub *ws.Hub) {
+	s.hub = hub
 }
 
 // hashToken returns SHA-256 hex of the given token (for refresh token storage).
@@ -325,6 +332,13 @@ func (s *Service) ChangePassword(ctx context.Context, accountID int64, req reque
 		EntityTable:    auditenum.AuditEntityAccount.String(),
 		EntityID:       accountID,
 	})
+
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventAccountUpdated, map[string]interface{}{
+			"account_id": accountID,
+		})
+	}
+
 	return nil
 }
 
@@ -552,13 +566,15 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	var e entities.AccountEntity
 	err = scanAccount(tx.QueryRowContext(ctx, `
 		UPDATE accounts
-		SET account_email = COALESCE(NULLIF($1,''), account_email),
-		    account_phone = COALESCE(NULLIF($2,''), account_phone)
-		WHERE account_id = $3 AND account_is_deleted = FALSE
-		RETURNING account_id, account_role_id, account_username,
+		SET account_full_name = COALESCE(NULLIF($1,''), account_full_name),
+		    account_email = COALESCE(NULLIF($2,''), account_email),
+		    account_phone = COALESCE(NULLIF($3,''), account_phone),
+		    account_updated_at = NOW()
+		WHERE account_id = $4 AND account_is_deleted = FALSE
+		RETURNING account_id, account_role_id, account_username, account_full_name,
 		          account_email, account_phone, account_status,
 		          account_last_login_at, account_created_at, account_updated_at`,
-		req.Email, req.Phone, accountID,
+		req.FullName, req.Email, req.Phone, accountID,
 	), &e)
 	if errors.Is(err, sql.ErrNoRows) {
 		return response.AccountResponseDTO{}, errors.New("không tìm thấy tài khoản")
@@ -567,7 +583,7 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
 	}
 
-	newVal, _ := json.Marshal(map[string]any{"email": e.AccountEmail, "phone": e.AccountPhone})
+	newVal, _ := json.Marshal(map[string]any{"full_name": e.AccountFullName, "email": e.AccountEmail, "phone": e.AccountPhone})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &accountID,
 		Action:         auditenum.AuditActionUpdate.String(),
@@ -579,6 +595,13 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	if err := tx.Commit(); err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: commit: %w", err)
 	}
+
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventAccountUpdated, map[string]interface{}{
+			"account_id": accountID,
+		})
+	}
+
 	return ToAccountResponseDTO(e), nil
 }
 

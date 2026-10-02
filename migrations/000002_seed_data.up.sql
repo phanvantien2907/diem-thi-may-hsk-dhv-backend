@@ -189,7 +189,7 @@ ON CONFLICT (exam_seat_exam_session_id, exam_seat_number) DO NOTHING;
 INSERT INTO accounts
     (account_role_id, account_username, account_password_hash, account_email, account_phone, account_status)
 SELECT r.role_id, u.username,
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
+    '$2a$10$wdFJHHAn5evwx8sAytu0MejTeuT1FeoMWkJMckLnXF8YlBVI6eb5.',
     u.email, u.phone, 'active'
 FROM roles r
 JOIN (VALUES

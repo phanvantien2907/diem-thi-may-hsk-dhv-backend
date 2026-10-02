@@ -25,6 +25,7 @@ import (
 	payenum "github.com/hskvinh/backend/internal/payment/enum"
 	regenum "github.com/hskvinh/backend/internal/registration/enum"
 	"github.com/hskvinh/backend/internal/utils"
+	"github.com/hskvinh/backend/internal/ws"
 )
 
 // PayOSConfig holds the credentials needed to call PayOS API.
@@ -40,6 +41,7 @@ type Service struct {
 	auditSvc audit.Service
 	payOS    PayOSConfig
 	httpCli  *http.Client
+	hub      *ws.Hub // optional, nil-safe
 }
 
 // NewService creates a payment Service.
@@ -51,6 +53,9 @@ func NewService(db *sql.DB, auditSvc audit.Service, payOS PayOSConfig) *Service 
 		httpCli:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
+
+// SetHub attaches a WebSocket hub for broadcasting real-time events.
+func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
 
 // ─── Column list + scanner (DRY) ───────────────────────────────────────────
 
@@ -155,7 +160,9 @@ func (s *Service) CreatePayOSLink(ctx context.Context, req request.CreatePayment
 	}
 
 	// 4. Store the transaction_ref (orderCode as string) back.
-	orderCodeStr := fmt.Sprintf("%d", e.PaymentID)
+	// Add timestamp offset to payment ID to prevent PayOS "Order Already Exists" error after DB resets.
+	orderCode := int64(time.Now().Unix())*10000 + e.PaymentID
+	orderCodeStr := fmt.Sprintf("%d", orderCode)
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE payments SET payment_transaction_ref = $1 WHERE payment_id = $2`,
 		orderCodeStr, e.PaymentID,
@@ -170,7 +177,7 @@ func (s *Service) CreatePayOSLink(ctx context.Context, req request.CreatePayment
 		"registration_id": req.ExamRegistrationID,
 		"amount":          amount,
 		"gateway":         "payos",
-		"order_code":      e.PaymentID,
+		"order_code":      orderCode,
 	})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		Action:      auditenum.AuditActionPayment.String(),
@@ -179,13 +186,13 @@ func (s *Service) CreatePayOSLink(ctx context.Context, req request.CreatePayment
 		NewValue:    newVal,
 	})
 
-	// 6. GIẢI PHÓNG CONNECTION DB TRƯỚC KHI GỌI MẠNG (Tối ưu điểm nghẽn)
+	// 6. GIẢI PHÓNG CONNECTION DB TRƯỚC KHI GỌI MẠNG
 	if err := tx.Commit(); err != nil {
 		return response.PaymentResponseDTO{}, fmt.Errorf("payment: commit: %w", err)
 	}
 
 	// 7. Gọi PayOS API để lấy Link (Mất 200-300ms, KHÔNG chiếm dụng DB Connection)
-	checkoutURL, err := s.callPayOSCreateLink(ctx, e.PaymentID, amount, content)
+	checkoutURL, err := s.callPayOSCreateLink(ctx, orderCode, amount, content, req.ReturnURL, req.CancelURL)
 	if err != nil {
 		// Rollback logic (đã thoát tx nên phải dùng lệnh update riêng)
 		_, _ = s.db.ExecContext(context.Background(), "UPDATE payments SET payment_status = 'failed' WHERE payment_id = $1", e.PaymentID)
@@ -259,6 +266,25 @@ func (s *Service) ProcessWebhook(ctx context.Context, payload request.PayOSWebho
 			NewValue:    newVal,
 		})
 		log.Printf("[payment] webhook: payment_id=%d updated to %s", resultID, status)
+		log.Printf("[payment] webhook: payment_id=%d updated to %s", resultID, status)
+
+		// Broadcast real-time event if successful
+		if isSuccess && s.hub != nil {
+			var regID, seatID int64
+			err := s.db.QueryRowContext(ctx, `
+				SELECT p.payment_exam_registration_id, r.exam_registration_exam_seat_id
+				FROM payments p
+				JOIN exam_registrations r ON r.exam_registration_id = p.payment_exam_registration_id
+				WHERE p.payment_id = $1
+			`, resultID).Scan(&regID, &seatID)
+			if err == nil {
+				s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
+					"registration_id": regID,
+					"seat_id":         seatID,
+					"status":          "confirmed",
+				})
+			}
+		}
 	}
 
 	return nil
@@ -443,7 +469,7 @@ func (s *Service) AdminCancelPayment(ctx context.Context, paymentID int64) (resp
 // ─── PayOS HTTP Client ──────────────────────────────────────────────────────
 
 // callPayOSCreateLink calls the PayOS REST API to create a payment link.
-func (s *Service) callPayOSCreateLink(ctx context.Context, orderCode int64, amount int64, description string) (string, error) {
+func (s *Service) callPayOSCreateLink(ctx context.Context, orderCode int64, amount int64, description string, returnURL, cancelURL string) (string, error) {
 	if os.Getenv("MOCK_PAYOS") == "true" {
 		return "https://pay.payos.vn/web/mock/" + fmt.Sprintf("%d", orderCode), nil
 	}
@@ -459,13 +485,13 @@ func (s *Service) callPayOSCreateLink(ctx context.Context, orderCode int64, amou
 		"items": []item{
 			{Name: "Lệ phí thi HSK", Quantity: 1, Price: amount},
 		},
-		"cancelUrl": "https://hsk-vinh.edu.vn/payment/cancel",
-		"returnUrl": "https://hsk-vinh.edu.vn/payment/success",
+		"cancelUrl": cancelURL,
+		"returnUrl": returnURL,
 	}
 
 	// Generate signature: sort keys alphabetically, join as key=value&, HMAC-SHA256.
 	sigData := fmt.Sprintf("amount=%d&cancelUrl=%s&description=%s&orderCode=%d&returnUrl=%s",
-		amount, "https://hsk-vinh.edu.vn/payment/cancel", description, orderCode, "https://hsk-vinh.edu.vn/payment/success")
+		amount, cancelURL, description, orderCode, returnURL)
 	mac := hmac.New(sha256.New, []byte(s.payOS.ChecksumKey))
 	mac.Write([]byte(sigData))
 	signature := hex.EncodeToString(mac.Sum(nil))

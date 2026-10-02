@@ -3,7 +3,9 @@ package request
 // CreatePaymentRequestDTO is the payload for POST /payments/payos/create.
 // The candidate provides only the registration ID — amount is looked up server-side.
 type CreatePaymentRequestDTO struct {
-	ExamRegistrationID int64 `json:"exam_registration_id" validate:"required,min=1"`
+	ExamRegistrationID int64  `json:"exam_registration_id" validate:"required,min=1"`
+	ReturnURL          string `json:"return_url" validate:"required,url"`
+	CancelURL          string `json:"cancel_url" validate:"required,url"`
 }
 
 // --- PayOS Webhook Structures ---

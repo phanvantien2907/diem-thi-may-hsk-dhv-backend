@@ -15,18 +15,23 @@ import (
 	"github.com/hskvinh/backend/internal/registration/dto/response"
 	"github.com/hskvinh/backend/internal/registration/entities"
 	regenum "github.com/hskvinh/backend/internal/registration/enum"
+	"github.com/hskvinh/backend/internal/ws"
 )
 
 // Service handles seat reservation and registration lifecycle.
 type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
+	hub      *ws.Hub // optional, nil-safe
 }
 
 // NewService creates a registration Service.
 func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
 }
+
+// SetHub attaches a WebSocket hub for broadcasting real-time events.
+func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
 
 // GetCandidateID looks up the internal candidate_id for the given account_id.
 func (s *Service) GetCandidateID(ctx context.Context, accountID int64) (int64, error) {
@@ -82,7 +87,19 @@ func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatReques
 		NewValue:       newVal,
 	})
 
-	return ToRegistrationResponseDTO(e), nil
+	result := ToRegistrationResponseDTO(e)
+
+	// Broadcast real-time event
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventRegistrationCreated, map[string]interface{}{
+			"registration_id": result.ID,
+			"session_id":      result.SessionID,
+			"seat_id":         result.SeatID,
+			"status":          result.Status,
+		})
+	}
+
+	return result, nil
 }
 
 // GetMyRegistrations returns a candidate's registrations (lean projection).
@@ -170,7 +187,20 @@ func (s *Service) CancelRegistrationByCandidate(ctx context.Context, registratio
 		NewValue:       newVal,
 	})
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Broadcast real-time event
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventRegistrationCancelled, map[string]interface{}{
+			"registration_id": registrationID,
+			"seat_id":         seatID,
+			"status":          "cancelled",
+		})
+	}
+
+	return nil
 }
 
 // ConfirmPayment confirms payment via fn_confirm_registration_payment and marks seat as booked.
@@ -530,5 +560,18 @@ func (s *Service) ConfirmRegistration(ctx context.Context, registrationID int64)
 		NewValue:       newVal,
 	})
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Broadcast real-time event
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
+			"registration_id": registrationID,
+			"seat_id":         seatID,
+			"status":          "confirmed",
+		})
+	}
+
+	return nil
 }

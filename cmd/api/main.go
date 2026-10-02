@@ -23,6 +23,8 @@ import (
 	"github.com/hskvinh/backend/internal/payment"
 	"github.com/hskvinh/backend/internal/registration"
 	"github.com/hskvinh/backend/internal/result"
+	"github.com/hskvinh/backend/internal/worker"
+	"github.com/hskvinh/backend/internal/ws"
 
 	_ "github.com/hskvinh/backend/docs"
 	swaggerFiles "github.com/swaggo/files"
@@ -80,6 +82,15 @@ func main() {
 	notifSvc := notification.NewService(db)
 	locSvc := location.NewService(db, auditSvc)
 
+	// ── WebSocket Hub ────────────────────────────────────────────────────
+	hub := ws.NewHub()
+	go hub.Run()
+
+	// Attach hub to services that need real-time broadcasting
+	regSvc.SetHub(hub)
+	paySvc.SetHub(hub)
+	authSvc.SetHub(hub)
+
 	// ── Handlers ──────────────────────────────────────────────────────────
 	auditH := audit.NewHandler(auditSvc)
 	authH := auth.NewHandler(authSvc)
@@ -136,6 +147,10 @@ func main() {
 	notification.RegisterRoutes(api, notifH, cfg.JWTSecret)
 	location.RegisterRoutes(api, locH, cfg.JWTSecret)
 
+	// ── WebSocket Route ──────────────────────────────────────────────────
+	wsH := ws.NewHandler(hub, cfg.JWTSecret)
+	ws.RegisterRoutes(engine, wsH)
+
 	// ── HTTP Server ───────────────────────────────────────────────────────
 	srv := &http.Server{
 		Addr:         ":" + cfg.AppPort,
@@ -148,6 +163,10 @@ func main() {
 	// ── Graceful Shutdown ─────────────────────────────────────────────────
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// ── Background Workers ───────────────────────────────────────────────
+	seatCron := worker.NewSeatReleaseCron(regSvc, hub, 60*time.Second)
+	go seatCron.Start(ctx)
 
 	go func() {
 		log.Printf("[main] listening on :%s (env=%s)", cfg.AppPort, cfg.AppEnv)
