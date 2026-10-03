@@ -11,22 +11,24 @@ import (
 type EventType string
 
 const (
-	EventSeatUpdated           EventType = "seat_updated"           // Ghế thay đổi trạng thái (held/available/booked)
-	EventRegistrationCreated   EventType = "registration_created"   // Thí sinh vừa đăng ký (giữ ghế)
-	EventRegistrationCancelled EventType = "registration_cancelled" // Đơn đăng ký bị hủy (hết hạn / thí sinh hủy)
-	EventPaymentConfirmed      EventType = "payment_confirmed"      // Thanh toán thành công → ghế chốt
-	EventSeatsReleased         EventType = "seats_released"         // CronJob vừa giải phóng ghế quá hạn
-	EventAccountUpdated        EventType = "account_updated"        // Thông tin tài khoản (profile/password) vừa cập nhật
+	EventSeatUpdated             EventType = "seat_updated"              // Ghế thay đổi trạng thái (held/available/booked)
+	EventRegistrationCreated     EventType = "registration_created"      // Thí sinh vừa đăng ký (giữ ghế)
+	EventRegistrationCancelled   EventType = "registration_cancelled"    // Đơn đăng ký bị hủy (hết hạn / thí sinh hủy)
+	EventPaymentConfirmed        EventType = "payment_confirmed"         // Thanh toán thành công → ghế chốt
+	EventSeatsReleased           EventType = "seats_released"            // CronJob vừa giải phóng ghế quá hạn
+	EventAccountUpdated          EventType = "account_updated"           // Thông tin tài khoản (profile/password) vừa cập nhật
+	EventDashboardMetricsUpdated EventType = "dashboard_metrics_updated" // Background job cập nhật dữ liệu dashboard
+	EventTransactionException    EventType = "transaction_exception"     // Phát hiện giao dịch ngoại lệ
 )
 
-// Event is the JSON payload pushed to every connected client.
+// Event là JSON payload được đẩy tới mọi client đã kết nối.
 type Event struct {
 	Type      EventType   `json:"type"`
 	Payload   interface{} `json:"payload"`
 	Timestamp string      `json:"timestamp"`
 }
 
-// Hub maintains the set of active WebSocket clients and broadcasts events.
+// Hub quản lý tập hợp các client WebSocket đang hoạt động và phát broadcast các event.
 type Hub struct {
 	mu         sync.RWMutex
 	clients    map[*Client]struct{}
@@ -35,7 +37,7 @@ type Hub struct {
 	unregister chan *Client
 }
 
-// NewHub creates and returns a new Hub.
+// NewHub tạo và trả về một Hub mới.
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]struct{}),

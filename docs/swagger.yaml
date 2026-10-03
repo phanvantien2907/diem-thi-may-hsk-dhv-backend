@@ -68,11 +68,17 @@ definitions:
     type: object
   request.CreatePaymentRequestDTO:
     properties:
+      cancel_url:
+        type: string
       exam_registration_id:
         minimum: 1
         type: integer
+      return_url:
+        type: string
     required:
+    - cancel_url
     - exam_registration_id
+    - return_url
     type: object
   request.CreateProfileRequestDTO:
     properties:
@@ -263,6 +269,15 @@ definitions:
     - identifier
     - password
     type: object
+  request.ManualApproveRequestDTO:
+    properties:
+      reason:
+        maxLength: 500
+        minLength: 5
+        type: string
+    required:
+    - reason
+    type: object
   request.PayOSWebhookData:
     properties:
       accountNumber:
@@ -318,6 +333,15 @@ definitions:
     required:
     - refresh_token
     type: object
+  request.RefundMarkRequestDTO:
+    properties:
+      reason:
+        maxLength: 500
+        minLength: 5
+        type: string
+    required:
+    - reason
+    type: object
   request.RegisterRequestDTO:
     properties:
       cccd:
@@ -369,6 +393,9 @@ definitions:
     properties:
       email:
         maxLength: 150
+        type: string
+      full_name:
+        maxLength: 100
         type: string
       phone:
         maxLength: 20
@@ -1037,6 +1064,116 @@ paths:
       summary: Thống kê theo Tỉnh (Admin)
       tags:
       - Location
+  /admin/logs/recent:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách các hành động Audit Log mới nhất trên hệ thống (của
+        tất cả Admin)
+      parameters:
+      - description: Trang hiện tại (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng bản ghi mỗi trang (mặc định 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lịch sử hoạt động gần đây
+      tags:
+      - dashboard
+  /admin/metrics/hsk-distribution:
+    get:
+      consumes:
+      - application/json
+      description: Lấy tỷ lệ thí sinh đăng ký theo từng cấp độ HSK (chỉ tính các đơn
+        đã confirmed)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy phân bố chứng chỉ HSK
+      tags:
+      - dashboard
+  /admin/metrics/overview:
+    get:
+      consumes:
+      - application/json
+      description: 'Lấy các chỉ số KPI: doanh thu, tổng số đăng ký, tỷ lệ lấp đầy,
+        tỷ lệ thanh toán thành công'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy chỉ số tổng quan
+      tags:
+      - dashboard
+  /admin/metrics/payment-funnel:
+    get:
+      consumes:
+      - application/json
+      description: Phân tích lượng giao dịch thành công / đang chờ / thất bại theo
+        từng khung giờ trong ngày hôm nay
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy phễu thanh toán trong ngày
+      tags:
+      - dashboard
+  /admin/metrics/revenue-chart:
+    get:
+      consumes:
+      - application/json
+      description: Lấy dữ liệu vẽ biểu đồ doanh thu và lượng đăng ký theo ngày (7
+        ngày hoặc 30 ngày)
+      parameters:
+      - description: Khoảng thời gian (7days hoặc 30days)
+        in: query
+        name: range
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lấy biểu đồ doanh thu
+      tags:
+      - dashboard
   /admin/payments:
     get:
       consumes:
@@ -1198,6 +1335,25 @@ paths:
       summary: Nhập điểm (Admin)
       tags:
       - Result
+  /admin/sessions/live-status:
+    get:
+      consumes:
+      - application/json
+      description: Xem trực tiếp số ghế trống, số ghế đang bị giữ và số ghế đã chốt
+        của các ca thi đang mở
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Giám sát trạng thái ca thi trực tiếp
+      tags:
+      - dashboard
   /admin/staff-accounts:
     post:
       consumes:
@@ -1248,6 +1404,142 @@ paths:
       summary: Tạo tài khoản nhân viên
       tags:
       - Auth
+  /admin/system/clear-cache:
+    post:
+      consumes:
+      - application/json
+      description: Xoá bộ nhớ đệm In-memory của Dashboard để ép hệ thống query lại
+        dữ liệu mới nhất
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xoá bộ nhớ đệm (Cache) Dashboard
+      tags:
+      - dashboard
+  /admin/transactions/{id}/manual-approve:
+    post:
+      consumes:
+      - application/json
+      description: Cho phép Admin duyệt thủ công một giao dịch bị lỗi (force approve),
+        hệ thống sẽ chốt đơn và giữ ghế
+      parameters:
+      - description: ID của Giao dịch (Payment ID)
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lý do duyệt thủ công
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/request.ManualApproveRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Duyệt giao dịch thủ công
+      tags:
+      - dashboard
+  /admin/transactions/{id}/refund-mark:
+    post:
+      consumes:
+      - application/json
+      description: Cho phép Admin đánh dấu một giao dịch là đã hoàn tiền cho thí sinh
+      parameters:
+      - description: ID của Giao dịch (Payment ID)
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lý do hoàn tiền
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/request.RefundMarkRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đánh dấu đã hoàn tiền
+      tags:
+      - dashboard
+  /admin/transactions/exceptions:
+    get:
+      consumes:
+      - application/json
+      description: Xem các giao dịch thanh toán bị lỗi, sai tiền hoặc quá hạn chưa
+        xử lý
+      parameters:
+      - description: Trang hiện tại (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng bản ghi mỗi trang (mặc định 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách giao dịch ngoại lệ
+      tags:
+      - dashboard
+  /admin/users/me/audit-log:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách các hành động Audit Log do chính Admin đang đăng
+        nhập thực hiện
+      parameters:
+      - description: Trang hiện tại (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng bản ghi mỗi trang (mặc định 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lịch sử thao tác cá nhân
+      tags:
+      - dashboard
   /auth/force-password-change:
     post:
       consumes:

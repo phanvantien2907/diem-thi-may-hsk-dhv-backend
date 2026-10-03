@@ -981,6 +981,174 @@
                 }
             }
         },
+        "/admin/logs/recent": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách các hành động Audit Log mới nhất trên hệ thống (của tất cả Admin)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lịch sử hoạt động gần đây",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Trang hiện tại (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng bản ghi mỗi trang (mặc định 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/metrics/hsk-distribution": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy tỷ lệ thí sinh đăng ký theo từng cấp độ HSK (chỉ tính các đơn đã confirmed)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lấy phân bố chứng chỉ HSK",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/metrics/overview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy các chỉ số KPI: doanh thu, tổng số đăng ký, tỷ lệ lấp đầy, tỷ lệ thanh toán thành công",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lấy chỉ số tổng quan",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/metrics/payment-funnel": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Phân tích lượng giao dịch thành công / đang chờ / thất bại theo từng khung giờ trong ngày hôm nay",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lấy phễu thanh toán trong ngày",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/metrics/revenue-chart": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy dữ liệu vẽ biểu đồ doanh thu và lượng đăng ký theo ngày (7 ngày hoặc 30 ngày)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lấy biểu đồ doanh thu",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Khoảng thời gian (7days hoặc 30days)",
+                        "name": "range",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/payments": {
             "get": {
                 "security": [
@@ -1225,6 +1393,35 @@
                 }
             }
         },
+        "/admin/sessions/live-status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem trực tiếp số ghế trống, số ghế đang bị giữ và số ghế đã chốt của các ca thi đang mở",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Giám sát trạng thái ca thi trực tiếp",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/staff-accounts": {
             "post": {
                 "security": [
@@ -1292,6 +1489,215 @@
                     },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/system/clear-cache": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xoá bộ nhớ đệm In-memory của Dashboard để ép hệ thống query lại dữ liệu mới nhất",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Xoá bộ nhớ đệm (Cache) Dashboard",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/transactions/exceptions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem các giao dịch thanh toán bị lỗi, sai tiền hoặc quá hạn chưa xử lý",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Danh sách giao dịch ngoại lệ",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Trang hiện tại (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng bản ghi mỗi trang (mặc định 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/transactions/{id}/manual-approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cho phép Admin duyệt thủ công một giao dịch bị lỗi (force approve), hệ thống sẽ chốt đơn và giữ ghế",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Duyệt giao dịch thủ công",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID của Giao dịch (Payment ID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lý do duyệt thủ công",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.ManualApproveRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/transactions/{id}/refund-mark": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cho phép Admin đánh dấu một giao dịch là đã hoàn tiền cho thí sinh",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Đánh dấu đã hoàn tiền",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID của Giao dịch (Payment ID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lý do hoàn tiền",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.RefundMarkRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/me/audit-log": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách các hành động Audit Log do chính Admin đang đăng nhập thực hiện",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboard"
+                ],
+                "summary": "Lịch sử thao tác cá nhân",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Trang hiện tại (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng bản ghi mỗi trang (mặc định 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3754,12 +4160,20 @@
         "request.CreatePaymentRequestDTO": {
             "type": "object",
             "required": [
-                "exam_registration_id"
+                "cancel_url",
+                "exam_registration_id",
+                "return_url"
             ],
             "properties": {
+                "cancel_url": {
+                    "type": "string"
+                },
                 "exam_registration_id": {
                     "type": "integer",
                     "minimum": 1
+                },
+                "return_url": {
+                    "type": "string"
                 }
             }
         },
@@ -4024,6 +4438,19 @@
                 }
             }
         },
+        "request.ManualApproveRequestDTO": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 5
+                }
+            }
+        },
         "request.PayOSWebhookData": {
             "type": "object",
             "properties": {
@@ -4108,6 +4535,19 @@
                 }
             }
         },
+        "request.RefundMarkRequestDTO": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 5
+                }
+            }
+        },
         "request.RegisterRequestDTO": {
             "type": "object",
             "required": [
@@ -4181,6 +4621,10 @@
                 "email": {
                     "type": "string",
                     "maxLength": 150
+                },
+                "full_name": {
+                    "type": "string",
+                    "maxLength": 100
                 },
                 "phone": {
                     "type": "string",

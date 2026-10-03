@@ -14,6 +14,7 @@ import (
 	"github.com/hskvinh/backend/internal/candidate"
 	"github.com/hskvinh/backend/internal/certificate"
 	"github.com/hskvinh/backend/internal/config"
+	"github.com/hskvinh/backend/internal/dashboard"
 	"github.com/hskvinh/backend/internal/database"
 	"github.com/hskvinh/backend/internal/exam"
 	"github.com/hskvinh/backend/internal/location"
@@ -86,6 +87,9 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
+	// ── Dashboard Service ────────────────────────────────────────────────
+	dashSvc := dashboard.NewService(db, auditSvc, hub)
+
 	// Attach hub to services that need real-time broadcasting
 	regSvc.SetHub(hub)
 	paySvc.SetHub(hub)
@@ -102,6 +106,7 @@ func main() {
 	certH := certificate.NewHandler(certSvc)
 	notifH := notification.NewHandler(notifSvc)
 	locH := location.NewHandler(locSvc)
+	dashH := dashboard.NewHandler(dashSvc)
 
 	// ── Middleware ────────────────────────────────────────────────────────
 	limiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
@@ -146,6 +151,7 @@ func main() {
 	certificate.RegisterRoutes(api, certH, cfg.JWTSecret)
 	notification.RegisterRoutes(api, notifH, cfg.JWTSecret)
 	location.RegisterRoutes(api, locH, cfg.JWTSecret)
+	dashboard.RegisterRoutes(api, dashH, cfg.JWTSecret)
 
 	// ── WebSocket Route ──────────────────────────────────────────────────
 	wsH := ws.NewHandler(hub, cfg.JWTSecret)
@@ -167,6 +173,9 @@ func main() {
 	// ── Background Workers ───────────────────────────────────────────────
 	seatCron := worker.NewSeatReleaseCron(regSvc, hub, 60*time.Second)
 	go seatCron.Start(ctx)
+
+	payosSyncCron := worker.NewPayOSSyncCron(dashSvc, hub, 10*time.Minute)
+	go payosSyncCron.Start(ctx)
 
 	go func() {
 		log.Printf("[main] listening on :%s (env=%s)", cfg.AppPort, cfg.AppEnv)
