@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
@@ -19,43 +17,11 @@ import (
 	"github.com/hskvinh/backend/internal/ws"
 )
 
-// ─── In-memory cache (no Redis in this project) ─────────────────────────────
-
-type cachedMetrics struct {
-	mu        sync.RWMutex
-	data      *response.MetricsOverviewResponseDTO
-	expiresAt time.Time
-}
-
-func (c *cachedMetrics) get() *response.MetricsOverviewResponseDTO {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.data != nil && time.Now().Before(c.expiresAt) {
-		return c.data
-	}
-	return nil
-}
-
-func (c *cachedMetrics) set(d *response.MetricsOverviewResponseDTO, ttl time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data = d
-	c.expiresAt = time.Now().Add(ttl)
-}
-
-func (c *cachedMetrics) invalidate() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data = nil
-	c.expiresAt = time.Time{}
-}
-
 // Service handles all dashboard analytics and admin operations.
 type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
 	hub      *ws.Hub
-	cache    cachedMetrics
 }
 
 // NewService creates a dashboard Service.
@@ -67,13 +33,8 @@ func NewService(db *sql.DB, auditSvc audit.Service, hub *ws.Hub) *Service {
 	}
 }
 
-const cacheTTL = 3 * time.Minute
-
-// GetMetricsOverview returns top-level KPIs, cached for 3 minutes.
+// GetMetricsOverview returns real-time top-level KPIs.
 func (s *Service) GetMetricsOverview(ctx context.Context) (response.MetricsOverviewResponseDTO, error) {
-	if cached := s.cache.get(); cached != nil {
-		return *cached, nil
-	}
 
 	var result response.MetricsOverviewResponseDTO
 	err := s.db.QueryRowContext(ctx, `
@@ -102,7 +63,6 @@ func (s *Service) GetMetricsOverview(ctx context.Context) (response.MetricsOverv
 		return response.MetricsOverviewResponseDTO{}, fmt.Errorf("dashboard: metrics overview: %w", err)
 	}
 
-	s.cache.set(&result, cacheTTL)
 	return result, nil
 }
 
@@ -275,6 +235,7 @@ func (s *Service) GetTransactionExceptions(ctx context.Context, page, limit int)
 			p.payment_id,
 			er.exam_registration_id,
 			COALESCE(c.candidate_full_name, a.account_username),
+			et.exam_type_name,
 			es.exam_session_fee,
 			p.payment_amount,
 			p.payment_status,
@@ -288,6 +249,7 @@ func (s *Service) GetTransactionExceptions(ctx context.Context, page, limit int)
 		FROM payments p
 		JOIN exam_registrations er ON er.exam_registration_id = p.payment_exam_registration_id
 		JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+		JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
 		JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
 		JOIN accounts a ON a.account_id = c.candidate_account_id
 		WHERE p.payment_is_deleted = FALSE
@@ -309,7 +271,7 @@ func (s *Service) GetTransactionExceptions(ctx context.Context, page, limit int)
 		var actualAmount int64
 		if err := rows.Scan(
 			&item.PaymentID, &item.RegistrationID, &item.CandidateName,
-			&item.ExpectedAmount, &actualAmount, &item.Status,
+			&item.ExamTypeName, &item.ExpectedAmount, &actualAmount, &item.Status,
 			&item.ExceptionType, &item.TransactionRef, &item.CreatedAt,
 		); err != nil {
 			return nil, nil, fmt.Errorf("dashboard: scan exception: %w", err)
@@ -404,8 +366,6 @@ func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, r
 		return response.ManualApproveResponseDTO{}, fmt.Errorf("dashboard: commit: %w", err)
 	}
 
-	s.cache.invalidate()
-
 	if s.hub != nil {
 		s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
 			"registration_id": regID,
@@ -468,8 +428,6 @@ func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reas
 		return response.RefundMarkResponseDTO{}, fmt.Errorf("dashboard: commit: %w", err)
 	}
 
-	s.cache.invalidate()
-
 	return response.RefundMarkResponseDTO{
 		PaymentID: paymentID,
 		NewStatus: "refunded",
@@ -529,8 +487,6 @@ func (s *Service) GetRecentLogs(ctx context.Context, page, limit int) ([]respons
 }
 
 func (s *Service) ClearCache(ctx context.Context, adminID int64) (response.ClearCacheResponseDTO, error) {
-	s.cache.invalidate()
-
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &adminID,
 		Action:         auditenum.AuditActionUpdate.String(),
@@ -539,9 +495,9 @@ func (s *Service) ClearCache(ctx context.Context, adminID int64) (response.Clear
 		NewValue:       []byte(`{"action":"clear_cache"}`),
 	})
 
-	log.Printf("[dashboard] cache cleared by admin_id=%d", adminID)
+	log.Printf("[dashboard] clear cache requested by admin_id=%d (system running in real-time mode)", adminID)
 	return response.ClearCacheResponseDTO{
-		Message: "Đã xóa bộ nhớ đệm thành công",
+		Message: "Hệ thống đang hoạt động ở chế độ thời gian thực (Real-time), dữ liệu luôn được cập nhật mới nhất",
 	}, nil
 }
 
@@ -656,8 +612,6 @@ func (s *Service) SyncPayOSPendingPayments(ctx context.Context) (int64, error) {
 	}
 
 	if count > 0 {
-		s.cache.invalidate()
-
 		if s.hub != nil {
 			s.hub.Broadcast(ws.EventDashboardMetricsUpdated, map[string]interface{}{
 				"expired_count": count,

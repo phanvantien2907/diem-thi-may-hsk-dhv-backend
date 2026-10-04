@@ -35,16 +35,6 @@ func (h *Handler) ListExamTypes(c *gin.Context) {
 	utils.OK(c, list)
 }
 
-// ListExamRooms GET /exam-rooms
-func (h *Handler) ListExamRooms(c *gin.Context) {
-	list, err := h.svc.ListExamRooms(c.Request.Context())
-	if err != nil {
-		utils.InternalServerError(c, "Lấy danh sách phòng thi thất bại")
-		return
-	}
-	utils.OK(c, list)
-}
-
 // ListExamSessions GET /exam-sessions?exam_type_id=&from=&to=
 // @Summary Danh sách ca thi
 // @Description Xem các ca thi đang mở hoặc sắp diễn ra.

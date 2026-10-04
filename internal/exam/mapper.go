@@ -12,28 +12,20 @@ func ToExamTypeResponseDTO(e ExamTypeEntity) response.ExamTypeResponseDTO {
 	}
 }
 
-// ToExamRoomResponseDTO maps an ExamRoomEntity to its public DTO.
-func ToExamRoomResponseDTO(e ExamRoomEntity) response.ExamRoomResponseDTO {
-	return response.ExamRoomResponseDTO{
-		ID:       e.ExamRoomID,
-		Name:     e.ExamRoomName,
-		Location: e.ExamRoomLocation,
-		Capacity: e.ExamRoomCapacity,
-	}
-}
-
 // ToExamSessionResponseDTO maps an ExamSessionEntity to its public DTO.
 func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseDTO {
 	return response.ExamSessionResponseDTO{
 		ID:                   e.ExamSessionID,
 		ExamTypeID:           e.ExamSessionExamTypeID,
-		ExamRoomID:           e.ExamSessionExamRoomID,
 		Date:                 e.ExamSessionDate,
 		Shift:                string(e.ExamSessionShift),
 		Capacity:             e.ExamSessionCapacity,
 		Fee:                  e.ExamSessionFee,
 		RegistrationDeadline: e.ExamSessionRegistrationDeadline,
 		Status:               string(e.ExamSessionStatus),
+		PublicationStatus:    string(e.ExamSessionPublicationStatus),
+		PublishAt:            e.ExamSessionPublishAt,
+		CheckInAt:            e.ExamSessionCheckInAt,
 	}
 }
 

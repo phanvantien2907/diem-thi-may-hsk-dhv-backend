@@ -5,7 +5,7 @@ import (
 	"github.com/hskvinh/backend/internal/middleware"
 )
 
-// RegisterRoutes mounts all dashboard admin routes.
+// RegisterRoutes mounts all Dashboard admin routes, including the overview KPI endpoint.
 //
 //	admin (JWT + admin role):
 //	  GET  /admin/metrics/overview                   — Top KPIs

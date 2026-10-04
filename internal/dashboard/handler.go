@@ -37,7 +37,7 @@ func (h *Handler) GetMetricsOverview(c *gin.Context) {
 // GetRevenueChart godoc
 // @Summary      Lấy biểu đồ doanh thu
 // @Description  Lấy dữ liệu vẽ biểu đồ doanh thu và lượng đăng ký theo ngày (7 ngày hoặc 30 ngày)
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -67,7 +67,7 @@ func (h *Handler) GetRevenueChart(c *gin.Context) {
 // GetHSKDistribution godoc
 // @Summary      Lấy phân bố chứng chỉ HSK
 // @Description  Lấy tỷ lệ thí sinh đăng ký theo từng cấp độ HSK (chỉ tính các đơn đã confirmed)
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -87,7 +87,7 @@ func (h *Handler) GetHSKDistribution(c *gin.Context) {
 // GetPaymentFunnel godoc
 // @Summary      Lấy phễu thanh toán trong ngày
 // @Description  Phân tích lượng giao dịch thành công / đang chờ / thất bại theo từng khung giờ trong ngày hôm nay
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -107,7 +107,7 @@ func (h *Handler) GetPaymentFunnel(c *gin.Context) {
 // GetLiveSessionStatus godoc
 // @Summary      Giám sát trạng thái ca thi trực tiếp
 // @Description  Xem trực tiếp số ghế trống, số ghế đang bị giữ và số ghế đã chốt của các ca thi đang mở
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -127,7 +127,7 @@ func (h *Handler) GetLiveSessionStatus(c *gin.Context) {
 // GetTransactionExceptions godoc
 // @Summary      Danh sách giao dịch ngoại lệ
 // @Description  Xem các giao dịch thanh toán bị lỗi, sai tiền hoặc quá hạn chưa xử lý
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -152,7 +152,7 @@ func (h *Handler) GetTransactionExceptions(c *gin.Context) {
 // ManualApprove godoc
 // @Summary      Duyệt giao dịch thủ công
 // @Description  Cho phép Admin duyệt thủ công một giao dịch bị lỗi (force approve), hệ thống sẽ chốt đơn và giữ ghế
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -199,7 +199,7 @@ func (h *Handler) ManualApprove(c *gin.Context) {
 // RefundMark godoc
 // @Summary      Đánh dấu đã hoàn tiền
 // @Description  Cho phép Admin đánh dấu một giao dịch là đã hoàn tiền cho thí sinh
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -246,7 +246,7 @@ func (h *Handler) RefundMark(c *gin.Context) {
 // GetRecentLogs godoc
 // @Summary      Lịch sử hoạt động gần đây
 // @Description  Xem danh sách các hành động Audit Log mới nhất trên hệ thống (của tất cả Admin)
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -271,7 +271,7 @@ func (h *Handler) GetRecentLogs(c *gin.Context) {
 // ClearCache godoc
 // @Summary      Xoá bộ nhớ đệm (Cache) Dashboard
 // @Description  Xoá bộ nhớ đệm In-memory của Dashboard để ép hệ thống query lại dữ liệu mới nhất
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
@@ -292,7 +292,7 @@ func (h *Handler) ClearCache(c *gin.Context) {
 // GetMyAuditLog godoc
 // @Summary      Lịch sử thao tác cá nhân
 // @Description  Xem danh sách các hành động Audit Log do chính Admin đang đăng nhập thực hiện
-// @Tags         dashboard
+// @Tags         Dashboard
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth

@@ -575,7 +575,7 @@ paths:
       - BearerAuth: []
       summary: AdminListDuplicates
       tags:
-      - candidate
+      - Candidate
   /admin/certificates:
     get:
       consumes:
@@ -1091,7 +1091,7 @@ paths:
       - BearerAuth: []
       summary: Lịch sử hoạt động gần đây
       tags:
-      - dashboard
+      - Dashboard
   /admin/metrics/hsk-distribution:
     get:
       consumes:
@@ -1110,7 +1110,7 @@ paths:
       - BearerAuth: []
       summary: Lấy phân bố chứng chỉ HSK
       tags:
-      - dashboard
+      - Dashboard
   /admin/metrics/overview:
     get:
       consumes:
@@ -1129,7 +1129,7 @@ paths:
       - BearerAuth: []
       summary: Lấy chỉ số tổng quan
       tags:
-      - dashboard
+      - Dashboard
   /admin/metrics/payment-funnel:
     get:
       consumes:
@@ -1148,7 +1148,7 @@ paths:
       - BearerAuth: []
       summary: Lấy phễu thanh toán trong ngày
       tags:
-      - dashboard
+      - Dashboard
   /admin/metrics/revenue-chart:
     get:
       consumes:
@@ -1173,7 +1173,7 @@ paths:
       - BearerAuth: []
       summary: Lấy biểu đồ doanh thu
       tags:
-      - dashboard
+      - Dashboard
   /admin/payments:
     get:
       consumes:
@@ -1353,7 +1353,7 @@ paths:
       - BearerAuth: []
       summary: Giám sát trạng thái ca thi trực tiếp
       tags:
-      - dashboard
+      - Dashboard
   /admin/staff-accounts:
     post:
       consumes:
@@ -1422,7 +1422,7 @@ paths:
       - BearerAuth: []
       summary: Xoá bộ nhớ đệm (Cache) Dashboard
       tags:
-      - dashboard
+      - Dashboard
   /admin/transactions/{id}/manual-approve:
     post:
       consumes:
@@ -1453,7 +1453,7 @@ paths:
       - BearerAuth: []
       summary: Duyệt giao dịch thủ công
       tags:
-      - dashboard
+      - Dashboard
   /admin/transactions/{id}/refund-mark:
     post:
       consumes:
@@ -1483,7 +1483,7 @@ paths:
       - BearerAuth: []
       summary: Đánh dấu đã hoàn tiền
       tags:
-      - dashboard
+      - Dashboard
   /admin/transactions/exceptions:
     get:
       consumes:
@@ -1511,7 +1511,7 @@ paths:
       - BearerAuth: []
       summary: Danh sách giao dịch ngoại lệ
       tags:
-      - dashboard
+      - Dashboard
   /admin/users/me/audit-log:
     get:
       consumes:
@@ -1539,7 +1539,7 @@ paths:
       - BearerAuth: []
       summary: Lịch sử thao tác cá nhân
       tags:
-      - dashboard
+      - Dashboard
   /auth/force-password-change:
     post:
       consumes:
@@ -1804,7 +1804,7 @@ paths:
       - BearerAuth: []
       summary: GetUploadSignature
       tags:
-      - candidate
+      - Candidate
   /exam-sessions:
     get:
       consumes:

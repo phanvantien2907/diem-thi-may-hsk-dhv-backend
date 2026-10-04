@@ -62,6 +62,7 @@ type TransactionExceptionItemDTO struct {
 	PaymentID      int64   `json:"payment_id"`
 	RegistrationID int64   `json:"registration_id"`
 	CandidateName  string  `json:"candidate_name"`
+	ExamTypeName   string  `json:"exam_type_name"`
 	ExpectedAmount int64   `json:"expected_amount"`
 	ActualAmount   *int64  `json:"actual_amount"`
 	Status         string  `json:"status"`

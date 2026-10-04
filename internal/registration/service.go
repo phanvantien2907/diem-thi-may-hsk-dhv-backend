@@ -310,14 +310,15 @@ func (s *Service) GetAdmissionSlip(ctx context.Context, registrationID, candidat
 			c.candidate_document_number,
 			es.exam_session_date::TEXT,
 			es.exam_session_shift,
-			rm.exam_room_name,
-			rm.exam_room_location,
+			COALESCE(rm.exam_room_name, ''),
+			COALESCE(rm.exam_room_location, ''),
 			seat.exam_seat_number,
 			et.exam_type_name
 		FROM exam_registrations er
 		JOIN candidates      c    ON c.candidate_id             = er.exam_registration_candidate_id
 		JOIN exam_sessions   es   ON es.exam_session_id         = er.exam_registration_exam_session_id
-		JOIN exam_rooms      rm   ON rm.exam_room_id            = es.exam_session_exam_room_id
+		LEFT JOIN exam_rooms rm   ON rm.exam_room_id             = es.exam_session_exam_room_id
+		                         AND rm.exam_room_is_deleted = FALSE
 		JOIN exam_seats      seat ON seat.exam_seat_id          = er.exam_registration_exam_seat_id
 		JOIN exam_types      et   ON et.exam_type_id            = es.exam_session_exam_type_id
 		WHERE er.exam_registration_id = $1

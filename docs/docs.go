@@ -232,7 +232,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "candidate"
+                    "Candidate"
                 ],
                 "summary": "AdminListDuplicates",
                 "responses": {
@@ -1002,7 +1002,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lịch sử hoạt động gần đây",
                 "parameters": [
@@ -1045,7 +1045,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lấy phân bố chứng chỉ HSK",
                 "responses": {
@@ -1074,7 +1074,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lấy chỉ số tổng quan",
                 "responses": {
@@ -1103,7 +1103,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lấy phễu thanh toán trong ngày",
                 "responses": {
@@ -1132,7 +1132,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lấy biểu đồ doanh thu",
                 "parameters": [
@@ -1414,7 +1414,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Giám sát trạng thái ca thi trực tiếp",
                 "responses": {
@@ -1518,7 +1518,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Xoá bộ nhớ đệm (Cache) Dashboard",
                 "responses": {
@@ -1547,7 +1547,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Danh sách giao dịch ngoại lệ",
                 "parameters": [
@@ -1590,7 +1590,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Duyệt giao dịch thủ công",
                 "parameters": [
@@ -1637,7 +1637,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Đánh dấu đã hoàn tiền",
                 "parameters": [
@@ -1684,7 +1684,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "dashboard"
+                    "Dashboard"
                 ],
                 "summary": "Lịch sử thao tác cá nhân",
                 "parameters": [
@@ -2089,7 +2089,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "candidate"
+                    "Candidate"
                 ],
                 "summary": "GetUploadSignature",
                 "responses": {

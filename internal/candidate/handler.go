@@ -123,7 +123,7 @@ func (h *Handler) PatchMyProfile(c *gin.Context) {
 // GetUploadSignature GET /candidates/upload-signature
 // @Summary GetUploadSignature
 // @Description Endpoint for GetUploadSignature
-// @Tags candidate
+// @Tags Candidate
 // @Accept json
 // @Produce json
 // @Security BearerAuth
@@ -194,7 +194,7 @@ func (h *Handler) AdminListCandidates(c *gin.Context) {
 // NOTE: This route must be registered BEFORE /admin/candidates/:id to avoid path conflict.
 // @Summary AdminListDuplicates
 // @Description Endpoint for AdminListDuplicates
-// @Tags candidate
+// @Tags Candidate
 // @Accept json
 // @Produce json
 // @Security BearerAuth

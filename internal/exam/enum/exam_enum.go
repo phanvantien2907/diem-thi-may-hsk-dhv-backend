@@ -42,6 +42,27 @@ func (s ExamSessionStatus) Valid() bool {
 // String returns the string representation.
 func (s ExamSessionStatus) String() string { return string(s) }
 
+// ExamSessionPublicationStatus controls when a session is visible to candidates.
+type ExamSessionPublicationStatus string
+
+const (
+	PublicationStatusPublished ExamSessionPublicationStatus = "published"
+	PublicationStatusDraft     ExamSessionPublicationStatus = "draft"
+	PublicationStatusScheduled ExamSessionPublicationStatus = "scheduled"
+)
+
+// Valid reports whether s is a recognised publication status.
+func (s ExamSessionPublicationStatus) Valid() bool {
+	switch s {
+	case PublicationStatusPublished, PublicationStatusDraft, PublicationStatusScheduled:
+		return true
+	}
+	return false
+}
+
+// String returns the string representation.
+func (s ExamSessionPublicationStatus) String() string { return string(s) }
+
 // ExamSeatStatus enumerates seat availability states.
 type ExamSeatStatus string
 

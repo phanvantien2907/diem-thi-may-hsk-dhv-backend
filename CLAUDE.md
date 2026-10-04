@@ -44,8 +44,10 @@ internal/
 ├── candidate/              # Candidate profile and identity documents (with Cloudinary upload)
 ├── certificate/            # Certificate issuance and delivery
 ├── config/                 # Configuration loading (config.go)
+├── dashboard/              # Admin dashboard analytics, live sessions, suspicious payments, manual actions
 ├── database/               # PostgreSQL connection pool (postgres.go)
-├── exam/                   # Exam types, rooms, sessions, seat generation
+├── exam/                   # Exam types, sessions, seat generation (room data is internal-only)
+├── exception/              # RESTful unified exception and error response format
 ├── location/               # Provinces and wards (public reference data)
 ├── media/                  # Cloudinary file upload/delete service (shared infrastructure)
 ├── middleware/              # auth.go, cors.go, logger.go, ratelimit.go
@@ -53,7 +55,9 @@ internal/
 ├── payment/                # Payment creation and gateway callback handling
 ├── registration/           # Exam registration and seat reservation
 ├── result/                 # Exam results and recheck requests
-└── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
+├── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
+├── worker/                 # Background workers (PayOS expired transaction sync, seat cleanup)
+└── ws/                     # WebSocket hub and client connections for real-time dashboard events
 
 migrations/
 ├── 000001_schema.up.sql          # Full DB schema (applied first)
@@ -86,6 +90,8 @@ internal/<domain>/
 > **Note:** The subdirectory is `entities/` (not a flat `model.go`). Entity structs live in separate files within that package (e.g., `account_entities.go`, `session_entities.go`). Some domains also define input structs in `entities/` (e.g., `CreateProfileInput`, `UploadDocumentInput`) when the service needs a normalized form of the request DTO.
 
 All new features must follow this layout exactly.
+
+The `candidate` domain is documented and tagged as one `Candidate` module. Candidate profile, identity-document, upload-signature, admin review, duplicate-detection, and roster endpoints must remain under this module/tag; do not split them into separate Swagger/API modules.
 
 ---
 
@@ -248,7 +254,6 @@ All API routes are mounted under `/api/v1`.
 | candidate | POST | `/candidates/:id/documents` | JWT |
 | candidate | GET | `/candidates/:id/documents` | JWT |
 | exam | GET | `/exam-types` | public |
-| exam | GET | `/exam-rooms` | public |
 | exam | GET | `/exam-sessions` | public |
 | exam | GET | `/exam-sessions/:id` | public |
 | exam | GET | `/exam-sessions/:id/seats` | public |
@@ -277,6 +282,18 @@ All API routes are mounted under `/api/v1`.
 | location | GET | `/admin/locations/stats/candidates-by-province` | JWT + admin |
 | location | POST | `/admin/locations/wards/:id/merge` | JWT + admin |
 | audit | GET | `/admin/audit-logs` | JWT + admin |
+| dashboard | GET | `/admin/metrics/overview` | JWT + admin |
+| dashboard | GET | `/admin/metrics/revenue-chart` | JWT + admin |
+| dashboard | GET | `/admin/metrics/hsk-distribution` | JWT + admin |
+| dashboard | GET | `/admin/metrics/payment-funnel` | JWT + admin |
+| dashboard | GET | `/admin/exam-sessions/live-status` | JWT + admin |
+| dashboard | GET | `/admin/payments/suspicious` | JWT + admin |
+| dashboard | POST | `/admin/payments/:id/manual-approve` | JWT + admin |
+| dashboard | POST | `/admin/payments/:id/refund-mark` | JWT + admin |
+| dashboard | GET | `/admin/logs/recent` | JWT + admin |
+| dashboard | POST | `/admin/system/clear-cache` | JWT + admin |
+| dashboard | GET | `/admin/users/me/audit-log` | JWT + admin |
+| ws | GET | `/ws/dashboard` | JWT + admin |
 
 ### Response envelope
 
@@ -447,6 +464,7 @@ Complete enum reference:
 | candidate | `DocumentVerificationStatus` | `pending`, `verified`, `rejected` |
 | exam | `ExamShift` | `morning`, `afternoon`, `evening` |
 | exam | `ExamSessionStatus` | `open`, `closed`, `cancelled` |
+| exam | `ExamSessionPublicationStatus` | `published`, `draft`, `scheduled` |
 | exam | `ExamSeatStatus` | `available`, `held`, `booked` |
 | registration | `ExamRegistrationStatus` | `pending_payment`, `confirmed`, `cancelled` |
 | payment | `PaymentMethod` | `vnpay`, `momo`, `zalopay`, `bank_transfer`, `cash` |
@@ -844,7 +862,7 @@ Do not write code for operations touching `registration`, `payment`, `exam_seats
 
 Do not invent or introduce the following unless explicitly required by a task:
 
-- Redis or any caching layer
+- **Redis or caching layers** — Strictly forbidden for Dashboard analytics. All dashboard metrics (`overview`, `revenue-chart`, `hsk-distribution`, `payment-funnel`, `live-status`) query PostgreSQL directly in **100% Real-time** mode, backed by specialized partial & compound indexes.
 - A repository interface layer (services own SQL directly)
 - Event bus or message queue
 - gRPC
@@ -896,7 +914,7 @@ When developing or debugging third-party webhook integrations (such as payment g
 
 ---
 
-## 13. Front-End Integration Guidelines (Tài liệu Tích hợp Front-end)
+## 31. Front-End Integration Guidelines (Tài liệu Tích hợp Front-end)
 
 Khi Front-end kết nối với Backend, đặc biệt trong các luồng nghiệp vụ nhạy cảm như Đăng ký thi (FlashSale) và Thanh toán, FE CẦN tuân thủ các quy tắc sau:
 
@@ -921,5 +939,76 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
   - Khi người dùng bấm Đăng ký, hiển thị màn hình Loading (Loading Spinner hoặc "Đang xếp hàng... Vui lòng không tải lại trang") và **vô hiệu hóa (disable)** nút Đăng ký để chặn double-click.
 
 ### 13.4. Định dạng dữ liệu (Data Types)
-- Các trường ID (`id`, `exam_session_id`, `exam_room_id`) trong Backend là `int64`. Tuy JavaScript hỗ trợ số lớn (BigInt), FE nên lưu ý khi làm việc với JSON để tránh tràn số (Precision loss).
+- Các trường ID (`id`, `exam_session_id`) trong Backend là `int64`. Tuy JavaScript hỗ trợ số lớn (BigInt), FE nên lưu ý khi làm việc với JSON để tránh tràn số (Precision loss).
 - Luôn gửi JWT Token vào header `Authorization: Bearer <token>`. Nếu nhận `401 Unauthorized`, FE phải tự động điều hướng người dùng về trang Đăng nhập.
+
+### 13.5. Quy tắc hiển thị ca thi
+
+- API public của module `exam` chỉ trả về ca có `publication_status = published`, chưa bị hủy và đã đến `publish_at` (nếu có).
+- `draft` không hiển thị công khai và không nhận `publish_at`.
+- `scheduled` bắt buộc có `publish_at` là thời điểm trong tương lai.
+- `check_in_at` là thời điểm có mặt dạng RFC 3339 và có thể để trống.
+- API `exam` không còn endpoint hoặc field response về phòng máy; dữ liệu `exam_rooms` và khóa DB cũ chỉ được giữ nội bộ để tương thích registration.
+
+---
+
+## 32. Real-time Dashboard & Index Performance Rules
+
+`GET /api/v1/admin/metrics/overview` thuộc module và Swagger tag `Dashboard`, cùng nhóm với các endpoint dashboard còn lại. Không tách endpoint này thành module/tag riêng.
+
+1. **Strictly Real-time (No Caching):**
+   - All Dashboard analytics endpoints (`/admin/metrics/overview`, `/admin/metrics/revenue-chart`, `/admin/metrics/hsk-distribution`, `/admin/metrics/payment-funnel`, `/admin/exam-sessions/live-status`) MUST query PostgreSQL directly in real-time.
+   - Do NOT introduce in-memory or Redis caches for dashboard metrics.
+   - The user/admin must always see 100% live, authoritative numbers whenever the dashboard is viewed or refreshed.
+
+2. **Index-Driven Performance:**
+   - To prevent database bottlenecks under concurrent admin access, performance is guaranteed through database index design:
+     - `idx_payments_dashboard_perf` on `payments(payment_status, payment_exam_registration_id, payment_amount)` where `payment_is_deleted = FALSE`.
+     - `idx_exam_registrations_dashboard_perf` on `exam_registrations(exam_registration_exam_session_id, exam_registration_id)` where `exam_registration_is_deleted = FALSE`.
+     - `idx_audit_logs_actor_created` on `audit_logs(audit_log_actor_account_id, audit_log_created_at DESC)` for fast personal audit logs ("My Log").
+     - `idx_audit_logs_created_at` on `audit_logs(audit_log_created_at DESC)` for system recent activity.
+
+3. **"My Log" (`GetMyAuditLog`):**
+   - The personal action history endpoint (`GET /api/v1/admin/users/me/audit-log`) is strictly filtered by the authenticated administrator's ID (`audit_log_actor_account_id = $1`) with pagination (`page`, `limit`).
+   - It is kept completely independent of system-wide audit logs and must not be altered when adjusting other analytics features.
+
+---
+
+## 33. WebSocket Real-time Event Hub (`internal/ws`)
+
+1. **Architecture:**
+   - `ws.Hub` maintains active WebSocket connections authenticated via admin JWT token.
+   - Mounted at `GET /api/v1/ws/dashboard`.
+   - Thread-safe registration, unregistration, and broadcast mechanisms using Go channels and goroutines.
+
+2. **Supported Events:**
+   - `payment_confirmed`: Triggered when an admin manually approves a transaction (`POST /admin/payments/:id/manual-approve`).
+   - `dashboard_metrics_updated`: Triggered when background workers sync and expire stale payments or release held seats, alerting connected clients to refresh view.
+
+3. **Client Integration:**
+   - Frontend admins connect on dashboard mount and automatically receive live events to update UI state without continuous polling.
+
+---
+
+## 34. Background Housekeeping Workers (`internal/worker`)
+
+1. **Responsibilities:**
+   - Runs ticker-based background tasks to maintain data consistency:
+     - Expire pending PayOS payments that exceeded the 15-minute payment window.
+     - Release expired seat reservations back to `available` status atomically.
+   - Triggers real-time WebSocket broadcast notifications whenever stale payments/seats are reclaimed.
+
+2. **Concurrency Rules:**
+   - Workers must respect graceful shutdown using `context.Context`.
+   - Database operations in workers must be wrapped in atomic transactions (`tx.BeginTx`) with proper locking and error logging.
+
+---
+
+## 35. Swagger API Documentation (`make sg`)
+
+- Whenever route handlers, Swagger annotations (`// @Summary`, `// @Router`), or DTO structs are added or modified:
+  ```bash
+  make sg
+  ```
+  This runs `swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal` to recompile Swagger specifications.
+- Swagger UI is served at `/swagger/index.html`.

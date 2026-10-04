@@ -17,7 +17,7 @@ func TestService_GetMetricsOverview(t *testing.T) {
 
 	svc := dashboard.NewService(db, &fakeAudit{}, nil)
 
-	t.Run("success without cache", func(t *testing.T) {
+	t.Run("success real-time query", func(t *testing.T) {
 		mock.ExpectQuery(`SELECT.*total_revenue,.*total_registrations,.*fill_rate,.*payment_success_rate.*`).
 			WillReturnRows(sqlmock.NewRows([]string{"total_revenue", "total_registrations", "fill_rate", "payment_success_rate"}).
 				AddRow(1500000, 15, 80.5, 90.0))
@@ -30,11 +30,16 @@ func TestService_GetMetricsOverview(t *testing.T) {
 		assert.Equal(t, float64(90.0), res.PaymentSuccessRate)
 	})
 
-	t.Run("success with cache", func(t *testing.T) {
-		// Should not call DB this time, since it was cached in the previous run
+	t.Run("subsequent call queries database directly in real-time", func(t *testing.T) {
+		// In real-time mode, every call queries DB directly
+		mock.ExpectQuery(`SELECT.*total_revenue,.*total_registrations,.*fill_rate,.*payment_success_rate.*`).
+			WillReturnRows(sqlmock.NewRows([]string{"total_revenue", "total_registrations", "fill_rate", "payment_success_rate"}).
+				AddRow(2000000, 20, 85.0, 95.0))
+
 		res, err := svc.GetMetricsOverview(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, int64(1500000), res.TotalRevenue)
+		assert.Equal(t, int64(2000000), res.TotalRevenue)
+		assert.Equal(t, int64(20), res.TotalRegistrations)
 	})
 }
 

@@ -9,7 +9,6 @@ import (
 //
 //	public:
 //	  GET  /exam-types
-//	  GET  /exam-rooms
 //	  GET  /exam-sessions                   (filter: exam_type_id, from, to)
 //	  GET  /exam-sessions/:id
 //	  GET  /exam-sessions/:id/seats
@@ -21,7 +20,6 @@ import (
 func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	// Public read endpoints
 	r.GET("/exam-types", h.ListExamTypes)
-	r.GET("/exam-rooms", h.ListExamRooms)
 	r.GET("/exam-sessions", h.ListExamSessions)
 	r.GET("/exam-sessions/:id", h.GetExamSession)
 	r.GET("/exam-sessions/:id/seats", h.ListExamSeats)
