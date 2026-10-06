@@ -22,6 +22,8 @@ type Service struct {
 	auditSvc audit.Service
 }
 
+var errExamSessionNotFound = errors.New("Không tìm thấy ca thi")
+
 // NewService creates an exam Service.
 func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
@@ -189,9 +191,21 @@ func (s *Service) GenerateExamSeats(ctx context.Context, sessionID int64, actorI
 // ListExamSessionsFiltered returns sessions matching optional filters.
 // All params are optional — zero value means "no filter".
 func (s *Service) ListExamSessionsFiltered(ctx context.Context, f examreq.ListExamSessionsFilterDTO) ([]response.ExamSessionResponseDTO, error) {
+	return s.listExamSessionsFiltered(ctx, f, true)
+}
+
+// ListAdminExamSessionsFiltered returns all non-deleted sessions for administrators.
+func (s *Service) ListAdminExamSessionsFiltered(ctx context.Context, f examreq.ListExamSessionsFilterDTO) ([]response.ExamSessionResponseDTO, error) {
+	return s.listExamSessionsFiltered(ctx, f, false)
+}
+
+func (s *Service) listExamSessionsFiltered(ctx context.Context, f examreq.ListExamSessionsFilterDTO, publicOnly bool) ([]response.ExamSessionResponseDTO, error) {
 	// Build dynamic WHERE clause — avoid string interpolation, use $N args
 	args := []any{}
-	where := "WHERE es.exam_session_is_deleted = FALSE AND es.exam_session_status != 'cancelled' AND es.exam_session_publication_status = 'published' AND (es.exam_session_publish_at IS NULL OR es.exam_session_publish_at <= NOW())"
+	where := "WHERE es.exam_session_is_deleted = FALSE"
+	if publicOnly {
+		where += " AND es.exam_session_status != 'cancelled' AND es.exam_session_publication_status = 'published' AND (es.exam_session_publish_at IS NULL OR es.exam_session_publish_at <= NOW())"
+	}
 	n := 1
 
 	if f.ExamTypeID > 0 {
@@ -284,6 +298,144 @@ func (s *Service) CancelExamSession(ctx context.Context, sessionID, actorID int6
 	return tx.Commit()
 }
 
+// UpdatePublicationStatus changes the public visibility state of an exam session.
+func (s *Service) UpdatePublicationStatus(ctx context.Context, sessionID, actorID int64, req examreq.UpdatePublicationStatusRequestDTO) (response.UpdatePublicationStatusResponseDTO, error) {
+	publicationStatus := enum.ExamSessionPublicationStatus(req.PublicationStatus)
+	if !publicationStatus.Valid() {
+		return response.UpdatePublicationStatusResponseDTO{}, errors.New("Trạng thái phát hành không hợp lệ")
+	}
+
+	publishAt, err := parseOptionalRFC3339(req.PublishAt)
+	if err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: parse publication time: %w", err)
+	}
+	if publicationStatus == enum.PublicationStatusPublished || publicationStatus == enum.PublicationStatusDraft {
+		publishAt = nil
+	}
+	if err := validatePublicationStatus(publicationStatus, publishAt); err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: begin publication tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var oldStatus, operationalStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT exam_session_publication_status, exam_session_status
+		FROM exam_sessions
+		WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE
+		FOR UPDATE`, sessionID).Scan(&oldStatus, &operationalStatus); errors.Is(err, sql.ErrNoRows) {
+		return response.UpdatePublicationStatusResponseDTO{}, errExamSessionNotFound
+	} else if err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: lock publication session: %w", err)
+	}
+	if operationalStatus == enum.SessionStatusCancelled.String() {
+		return response.UpdatePublicationStatusResponseDTO{}, errors.New("Không thể cập nhật trạng thái phát hành của ca thi đã hủy")
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE exam_sessions
+		SET exam_session_publication_status = $1,
+		    exam_session_publish_at = $2,
+		    exam_session_updated_at = NOW()
+		WHERE exam_session_id = $3 AND exam_session_is_deleted = FALSE`,
+		publicationStatus, publishAt, sessionID,
+	); err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: update publication status: %w", err)
+	}
+
+	oldValue, _ := json.Marshal(map[string]any{"exam_session_publication_status": oldStatus})
+	newValue, _ := json.Marshal(map[string]any{
+		"exam_session_publication_status": publicationStatus.String(),
+		"exam_session_publish_at":         publishAt,
+	})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID,
+		Action:         auditenum.AuditActionUpdate.String(),
+		EntityTable:    auditenum.AuditEntityExamSession.String(),
+		EntityID:       sessionID,
+		OldValue:       oldValue,
+		NewValue:       newValue,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: commit publication status: %w", err)
+	}
+	return response.UpdatePublicationStatusResponseDTO{
+		Message:           "Cập nhật trạng thái phát hành thành công",
+		PublicationStatus: publicationStatus.String(),
+		PublishAt:         publishAt,
+	}, nil
+}
+
+// PublishScheduledSessions atomically makes due scheduled sessions public.
+func (s *Service) PublishScheduledSessions(ctx context.Context) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("exam: begin scheduled publication tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	rows, err := tx.QueryContext(ctx, `
+		UPDATE exam_sessions
+		SET exam_session_publication_status = 'published',
+		    exam_session_publish_at = NULL,
+		    exam_session_updated_at = NOW()
+		WHERE exam_session_publication_status = 'scheduled'
+		  AND exam_session_publish_at IS NOT NULL
+		  AND exam_session_publish_at <= NOW()
+		  AND exam_session_is_deleted = FALSE
+		  AND exam_session_status != 'cancelled'
+		RETURNING exam_session_id`)
+	if err != nil {
+		return 0, fmt.Errorf("exam: publish scheduled sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var published int64
+	for rows.Next() {
+		var sessionID int64
+		if err := rows.Scan(&sessionID); err != nil {
+			return 0, fmt.Errorf("exam: scan published session: %w", err)
+		}
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			Action:      auditenum.AuditActionUpdate.String(),
+			EntityTable: auditenum.AuditEntityExamSession.String(),
+			EntityID:    sessionID,
+			NewValue:    json.RawMessage(`{"exam_session_publication_status":"published","exam_session_publish_at":null}`),
+		})
+		published++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("exam: iterate published sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("exam: commit scheduled publication: %w", err)
+	}
+	return published, nil
+}
+
+func validatePublicationStatus(status enum.ExamSessionPublicationStatus, publishAt *time.Time) error {
+	switch status {
+	case enum.PublicationStatusScheduled:
+		if publishAt == nil || !publishAt.After(time.Now()) {
+			return errors.New("Ca thi hẹn giờ phải có exam_session_publish_at trong tương lai")
+		}
+	case enum.PublicationStatusDraft:
+		if publishAt != nil {
+			return errors.New("Ca thi lưu nháp không được có exam_session_publish_at")
+		}
+	case enum.PublicationStatusPublished:
+		if publishAt != nil && publishAt.After(time.Now()) {
+			return errors.New("Ca thi công khai không được có exam_session_publish_at trong tương lai")
+		}
+	}
+	return nil
+}
+
 // BatchCreateExamSessions creates multiple sessions in a single transaction.
 func (s *Service) BatchCreateExamSessions(ctx context.Context, reqs []examreq.CreateExamSessionRequestDTO, actorID int64) ([]response.ExamSessionResponseDTO, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -307,7 +459,7 @@ func (s *Service) BatchCreateExamSessions(ctx context.Context, reqs []examreq.Cr
 		}
 		publishAt, err := parseOptionalRFC3339(r.PublishAt)
 		if err != nil {
-			return nil, fmt.Errorf("exam: parse publish_at: %w", err)
+			return nil, fmt.Errorf("exam: parse exam_session_publish_at: %w", err)
 		}
 		checkInAt, err := parseOptionalRFC3339(r.CheckInAt)
 		if err != nil {
@@ -315,14 +467,17 @@ func (s *Service) BatchCreateExamSessions(ctx context.Context, reqs []examreq.Cr
 		}
 		if publicationStatus == enum.PublicationStatusScheduled {
 			if publishAt == nil || !publishAt.After(time.Now()) {
-				return nil, errors.New("Ca thi hẹn giờ phải có publish_at trong tương lai")
+				return nil, errors.New("Ca thi hẹn giờ phải có exam_session_publish_at trong tương lai")
 			}
 		}
 		if publicationStatus == enum.PublicationStatusDraft && publishAt != nil {
-			return nil, errors.New("Ca thi lưu nháp không được có publish_at")
+			return nil, errors.New("Ca thi lưu nháp không được có exam_session_publish_at")
+		}
+		if publicationStatus == enum.PublicationStatusPublished {
+			publishAt = nil
 		}
 		if publicationStatus == enum.PublicationStatusPublished && publishAt != nil && publishAt.After(time.Now()) {
-			return nil, errors.New("Ca thi công khai không được có publish_at trong tương lai")
+			return nil, errors.New("Ca thi công khai không được có exam_session_publish_at trong tương lai")
 		}
 		var e ExamSessionEntity
 		err = tx.QueryRowContext(ctx, `
@@ -371,7 +526,7 @@ func parseOptionalRFC3339(value string) (*time.Time, error) {
 	}
 	t, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		return nil, fmt.Errorf("giá trị phải là RFC3339: %w", err)
+		return nil, errors.New("exam_session_publish_at phải có định dạng RFC3339 hợp lệ")
 	}
 	return &t, nil
 }

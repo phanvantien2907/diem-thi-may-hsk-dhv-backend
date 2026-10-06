@@ -12,7 +12,7 @@ type ExamSessionResponseDTO struct {
 	Fee                  int64      `json:"fee"`
 	RegistrationDeadline time.Time  `json:"registration_deadline"`
 	Status               string     `json:"status"`
-	PublicationStatus    string     `json:"publication_status"`
-	PublishAt            *time.Time `json:"publish_at,omitempty"`
-	CheckInAt            *time.Time `json:"check_in_at,omitempty"`
+	PublicationStatus    string     `json:"exam_session_publication_status"`
+	PublishAt            *time.Time `json:"exam_session_publish_at,omitempty"`
+	CheckInAt            *time.Time `json:"exam_session_check_in_at,omitempty"`
 }

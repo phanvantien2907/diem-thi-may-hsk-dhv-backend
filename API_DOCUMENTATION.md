@@ -1241,6 +1241,23 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 
 **Ví dụ:** `GET /api/v1/exam-sessions?exam_type_id=1&from=2026-10-01&to=2026-12-31`
 
+### 4.2.1. [Admin] Danh sách toàn bộ ca thi
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/exam-sessions` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Admin xem toàn bộ ca thi, bao gồm `published`, `draft`, `scheduled` và `cancelled` |
+
+Endpoint này chỉ dành cho tài khoản Admin. API public bên trên chỉ trả về ca `published`
+đã đến thời điểm `exam_session_publish_at`; Admin API không áp dụng bộ lọc phát hành đó.
+
+**Query Params (tất cả tùy chọn):** `exam_type_id`, `from`, `to`.
+
+**Response (200 OK):** Mảng `ExamSessionResponseDTO`, giữ nguyên các field:
+`exam_session_publication_status`, `exam_session_publish_at`,
+`exam_session_check_in_at`.
+
 **Response (200 OK):**
 
 ```json
@@ -1256,9 +1273,9 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
       "fee": 500000,
       "registration_deadline": "2026-10-10T23:59:59+07:00",
       "status": "open",
-      "publication_status": "published",
-      "publish_at": null,
-      "check_in_at": "2026-10-15T07:30:00+07:00"
+      "exam_session_publication_status": "published",
+      "exam_session_publish_at": null,
+      "exam_session_check_in_at": "2026-10-15T07:30:00+07:00"
     }
   ],
   "error": null,
@@ -1278,9 +1295,9 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 | `fee` | `integer` | ❌ | Lệ phí thi (đơn vị: VNĐ) |
 | `registration_deadline` | `datetime` | ❌ | Hạn đăng ký |
 | `status` | `string` | ❌ | `open`, `closed`, `cancelled` |
-| `publication_status` | `string` | ❌ | `published`, `draft`, `scheduled` |
-| `publish_at` | `datetime` | ✅ | Thời điểm công khai; bắt buộc ở trạng thái `scheduled` |
-| `check_in_at` | `datetime` | ✅ | Giờ có mặt của thí sinh |
+| `exam_session_publication_status` | `string` | ❌ | `published`, `draft`, `scheduled` |
+| `exam_session_publish_at` | `datetime` | ✅ | Thời điểm công khai; bắt buộc ở trạng thái `scheduled` |
+| `exam_session_check_in_at` | `datetime` | ✅ | Giờ có mặt của thí sinh |
 
 ---
 
@@ -1366,9 +1383,9 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
       "capacity": 40,
       "fee": 500000,
       "registration_deadline": "2026-10-10T23:59:59+07:00",
-      "publication_status": "scheduled",
-      "publish_at": "2026-10-01T00:00:00+07:00",
-      "check_in_at": "2026-10-15T07:30:00+07:00"
+      "exam_session_publication_status": "scheduled",
+      "exam_session_publish_at": "2026-10-01T00:00:00+07:00",
+      "exam_session_check_in_at": "2026-10-15T07:30:00+07:00"
     }
   ]
 }
@@ -1383,9 +1400,9 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 | `sessions[].capacity` | `integer` | ✅ | Min 1 | Sức chứa |
 | `sessions[].fee` | `number` | ❌ | Min 0 | Lệ phí (VNĐ) |
 | `sessions[].registration_deadline` | `string` | ✅ | RFC 3339 datetime | Hạn đăng ký |
-| `sessions[].publication_status` | `string` | ❌ | `published`, `draft`, `scheduled` | Trạng thái hiển thị; mặc định `published` |
-| `sessions[].publish_at` | `string` | ❌ | RFC 3339 datetime | Bắt buộc và phải ở tương lai khi `scheduled` |
-| `sessions[].check_in_at` | `string` | ❌ | RFC 3339 datetime | Giờ có mặt |
+| `sessions[].exam_session_publication_status` | `string` | ❌ | `published`, `draft`, `scheduled` | Trạng thái hiển thị; mặc định `published` |
+| `sessions[].exam_session_publish_at` | `string` | ❌ | RFC 3339 datetime | Bắt buộc và phải ở tương lai khi `scheduled` |
+| `sessions[].exam_session_check_in_at` | `string` | ❌ | RFC 3339 datetime | Giờ có mặt |
 
 **Response (201 Created):** Mảng `ExamSessionResponseDTO`.
 
@@ -1437,6 +1454,52 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 {
   "success": true,
   "data": { "message": "Ca thi đã được hủy" },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 4.8. [Admin] Cập nhật trạng thái phát hành (Publication Status)
+
+| | |
+|---|---|
+| **Endpoint** | `PATCH /api/v1/admin/exam-sessions/:id/publication-status` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Admin thay đổi trạng thái phát hành của ca thi (draft, scheduled, published) |
+
+**Path Params:** `id` — ID ca thi (`integer`)
+
+**Request Body:**
+
+```json
+{
+  "exam_session_publication_status": "scheduled",
+  "exam_session_publish_at": "2026-10-20T10:00:00Z"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `exam_session_publication_status` | `string` | ✅ | `draft`, `published`, `scheduled` | Trạng thái phát hành |
+| `exam_session_publish_at` | `string` | ❌ | RFC 3339 datetime | Bắt buộc và phải ở tương lai khi `exam_session_publication_status` là `scheduled` |
+
+Quy tắc bổ sung: `draft` và `published` luôn lưu `exam_session_publish_at = null`;
+`published` được phát hành ngay. Với `scheduled`, backend bắt buộc thời điểm tương lai.
+Worker nền kiểm tra định kỳ và tự động chuyển ca đến hạn sang `published`, đồng thời
+xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát hành cho ca thi đã hủy.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Cập nhật trạng thái phát hành thành công",
+    "exam_session_publication_status": "scheduled",
+    "exam_session_publish_at": "2026-10-20T10:00:00Z"
+  },
   "error": null,
   "meta": null
 }
@@ -3046,9 +3109,10 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 | 28 | `GET` | `/exam-sessions` | 🔓 | Exam |
 | 29 | `GET` | `/exam-sessions/:id` | 🔓 | Exam |
 | 30 | `GET` | `/exam-sessions/:id/seats` | 🔓 | Exam |
-| 31 | `POST` | `/admin/exam-sessions/batch-create` | 🔐👑 | Exam |
-| 32 | `POST` | `/admin/exam-sessions/:id/seats/generate` | 🔐👑 | Exam |
-| 33 | `POST` | `/admin/exam-sessions/:id/cancel` | 🔐👑 | Exam |
+| 31 | `GET` | `/admin/exam-sessions` | 🔐👑 | Exam |
+| 32 | `POST` | `/admin/exam-sessions/batch-create` | 🔐👑 | Exam |
+| 33 | `POST` | `/admin/exam-sessions/:id/seats/generate` | 🔐👑 | Exam |
+| 34 | `POST` | `/admin/exam-sessions/:id/cancel` | 🔐👑 | Exam |
 | 34 | `POST` | `/me/registrations` | 🔐 | Registration |
 | 35 | `GET` | `/me/registrations` | 🔐 | Registration |
 | 36 | `POST` | `/me/registrations/:id/payment-confirm` | 🔐 | Registration |

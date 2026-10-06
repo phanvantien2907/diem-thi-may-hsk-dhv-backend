@@ -1,6 +1,8 @@
 package exam
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	examreq "github.com/hskvinh/backend/internal/exam/dto/request"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
@@ -54,6 +56,29 @@ func (h *Handler) ListExamSessions(c *gin.Context) {
 	list, err := h.svc.ListExamSessionsFiltered(c.Request.Context(), f)
 	if err != nil {
 		utils.InternalServerError(c, "Lấy danh sách ca thi thất bại")
+		return
+	}
+	utils.OK(c, list)
+}
+
+// ListAdminExamSessions GET /admin/exam-sessions?exam_type_id=&from=&to=
+// @Summary Danh sách toàn bộ ca thi (Admin)
+// @Description Admin xem các ca thi published, draft, scheduled và cancelled.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions [get]
+func (h *Handler) ListAdminExamSessions(c *gin.Context) {
+	var f examreq.ListExamSessionsFilterDTO
+	_ = c.ShouldBindQuery(&f)
+	list, err := h.svc.ListAdminExamSessionsFiltered(c.Request.Context(), f)
+	if err != nil {
+		utils.InternalServerError(c, "Lấy danh sách ca thi quản trị thất bại")
 		return
 	}
 	utils.OK(c, list)
@@ -144,6 +169,62 @@ func (h *Handler) CancelExamSession(c *gin.Context) {
 		return
 	}
 	utils.OK(c, gin.H{"message": "Ca thi đã được hủy"})
+}
+
+// UpdatePublicationStatus PATCH /admin/exam-sessions/:id/publication-status
+// @Summary Cập nhật trạng thái phát hành ca thi (Admin)
+// @Description Chuyển ca thi giữa draft, published và scheduled.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID ca thi"
+// @Param request body examreq.UpdatePublicationStatusRequestDTO true "Trạng thái phát hành mới"
+// @Success 200 {object} response.UpdatePublicationStatusResponseDTO
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy ca thi"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/:id/publication-status [patch]
+func (h *Handler) UpdatePublicationStatus(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
+		return
+	}
+	var req examreq.UpdatePublicationStatusRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+
+	result, err := h.svc.UpdatePublicationStatus(c.Request.Context(), id, utils.MustAccountID(c), req)
+	if err != nil {
+		if errors.Is(err, errExamSessionNotFound) {
+			utils.NotFound(c, err.Error())
+		} else if isPublicationValidationError(err) {
+			utils.BadRequest(c, err.Error())
+		} else {
+			utils.InternalServerError(c, "Cập nhật trạng thái phát hành thất bại")
+		}
+		return
+	}
+	utils.OK(c, result)
+}
+
+func isPublicationValidationError(err error) bool {
+	message := err.Error()
+	return message == "Trạng thái phát hành không hợp lệ" ||
+		message == "Ca thi hẹn giờ phải có exam_session_publish_at trong tương lai" ||
+		message == "Ca thi lưu nháp không được có exam_session_publish_at" ||
+		message == "Ca thi công khai không được có exam_session_publish_at trong tương lai" ||
+		message == "Không thể cập nhật trạng thái phát hành của ca thi đã hủy" ||
+		message == "exam: parse publication time: exam_session_publish_at phải có định dạng RFC3339 hợp lệ"
 }
 
 // BatchCreateExamSessions POST /admin/exam-sessions/batch-create

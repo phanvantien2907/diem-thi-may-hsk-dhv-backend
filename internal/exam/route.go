@@ -14,9 +14,11 @@ import (
 //	  GET  /exam-sessions/:id/seats
 //
 //	admin:
+//	  GET  /admin/exam-sessions                   (filter: exam_type_id, from, to)
 //	  POST /admin/exam-sessions/batch-create
 //	  POST /admin/exam-sessions/:id/seats/generate
 //	  POST /admin/exam-sessions/:id/cancel
+//	  PATCH /admin/exam-sessions/:id/publication-status
 func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	// Public read endpoints
 	r.GET("/exam-types", h.ListExamTypes)
@@ -29,8 +31,10 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 	{
 		// batch-create must be registered BEFORE /:id routes to avoid conflict
+		admin.GET("/exam-sessions", h.ListAdminExamSessions)
 		admin.POST("/exam-sessions/batch-create", h.BatchCreateExamSessions)
 		admin.POST("/exam-sessions/:id/seats/generate", h.GenerateSeats)
 		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)
+		admin.PATCH("/exam-sessions/:id/publication-status", h.UpdatePublicationStatus)
 	}
 }

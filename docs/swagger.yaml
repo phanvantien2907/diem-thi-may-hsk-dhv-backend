@@ -401,6 +401,19 @@ definitions:
         maxLength: 20
         type: string
     type: object
+  request.UpdatePublicationStatusRequestDTO:
+    properties:
+      exam_session_publication_status:
+        enum:
+        - draft
+        - published
+        - scheduled
+        type: string
+      exam_session_publish_at:
+        type: string
+    required:
+    - exam_session_publication_status
+    type: object
   request.VerifyCertRequestDTO:
     properties:
       certificate_no:
@@ -409,6 +422,15 @@ definitions:
         type: string
       dob:
         description: YYYY-MM-DD — required when certificate_no is used
+        type: string
+    type: object
+  response.UpdatePublicationStatusResponseDTO:
+    properties:
+      exam_session_publication_status:
+        type: string
+      exam_session_publish_at:
+        type: string
+      message:
         type: string
     type: object
 host: localhost:8080
@@ -894,6 +916,39 @@ paths:
       summary: Cập nhật vận đơn (Admin)
       tags:
       - Certificate
+  /admin/exam-sessions:
+    get:
+      consumes:
+      - application/json
+      description: Admin xem các ca thi published, draft, scheduled và cancelled.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách toàn bộ ca thi (Admin)
+      tags:
+      - Exam
   /admin/exam-sessions/:id/cancel:
     post:
       consumes:
@@ -982,6 +1037,60 @@ paths:
       summary: Thống kê ca thi (Admin)
       tags:
       - Registration
+  /admin/exam-sessions/:id/publication-status:
+    patch:
+      consumes:
+      - application/json
+      description: Chuyển ca thi giữa draft, published và scheduled.
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Trạng thái phát hành mới
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.UpdatePublicationStatusRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/response.UpdatePublicationStatusResponseDTO'
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy ca thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật trạng thái phát hành ca thi (Admin)
+      tags:
+      - Exam
   /admin/exam-sessions/:id/roster:
     get:
       consumes:

@@ -258,6 +258,8 @@ All API routes are mounted under `/api/v1`.
 | exam | GET | `/exam-sessions/:id` | public |
 | exam | GET | `/exam-sessions/:id/seats` | public |
 | exam | POST | `/admin/exam-sessions/:id/seats/generate` | JWT + admin |
+| exam | GET | `/admin/exam-sessions` | JWT + admin |
+| exam | PATCH | `/admin/exam-sessions/:id/publication-status` | JWT + admin |
 | registration | POST | `/registrations` | JWT |
 | registration | GET | `/registrations?candidate_id=X` | JWT |
 | registration | PUT | `/registrations/:id/confirm` | JWT |
@@ -944,10 +946,12 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 
 ### 13.5. Quy tắc hiển thị ca thi
 
-- API public của module `exam` chỉ trả về ca có `publication_status = published`, chưa bị hủy và đã đến `publish_at` (nếu có).
-- `draft` không hiển thị công khai và không nhận `publish_at`.
-- `scheduled` bắt buộc có `publish_at` là thời điểm trong tương lai.
-- `check_in_at` là thời điểm có mặt dạng RFC 3339 và có thể để trống.
+- API public của module `exam` chỉ trả về ca có `exam_session_publication_status = published`, chưa bị hủy và đã đến `exam_session_publish_at` (nếu có).
+- `draft` không hiển thị công khai và không nhận `exam_session_publish_at`.
+- `scheduled` bắt buộc có `exam_session_publish_at` là thời điểm trong tương lai.
+- Worker nền của module `exam` tự động chuyển các ca `scheduled` đến hạn sang `published`
+  bằng một câu lệnh cập nhật atomic; sau đó đặt `exam_session_publish_at = NULL`.
+- `exam_session_check_in_at` là thời điểm có mặt dạng RFC 3339 và có thể để trống.
 - API `exam` không còn endpoint hoặc field response về phòng máy; dữ liệu `exam_rooms` và khóa DB cũ chỉ được giữ nội bộ để tương thích registration.
 
 ---

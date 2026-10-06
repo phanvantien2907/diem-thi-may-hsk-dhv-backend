@@ -177,6 +177,9 @@ func main() {
 	payosSyncCron := worker.NewPayOSSyncCron(dashSvc, hub, 10*time.Minute)
 	go payosSyncCron.Start(ctx)
 
+	examPublicationCron := worker.NewExamPublicationCron(examSvc, 30*time.Second)
+	go examPublicationCron.Start(ctx)
+
 	go func() {
 		log.Printf("[main] listening on :%s (env=%s)", cfg.AppPort, cfg.AppEnv)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -732,6 +732,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/exam-sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin xem các ca thi published, draft, scheduled và cancelled.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Danh sách toàn bộ ca thi (Admin)",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/exam-sessions/:id/cancel": {
             "post": {
                 "security": [
@@ -849,6 +899,87 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/:id/publication-status": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chuyển ca thi giữa draft, published và scheduled.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Cập nhật trạng thái phát hành ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Trạng thái phát hành mới",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UpdatePublicationStatusRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.UpdatePublicationStatusResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4638,6 +4769,25 @@ const docTemplate = `{
                 }
             }
         },
+        "request.UpdatePublicationStatusRequestDTO": {
+            "type": "object",
+            "required": [
+                "exam_session_publication_status"
+            ],
+            "properties": {
+                "exam_session_publication_status": {
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "published",
+                        "scheduled"
+                    ]
+                },
+                "exam_session_publish_at": {
+                    "type": "string"
+                }
+            }
+        },
         "request.VerifyCertRequestDTO": {
             "type": "object",
             "properties": {
@@ -4649,6 +4799,20 @@ const docTemplate = `{
                 },
                 "dob": {
                     "description": "YYYY-MM-DD — required when certificate_no is used",
+                    "type": "string"
+                }
+            }
+        },
+        "response.UpdatePublicationStatusResponseDTO": {
+            "type": "object",
+            "properties": {
+                "exam_session_publication_status": {
+                    "type": "string"
+                },
+                "exam_session_publish_at": {
+                    "type": "string"
+                },
+                "message": {
                     "type": "string"
                 }
             }

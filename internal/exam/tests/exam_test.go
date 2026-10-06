@@ -14,6 +14,7 @@ import (
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditresp "github.com/hskvinh/backend/internal/audit/dto/response"
 	"github.com/hskvinh/backend/internal/exam"
+	"github.com/hskvinh/backend/internal/exam/dto/request"
 	"github.com/hskvinh/backend/internal/exam/enum"
 )
 
@@ -117,6 +118,106 @@ func TestListExamSessionsReturnsPublicationAndCheckInFields(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].PublicationStatus != "published" || got[0].CheckInAt == nil {
 		t.Fatalf("unexpected sessions: %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestListAdminExamSessionsIncludesUnpublishedSessions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`WHERE es.exam_session_is_deleted = FALSE`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"exam_session_id", "exam_session_exam_type_id", "exam_session_date",
+			"exam_session_shift", "exam_session_capacity", "exam_session_fee",
+			"exam_session_registration_deadline", "exam_session_status",
+			"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
+		}).AddRow(13, 1, time.Now(), "morning", 40, 500000.0, time.Now(), "open", "draft", nil, nil))
+
+	svc := exam.NewService(db, fakeAuditService{})
+	got, err := svc.ListAdminExamSessionsFiltered(context.Background(), request.ListExamSessionsFilterDTO{})
+	if err != nil {
+		t.Fatalf("ListAdminExamSessionsFiltered() error = %v", err)
+	}
+	if len(got) != 1 || got[0].PublicationStatus != "draft" {
+		t.Fatalf("unexpected admin sessions: %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestUpdatePublicationStatus(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT exam_session_publication_status, exam_session_status`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"exam_session_publication_status", "exam_session_status"}).AddRow("draft", "open"))
+	mock.ExpectExec(`UPDATE exam_sessions`).
+		WithArgs("published", nil, int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	svc := exam.NewService(db, fakeAuditService{})
+	got, err := svc.UpdatePublicationStatus(context.Background(), 7, 42, request.UpdatePublicationStatusRequestDTO{
+		PublicationStatus: "published",
+	})
+	if err != nil {
+		t.Fatalf("UpdatePublicationStatus() error = %v", err)
+	}
+	if got.PublicationStatus != "published" || got.Message == "" || got.PublishAt != nil {
+		t.Fatalf("unexpected response: %+v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestUpdatePublicationStatusRejectsInvalidSchedule(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := exam.NewService(db, fakeAuditService{})
+	_, err = svc.UpdatePublicationStatus(context.Background(), 7, 42, request.UpdatePublicationStatusRequestDTO{
+		PublicationStatus: "scheduled",
+	})
+	if err == nil || !strings.Contains(err.Error(), "exam_session_publish_at") {
+		t.Fatalf("expected exam_session_publish_at validation error, got %v", err)
+	}
+}
+
+func TestPublishScheduledSessions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`UPDATE exam_sessions`).
+		WillReturnRows(sqlmock.NewRows([]string{"exam_session_id"}).AddRow(int64(7)).AddRow(int64(8)))
+	mock.ExpectCommit()
+
+	svc := exam.NewService(db, fakeAuditService{})
+	got, err := svc.PublishScheduledSessions(context.Background())
+	if err != nil {
+		t.Fatalf("PublishScheduledSessions() error = %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("PublishScheduledSessions() = %d, want 2", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)
