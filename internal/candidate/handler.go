@@ -1,7 +1,10 @@
 package candidate
 
 import (
+	"bytes"
 	"errors"
+	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
@@ -182,12 +185,88 @@ func (h *Handler) AdminListCandidates(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	items, meta, err := h.svc.AdminListCandidates(c.Request.Context(), req)
+	items, meta, err := h.svc.AdminListCandidatesFiltered(c.Request.Context(), req)
 	if err != nil {
 		utils.InternalServerError(c, "Không thể tải danh sách hồ sơ")
 		return
 	}
 	utils.OKWithMeta(c, items, &meta)
+}
+
+// AdminCandidateMetrics GET /admin/candidates/metrics
+// @Summary Thống kê hồ sơ thí sinh (Admin)
+// @Description Trả về tổng số hồ sơ và số lượng theo trạng thái giấy tờ mới nhất.
+// @Tags Candidate
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/candidates/metrics [get]
+func (h *Handler) AdminCandidateMetrics(c *gin.Context) {
+	metrics, err := h.svc.AdminCandidateMetrics(c.Request.Context())
+	if err != nil {
+		utils.InternalServerError(c, "Không thể tải thống kê hồ sơ")
+		return
+	}
+	utils.OK(c, metrics)
+}
+
+// AdminExportCandidates GET /admin/candidates/export
+// @Summary Xuất danh sách thí sinh (Admin)
+// @Description Xuất danh sách hồ sơ phù hợp với bộ lọc thành tệp PDF.
+// @Tags Candidate
+// @Produce application/pdf
+// @Security BearerAuth
+// @Param status query string false "Trạng thái giấy tờ: all, pending, verified, rejected (mặc định all)"
+// @Param level query string false "Cấp độ HSK"
+// @Param search query string false "Tìm theo họ tên hoặc CCCD"
+// @Param exam_date query string true "Ngày thi của đợt thi, định dạng YYYY-MM-DD"
+// @Success 200 {file} binary "Tệp PDF"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/candidates/export [get]
+func (h *Handler) AdminExportCandidates(c *gin.Context) {
+	var req request.AdminListCandidatesRequestDTO
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "Tham số truy vấn không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	if _, err := time.Parse("2006-01-02", req.ExamDate); err != nil {
+		utils.BadRequest(c, "Ngày thi không hợp lệ, định dạng đúng là YYYY-MM-DD")
+		return
+	}
+	pdf, err := h.svc.AdminExportCandidates(c.Request.Context(), req)
+	if err != nil {
+		utils.InternalServerError(c, "Không thể xuất danh sách hồ sơ")
+		return
+	}
+	filename := exportFilename(req.Status, req.ExamDate)
+	c.DataFromReader(http.StatusOK, int64(len(pdf)), "application/pdf", bytes.NewReader(pdf), map[string]string{
+		"Content-Disposition": `attachment; filename="` + filename + `"`,
+	})
+}
+
+func exportFilename(status, examDate string) string {
+	date, _ := time.Parse("2006-01-02", examDate)
+	datePart := date.Format("02-01-2006")
+	switch status {
+	case "rejected":
+		return "ds_ho_so_thi_sinh_tu_choi_" + datePart + ".pdf"
+	case "pending":
+		return "ds_ho_so_thi_sinh_cho_duyet_" + datePart + ".pdf"
+	case "verified":
+		return "ds_ho_so_thi_sinh_da_duyet_" + datePart + ".pdf"
+	default:
+		return "ds_thi_sinh_" + datePart + ".pdf"
+	}
 }
 
 // AdminListDuplicates GET /admin/candidates/duplicates

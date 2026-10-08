@@ -1,13 +1,18 @@
 package candidate
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
@@ -17,6 +22,77 @@ import (
 	"github.com/hskvinh/backend/internal/candidate/enum"
 	"github.com/hskvinh/backend/internal/utils"
 )
+
+type adminCandidateExportRow struct {
+	Name         string
+	DOB          time.Time
+	CCCD         string
+	Level        string
+	RegisteredAt time.Time
+	Status       string
+	Note         string
+}
+
+// Noto Serif SC embeds Latin, Vietnamese, and Simplified Chinese glyphs.
+//
+//go:embed assets/NotoSerifSC.ttf
+var candidatePDFUnicodeFont []byte
+
+func adminCandidateWhere(req request.AdminListCandidatesRequestDTO, startArg int) (string, []any) {
+	conditions := []string{"c.candidate_is_deleted = FALSE"}
+	args := make([]any, 0, 4)
+	nextArg := startArg
+	if req.Status != "" && req.Status != "all" {
+		conditions = append(conditions, fmt.Sprintf("COALESCE(ld.status, 'pending') = $%d", nextArg))
+		args = append(args, req.Status)
+		nextArg++
+	}
+	if req.Level != "" {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1
+			FROM exam_registrations er
+			JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+			  AND es.exam_session_is_deleted = FALSE
+			JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
+			WHERE er.exam_registration_candidate_id = c.candidate_id
+			  AND er.exam_registration_is_deleted = FALSE
+			  AND et.exam_type_is_deleted = FALSE
+			  AND et.exam_type_name ILIKE $%d
+		)`, nextArg))
+		args = append(args, "%"+req.Level+"%")
+		nextArg++
+	}
+	if req.ExamDate != "" {
+		if _, err := time.Parse("2006-01-02", req.ExamDate); err != nil {
+			return "WHERE FALSE", nil
+		}
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1
+			FROM exam_registrations der
+			JOIN exam_sessions des ON des.exam_session_id = der.exam_registration_exam_session_id
+			  AND des.exam_session_is_deleted = FALSE
+			WHERE der.exam_registration_candidate_id = c.candidate_id
+			  AND der.exam_registration_is_deleted = FALSE
+			  AND des.exam_session_date = $%d
+		)`, nextArg))
+		args = append(args, req.ExamDate)
+		nextArg++
+	}
+	if req.Search != "" {
+		conditions = append(conditions, fmt.Sprintf(`(
+			c.candidate_full_name ILIKE $%d
+			OR EXISTS (
+				SELECT 1
+				FROM candidate_documents sd
+				WHERE sd.candidate_document_candidate_id = c.candidate_id
+				  AND sd.candidate_document_is_deleted = FALSE
+				  AND sd.candidate_document_number ILIKE $%d
+			)
+		)`, nextArg, nextArg))
+		args = append(args, "%"+req.Search+"%")
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
 
 // MediaService defines the required media upload functionality for candidates.
 type MediaService interface {
@@ -81,6 +157,19 @@ func scanDocument(row *sql.Row, e *entities.CandidateDocumentEntity) error {
 	)
 }
 
+// normalizeChineseName removes one accidental layer of JSON string quoting.
+// This keeps compatibility with clients that JSON-encode the name twice while
+// leaving normal names and names containing only one quote unchanged.
+func normalizeChineseName(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+	}
+	return value
+}
+
 // CreateProfile inserts a new candidate profile for the authenticated account.
 func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRequestDTO, accountID int64) (response.CandidateResponseDTO, error) {
 	dob, err := time.Parse("2006-01-02", req.DOB)
@@ -93,6 +182,8 @@ func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRe
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	req.FullNameCN = normalizeChineseName(req.FullNameCN)
 
 	var e entities.CandidateEntity
 	err = scanCandidate(tx.QueryRowContext(ctx, `
@@ -227,6 +318,8 @@ func (s *Service) PatchMyProfile(ctx context.Context, accountID int64, req reque
 		return response.CandidateResponseDTO{}, ErrActiveRegistration
 	}
 
+	req.FullNameCN = normalizeChineseName(req.FullNameCN)
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: begin tx: %w", err)
@@ -356,194 +449,361 @@ func (s *Service) UploadDocument(ctx context.Context, accountID int64, req reque
 
 // AdminListCandidates returns a paginated list of candidates filtered by document verification status.
 func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminListCandidatesRequestDTO) ([]response.AdminCandidateResponseDTO, utils.Meta, error) {
+	return s.AdminListCandidatesFiltered(ctx, req)
+}
+
+// AdminListCandidatesFiltered returns the paginated admin candidate list with all filters.
+func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.AdminListCandidatesRequestDTO) ([]response.AdminCandidateResponseDTO, utils.Meta, error) {
 	if req.Page < 1 {
 		req.Page = 1
 	}
 	if req.Limit < 1 || req.Limit > 100 {
 		req.Limit = 20
 	}
+	where, filterArgs := adminCandidateWhere(req, 1)
+	const latestDocumentCTE = `
+			WITH latest_documents AS (
+				SELECT DISTINCT ON (candidate_document_candidate_id)
+					candidate_document_candidate_id AS candidate_id,
+					candidate_document_id,
+					candidate_document_type,
+					candidate_document_number,
+					candidate_document_issue_date,
+					candidate_document_issue_place,
+					candidate_document_front_image_url,
+					candidate_document_back_image_url,
+					candidate_document_portrait_image_url,
+					candidate_document_verification_status AS status,
+					candidate_document_rejection_reason,
+					candidate_document_ward_id,
+					(SELECT ward_province_id FROM wards WHERE ward_id = candidate_document_ward_id) AS province_id,
+					candidate_document_address_detail
+				FROM candidate_documents
+				WHERE candidate_document_is_deleted = FALSE
+				ORDER BY candidate_document_candidate_id, candidate_document_created_at DESC
+			),
+			latest_registrations AS (
+				SELECT DISTINCT ON (er.exam_registration_candidate_id)
+					er.exam_registration_candidate_id AS candidate_id,
+					et.exam_type_name
+				FROM exam_registrations er
+				JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+				  AND es.exam_session_is_deleted = FALSE
+				JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
+				  AND et.exam_type_is_deleted = FALSE
+				WHERE er.exam_registration_is_deleted = FALSE
+				ORDER BY er.exam_registration_candidate_id, er.exam_registration_registered_at DESC
+			)`
 
-	// Build WHERE based on status filter (join to latest document)
-	statusFilter := ""
-	var args []any
-	if req.Status != "" {
-		statusFilter = "AND d.candidate_document_verification_status = $3"
-		args = append(args, req.Status)
+	var total int64
+	if err := s.db.QueryRowContext(ctx, latestDocumentCTE+`
+			SELECT COUNT(*)
+			FROM candidates c
+			LEFT JOIN latest_documents ld ON ld.candidate_id = c.candidate_id
+			`+where, filterArgs...).Scan(&total); err != nil {
+		return nil, utils.Meta{}, fmt.Errorf("candidate: admin filtered count: %w", err)
 	}
 
 	offset := (req.Page - 1) * req.Limit
-
-	// Count total
-	countArgs := append([]any{req.Page, req.Limit}, args...)
-	_ = countArgs
-	var countQuery string
-	var countArgs2 []any
-	if req.Status != "" {
-		countQuery = `
-			SELECT COUNT(DISTINCT c.candidate_id)
+	args := append(filterArgs, req.Limit, offset)
+	rows, err := s.db.QueryContext(ctx, latestDocumentCTE+`
+			SELECT c.candidate_id, c.candidate_account_id, c.candidate_full_name,
+			       c.candidate_full_name_cn, c.candidate_dob, c.candidate_gender,
+			       c.candidate_ethnicity, c.candidate_religion, c.candidate_birthplace,
+			       c.candidate_nationality, c.candidate_mother_tongue,
+			       c.candidate_chinese_study_years,
+			       a.account_phone, a.account_email, lr.exam_type_name,
+			       ld.candidate_document_id, ld.candidate_id, ld.candidate_document_type,
+			       ld.candidate_document_number, ld.candidate_document_issue_date,
+			       ld.candidate_document_issue_place, ld.candidate_document_front_image_url,
+			       ld.candidate_document_back_image_url, ld.candidate_document_portrait_image_url,
+			       ld.status, ld.candidate_document_rejection_reason, ld.candidate_document_ward_id,
+			       ld.province_id, ld.candidate_document_address_detail
 			FROM candidates c
-			JOIN candidate_documents d ON d.candidate_document_candidate_id = c.candidate_id
-			  AND d.candidate_document_is_deleted = FALSE
-			WHERE c.candidate_is_deleted = FALSE
-			  AND d.candidate_document_verification_status = $1`
-		countArgs2 = []any{req.Status}
-	} else {
-		countQuery = `SELECT COUNT(*) FROM candidates WHERE candidate_is_deleted = FALSE`
-		countArgs2 = nil
-	}
-
-	var total int64
-	if err := s.db.QueryRowContext(ctx, countQuery, countArgs2...).Scan(&total); err != nil {
-		return nil, utils.Meta{}, fmt.Errorf("candidate: admin list count: %w", err)
-	}
-
-	if total == 0 {
-		return []response.AdminCandidateResponseDTO{}, utils.Meta{
-			Page: req.Page, PerPage: req.Limit, TotalItems: 0, TotalPages: 0,
-		}, nil
-	}
-
-	// Fetch page — use DISTINCT ON to get one row per candidate with latest document
-	var rows *sql.Rows
-	var err error
-	if req.Status != "" {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT DISTINCT ON (c.candidate_id)
-				c.candidate_id, c.candidate_account_id, c.candidate_full_name, c.candidate_full_name_cn,
-				c.candidate_dob, c.candidate_gender,
-				c.candidate_ethnicity, c.candidate_religion, c.candidate_birthplace,
-				c.candidate_nationality, c.candidate_mother_tongue,
-				c.candidate_chinese_study_years,
-				d.candidate_document_id, d.candidate_document_candidate_id,
-				d.candidate_document_type, d.candidate_document_number,
-				d.candidate_document_issue_date, d.candidate_document_issue_place,
-				d.candidate_document_front_image_url, d.candidate_document_back_image_url,
-				d.candidate_document_portrait_image_url,
-				d.candidate_document_verification_status, d.candidate_document_rejection_reason,
-				d.candidate_document_ward_id, (SELECT ward_province_id FROM wards WHERE ward_id = d.candidate_document_ward_id) AS candidate_document_province_id, d.candidate_document_address_detail
-			FROM candidates c
-			JOIN candidate_documents d ON d.candidate_document_candidate_id = c.candidate_id
-			  AND d.candidate_document_is_deleted = FALSE
-			WHERE c.candidate_is_deleted = FALSE
-			  `+statusFilter+`
-			ORDER BY c.candidate_id, d.candidate_document_created_at DESC
-			LIMIT $1 OFFSET $2`,
-			req.Limit, offset, req.Status,
-		)
-	} else {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT DISTINCT ON (c.candidate_id)
-				c.candidate_id, c.candidate_account_id, c.candidate_full_name, c.candidate_full_name_cn,
-				c.candidate_dob, c.candidate_gender,
-				c.candidate_ethnicity, c.candidate_religion, c.candidate_birthplace,
-				c.candidate_nationality, c.candidate_mother_tongue,
-				c.candidate_chinese_study_years,
-				d.candidate_document_id, d.candidate_document_candidate_id,
-				d.candidate_document_type, d.candidate_document_number,
-				d.candidate_document_issue_date, d.candidate_document_issue_place,
-				d.candidate_document_front_image_url, d.candidate_document_back_image_url,
-				d.candidate_document_portrait_image_url,
-				d.candidate_document_verification_status, d.candidate_document_rejection_reason,
-				d.candidate_document_ward_id, (SELECT ward_province_id FROM wards WHERE ward_id = d.candidate_document_ward_id) AS candidate_document_province_id, d.candidate_document_address_detail
-			FROM candidates c
-			LEFT JOIN candidate_documents d ON d.candidate_document_candidate_id = c.candidate_id
-			  AND d.candidate_document_is_deleted = FALSE
-			WHERE c.candidate_is_deleted = FALSE
-			ORDER BY c.candidate_id, d.candidate_document_created_at DESC
-			LIMIT $1 OFFSET $2`,
-			req.Limit, offset,
-		)
-	}
+			JOIN accounts a ON a.account_id = c.candidate_account_id
+			  AND a.account_is_deleted = FALSE
+			LEFT JOIN latest_documents ld ON ld.candidate_id = c.candidate_id
+			LEFT JOIN latest_registrations lr ON lr.candidate_id = c.candidate_id
+			`+where+`
+			ORDER BY c.candidate_id DESC
+			LIMIT $`+strconv.Itoa(len(filterArgs)+1)+` OFFSET $`+strconv.Itoa(len(filterArgs)+2), args...)
 	if err != nil {
-		return nil, utils.Meta{}, fmt.Errorf("candidate: admin list query: %w", err)
+		return nil, utils.Meta{}, fmt.Errorf("candidate: admin filtered query: %w", err)
 	}
 	defer rows.Close()
 
 	items := make([]response.AdminCandidateResponseDTO, 0, req.Limit)
 	for rows.Next() {
 		var c entities.CandidateEntity
-		var d entities.CandidateDocumentEntity
-		// document fields can be NULL when no document exists (LEFT JOIN case)
-		var (
-			docID, docCandID            sql.NullInt64
-			docType, docNumber          sql.NullString
-			docIssueDate                sql.NullTime
-			docIssuePlace               sql.NullString
-			docFrontURL, docPortraitURL sql.NullString
-			docBackURL                  sql.NullString
-			docStatus, docRejection     sql.NullString
-			docWardID, docProvinceID    sql.NullInt64
-			docAddressDetail            sql.NullString
-		)
+		var docID, docCandidateID, docWardID, docProvinceID sql.NullInt64
+		var docType, docNumber, docIssuePlace, docFrontURL, docBackURL, docPortraitURL sql.NullString
+		var docIssueDate sql.NullTime
+		var docStatus, rejectionReason sql.NullString
+		var phone, email, examLevel, docAddressDetail sql.NullString
 		if err := rows.Scan(
-			&c.CandidateID, &c.CandidateAccountID, &c.CandidateFullName, &c.CandidateFullNameCN,
-			&c.CandidateDOB, &c.CandidateGender,
+			&c.CandidateID, &c.CandidateAccountID, &c.CandidateFullName,
+			&c.CandidateFullNameCN, &c.CandidateDOB, &c.CandidateGender,
 			&c.CandidateEthnicity, &c.CandidateReligion, &c.CandidateBirthplace,
 			&c.CandidateNationality, &c.CandidateMotherTongue,
-			&c.CandidateChineseStudyYears,
-			&docID, &docCandID,
-			&docType, &docNumber,
-			&docIssueDate, &docIssuePlace,
-			&docFrontURL, &docBackURL,
-			&docPortraitURL,
-			&docStatus, &docRejection,
-			&docWardID, &docProvinceID, &docAddressDetail,
+			&c.CandidateChineseStudyYears, &phone, &email, &examLevel,
+			&docID, &docCandidateID, &docType, &docNumber, &docIssueDate,
+			&docIssuePlace, &docFrontURL, &docBackURL, &docPortraitURL,
+			&docStatus, &rejectionReason, &docWardID, &docProvinceID, &docAddressDetail,
 		); err != nil {
-			return nil, utils.Meta{}, fmt.Errorf("candidate: admin list scan: %w", err)
+			return nil, utils.Meta{}, fmt.Errorf("candidate: admin filtered scan: %w", err)
 		}
-
 		dto := ToAdminCandidateResponseDTO(c)
+		if phone.Valid {
+			dto.Phone = &phone.String
+		}
+		if email.Valid {
+			dto.Email = &email.String
+		}
+		if examLevel.Valid {
+			dto.ExamLevel = &examLevel.String
+			dto.TargetExamLevel = &examLevel.String
+		}
 		if docID.Valid {
-			d.CandidateDocumentID = docID.Int64
-			d.CandidateDocumentCandidateID = docCandID.Int64
-			d.CandidateDocumentType = enum.DocumentType(docType.String)
-			d.CandidateDocumentNumber = docNumber.String
-			d.CandidateDocumentIssueDate = docIssueDate.Time
-			d.CandidateDocumentIssuePlace = docIssuePlace.String
-			d.CandidateDocumentFrontImageURL = docFrontURL.String
-			if docBackURL.Valid {
-				d.CandidateDocumentBackImageURL = &docBackURL.String
+			doc := entities.CandidateDocumentEntity{
+				CandidateDocumentID:                 docID.Int64,
+				CandidateDocumentCandidateID:        docCandidateID.Int64,
+				CandidateDocumentType:               enum.DocumentType(docType.String),
+				CandidateDocumentNumber:             docNumber.String,
+				CandidateDocumentIssueDate:          docIssueDate.Time,
+				CandidateDocumentIssuePlace:         docIssuePlace.String,
+				CandidateDocumentFrontImageURL:      docFrontURL.String,
+				CandidateDocumentPortraitImageURL:   docPortraitURL.String,
+				CandidateDocumentVerificationStatus: enum.DocumentVerificationStatus(docStatus.String),
 			}
-			d.CandidateDocumentPortraitImageURL = docPortraitURL.String
-			d.CandidateDocumentVerificationStatus = enum.DocumentVerificationStatus(docStatus.String)
-			if docRejection.Valid {
-				d.CandidateDocumentRejectionReason = &docRejection.String
+			if docBackURL.Valid {
+				doc.CandidateDocumentBackImageURL = &docBackURL.String
 			}
 			if docWardID.Valid {
-				d.CandidateDocumentWardID = &docWardID.Int64
+				doc.CandidateDocumentWardID = &docWardID.Int64
 			}
 			if docProvinceID.Valid {
-				d.CandidateDocumentProvinceID = &docProvinceID.Int64
+				doc.CandidateDocumentProvinceID = &docProvinceID.Int64
 			}
 			if docAddressDetail.Valid {
-				d.CandidateDocumentAddressDetail = &docAddressDetail.String
+				doc.CandidateDocumentAddressDetail = &docAddressDetail.String
 			}
-			docDTO := ToDocumentResponseDTO(d)
+			if rejectionReason.Valid {
+				doc.CandidateDocumentRejectionReason = &rejectionReason.String
+			}
+			docDTO := ToAdminDocumentResponseDTO(doc)
 			dto.LatestDocument = &docDTO
 		}
 		items = append(items, dto)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, utils.Meta{}, fmt.Errorf("candidate: admin list rows: %w", err)
+		return nil, utils.Meta{}, fmt.Errorf("candidate: admin filtered rows: %w", err)
 	}
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(req.Limit) - 1) / int64(req.Limit))
+	}
+	return items, utils.Meta{Page: req.Page, PerPage: req.Limit, TotalItems: total, TotalPages: totalPages}, nil
+}
 
-	totalPages := (int(total) + req.Limit - 1) / req.Limit
-	return items, utils.Meta{
-		Page:       req.Page,
-		PerPage:    req.Limit,
-		TotalItems: total,
-		TotalPages: totalPages,
-	}, nil
+// AdminCandidateMetrics returns the total and latest-document status counts.
+func (s *Service) AdminCandidateMetrics(ctx context.Context) (response.AdminCandidateMetricsResponseDTO, error) {
+	query := `
+			WITH latest_documents AS (
+				SELECT DISTINCT ON (candidate_document_candidate_id)
+					candidate_document_candidate_id AS candidate_id,
+					candidate_document_verification_status AS status
+				FROM candidate_documents
+				WHERE candidate_document_is_deleted = FALSE
+				ORDER BY candidate_document_candidate_id, candidate_document_created_at DESC
+			)
+			SELECT COUNT(*) AS total,
+			       COUNT(*) FILTER (WHERE ld.status = 'pending' OR ld.status IS NULL) AS pending,
+			       COUNT(*) FILTER (WHERE ld.status = 'verified') AS verified,
+			       COUNT(*) FILTER (WHERE ld.status = 'rejected') AS rejected
+			FROM candidates c
+			LEFT JOIN latest_documents ld ON ld.candidate_id = c.candidate_id
+			WHERE c.candidate_is_deleted = FALSE`
+	var metrics response.AdminCandidateMetricsResponseDTO
+	if err := s.db.QueryRowContext(ctx, query).Scan(&metrics.Total, &metrics.Pending, &metrics.Verified, &metrics.Rejected); err != nil {
+		return response.AdminCandidateMetricsResponseDTO{}, fmt.Errorf("candidate: admin metrics: %w", err)
+	}
+	return metrics, nil
+}
+
+// AdminExportCandidates returns a compact PDF for the filtered candidate list.
+func (s *Service) AdminExportCandidates(ctx context.Context, req request.AdminListCandidatesRequestDTO) ([]byte, error) {
+	examDate, err := time.Parse("2006-01-02", req.ExamDate)
+	if err != nil {
+		return nil, errors.New("ngày thi không hợp lệ, định dạng đúng là YYYY-MM-DD")
+	}
+	filterReq := req
+	filterReq.ExamDate = ""
+	where, filterArgs := adminCandidateWhere(filterReq, 2)
+	query := `
+			WITH latest_documents AS (
+				SELECT DISTINCT ON (candidate_document_candidate_id)
+					candidate_document_candidate_id AS candidate_id,
+					candidate_document_number,
+					candidate_document_verification_status AS status,
+					candidate_document_rejection_reason
+				FROM candidate_documents
+				WHERE candidate_document_is_deleted = FALSE
+				ORDER BY candidate_document_candidate_id, candidate_document_created_at DESC
+			),
+			batch_registrations AS (
+				SELECT DISTINCT ON (er.exam_registration_candidate_id)
+					er.exam_registration_candidate_id AS candidate_id,
+					er.exam_registration_registered_at,
+					et.exam_type_name
+				FROM exam_registrations er
+				JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+				JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
+				WHERE er.exam_registration_is_deleted = FALSE
+				  AND es.exam_session_is_deleted = FALSE
+				  AND et.exam_type_is_deleted = FALSE
+				  AND es.exam_session_date = $1
+				  AND et.exam_type_name ~* 'HSK[[:space:]]*[3-9]'
+				ORDER BY er.exam_registration_candidate_id, er.exam_registration_registered_at DESC
+			)
+			SELECT c.candidate_full_name, c.candidate_dob,
+			       COALESCE(ld.candidate_document_number, ''),
+			       br.exam_type_name, br.exam_registration_registered_at,
+			       COALESCE(ld.status, 'pending'),
+			       COALESCE(ld.candidate_document_rejection_reason, '')
+			FROM candidates c
+			JOIN batch_registrations br ON br.candidate_id = c.candidate_id
+			LEFT JOIN latest_documents ld ON ld.candidate_id = c.candidate_id
+			` + where + `
+			ORDER BY c.candidate_full_name ASC, c.candidate_id ASC`
+	args := append([]any{examDate}, filterArgs...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("candidate: admin export query: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]adminCandidateExportRow, 0)
+	for rows.Next() {
+		var record adminCandidateExportRow
+		if err := rows.Scan(&record.Name, &record.DOB, &record.CCCD, &record.Level, &record.RegisteredAt, &record.Status, &record.Note); err != nil {
+			return nil, fmt.Errorf("candidate: admin export scan: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("candidate: admin export rows: %w", err)
+	}
+	pdf, err := buildCandidatePDF(records, examDate)
+	if err != nil {
+		return nil, fmt.Errorf("candidate: build export pdf: %w", err)
+	}
+	return pdf, nil
+}
+
+func buildCandidatePDF(records []adminCandidateExportRow, examDate time.Time) ([]byte, error) {
+	const rowsPerPage = 24
+	pdf := fpdf.New("L", "mm", "A4", "")
+	pdf.SetMargins(10, 10, 10)
+	pdf.SetAutoPageBreak(false, 10)
+	pdf.AddUTF8FontFromBytes("NotoSerifSC", "", candidatePDFUnicodeFont)
+	pdf.SetTitle("Danh sách thí sinh dự thi HSK", true)
+
+	for start := 0; start < len(records) || start == 0; start += rowsPerPage {
+		pdf.AddPage()
+		pdf.SetFont("NotoSerifSC", "", 10)
+		pdf.CellFormat(130, 5, "ĐẠI HỌC VINH", "", 0, "C", false, 0, "")
+		pdf.CellFormat(137, 5, "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", "", 1, "C", false, 0, "")
+		pdf.CellFormat(130, 5, "TRUNG TÂM KHẢO THÍ VÀ QUẢN LÝ CHẤT LƯỢNG GIÁO DỤC", "", 0, "C", false, 0, "")
+		pdf.CellFormat(137, 5, "Độc lập - Tự do - Hạnh phúc", "", 1, "C", false, 0, "")
+		pdf.Ln(8)
+		pdf.SetFont("NotoSerifSC", "", 13)
+		pdf.CellFormat(0, 7, "DANH SÁCH THÍ SINH DỰ THI HSK NGÀY "+examDate.Format("02/01/2006"), "", 1, "C", false, 0, "")
+		pdf.Ln(5)
+
+		widths := []float64{12, 45, 30, 35, 25, 42, 88}
+		headers := []string{"STT", "Họ và tên", "Ngày sinh", "Số CCCD", "Cấp thi", "Ngày đăng ký", "Ghi chú"}
+		pdf.SetFont("NotoSerifSC", "", 8)
+		for i, header := range headers {
+			pdf.CellFormat(widths[i], 9, header, "1", 0, "CM", false, 0, "")
+		}
+		pdf.Ln(-1)
+
+		end := start + rowsPerPage
+		if end > len(records) {
+			end = len(records)
+		}
+		for i := start; i < end; i++ {
+			record := records[i]
+			note := record.Note
+			if record.Status == "rejected" && note != "" {
+				note = "Từ chối: " + note
+			} else if note == "" {
+				note = "-"
+			}
+			values := []string{
+				strconv.Itoa(i + 1), record.Name, record.DOB.Format("02/01/2006"),
+				record.CCCD, record.Level, record.RegisteredAt.Format("02/01/2006 15:04"), note,
+			}
+			for j, value := range values {
+				pdf.CellFormat(widths[j], 8, fitPDFText(pdf, value, widths[j]-2), "1", 0, "LM", false, 0, "")
+			}
+			pdf.Ln(-1)
+		}
+	}
+	if err := pdf.Error(); err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	if err := pdf.Output(&output); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func fitPDFText(pdf *fpdf.Fpdf, value string, maxWidth float64) string {
+	if pdf.GetStringWidth(value) <= maxWidth {
+		return value
+	}
+	const suffix = "..."
+	runes := []rune(value)
+	for len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		candidate := string(runes) + suffix
+		if pdf.GetStringWidth(candidate) <= maxWidth {
+			return candidate
+		}
+	}
+	return suffix
 }
 
 // AdminGetCandidate returns the full candidate detail including latest document.
 func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (response.AdminCandidateResponseDTO, error) {
 	var c entities.CandidateEntity
-	err := scanCandidate(s.db.QueryRowContext(ctx, `
-		SELECT `+candidateSelectCols+`
-		FROM candidates
-		WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`, candidateID,
-	), &c)
+	var phone, email, examLevel sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT `+candidateSelectCols+`, a.account_phone, a.account_email,
+		       (
+		         SELECT et.exam_type_name
+		         FROM exam_registrations er
+		         JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+		           AND es.exam_session_is_deleted = FALSE
+		         JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
+		           AND et.exam_type_is_deleted = FALSE
+		         WHERE er.exam_registration_candidate_id = c.candidate_id
+		           AND er.exam_registration_is_deleted = FALSE
+		         ORDER BY er.exam_registration_registered_at DESC
+		         LIMIT 1
+		       ) AS exam_type_name
+		FROM candidates c
+		JOIN accounts a ON a.account_id = c.candidate_account_id
+		  AND a.account_is_deleted = FALSE
+		WHERE c.candidate_id = $1 AND c.candidate_is_deleted = FALSE`, candidateID,
+	).Scan(
+		&c.CandidateID, &c.CandidateAccountID, &c.CandidateFullName, &c.CandidateFullNameCN,
+		&c.CandidateDOB, &c.CandidateGender, &c.CandidateEthnicity, &c.CandidateReligion,
+		&c.CandidateBirthplace, &c.CandidateNationality, &c.CandidateMotherTongue,
+		&c.CandidateChineseStudyYears, &phone, &email, &examLevel,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return response.AdminCandidateResponseDTO{}, errors.New("không tìm thấy hồ sơ")
 	}
@@ -552,6 +812,16 @@ func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (res
 	}
 
 	dto := ToAdminCandidateResponseDTO(c)
+	if phone.Valid {
+		dto.Phone = &phone.String
+	}
+	if email.Valid {
+		dto.Email = &email.String
+	}
+	if examLevel.Valid {
+		dto.ExamLevel = &examLevel.String
+		dto.TargetExamLevel = &examLevel.String
+	}
 
 	// Fetch latest document
 	var d entities.CandidateDocumentEntity
@@ -564,7 +834,7 @@ func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (res
 		LIMIT 1`, candidateID,
 	), &d)
 	if err == nil {
-		docDTO := ToDocumentResponseDTO(d)
+		docDTO := ToAdminDocumentResponseDTO(d)
 		dto.LatestDocument = &docDTO
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return response.AdminCandidateResponseDTO{}, fmt.Errorf("candidate: admin get doc: %w", err)

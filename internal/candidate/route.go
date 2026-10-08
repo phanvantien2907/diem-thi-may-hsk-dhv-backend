@@ -29,6 +29,8 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		// /admin/candidates/duplicates must be registered before /admin/candidates/:id
 		// to prevent Gin from treating "duplicates" as an :id param.
 		adminG.GET("/candidates/duplicates", h.AdminListDuplicates)
+		adminG.GET("/candidates/metrics", h.AdminCandidateMetrics)
+		adminG.GET("/candidates/export", h.AdminExportCandidates)
 		adminG.GET("/candidates", h.AdminListCandidates)
 		adminG.GET("/candidates/:id", h.AdminGetCandidate)
 		adminG.POST("/candidates/:id/approve", h.AdminApproveDocument)

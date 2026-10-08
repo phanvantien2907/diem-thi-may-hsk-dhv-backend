@@ -34,8 +34,24 @@ func ToAdminCandidateResponseDTO(e entities.CandidateEntity) response.AdminCandi
 		Gender:            string(e.CandidateGender),
 		Ethnicity:         e.CandidateEthnicity,
 		Religion:          e.CandidateReligion,
+		Birthplace:        e.CandidateBirthplace,
 		Nationality:       e.CandidateNationality,
+		MotherTongue:      e.CandidateMotherTongue,
 		ChineseStudyYears: e.CandidateChineseStudyYears,
+	}
+}
+
+func ToAdminDocumentResponseDTO(e entities.CandidateDocumentEntity) response.AdminDocumentResponseDTO {
+	return response.AdminDocumentResponseDTO{
+		ID: e.CandidateDocumentID, CandidateID: e.CandidateDocumentCandidateID,
+		DocType: string(e.CandidateDocumentType), DocNumber: e.CandidateDocumentNumber,
+		IssueDate: e.CandidateDocumentIssueDate, IssuePlace: e.CandidateDocumentIssuePlace,
+		FrontImageURL: e.CandidateDocumentFrontImageURL, BackImageURL: e.CandidateDocumentBackImageURL,
+		PortraitImageURL:   e.CandidateDocumentPortraitImageURL,
+		VerificationStatus: string(e.CandidateDocumentVerificationStatus),
+		RejectionReason:    e.CandidateDocumentRejectionReason,
+		WardID:             e.CandidateDocumentWardID, ProvinceID: e.CandidateDocumentProvinceID,
+		AddressDetail: e.CandidateDocumentAddressDetail,
 	}
 }
 

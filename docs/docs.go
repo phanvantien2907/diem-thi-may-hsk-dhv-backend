@@ -253,6 +253,133 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/candidates/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xuất danh sách hồ sơ phù hợp với bộ lọc thành tệp PDF.",
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Xuất danh sách thí sinh (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trạng thái giấy tờ: all, pending, verified, rejected (mặc định all)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cấp độ HSK",
+                        "name": "level",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tìm theo họ tên hoặc CCCD",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ngày thi của đợt thi, định dạng YYYY-MM-DD",
+                        "name": "exam_date",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Tệp PDF",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/candidates/metrics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Trả về tổng số hồ sơ và số lượng theo trạng thái giấy tờ mới nhất.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Thống kê hồ sơ thí sinh (Admin)",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/certificates": {
             "get": {
                 "security": [
@@ -4204,6 +4331,13 @@ const docTemplate = `{
         "request.AdminListCandidatesRequestDTO": {
             "type": "object",
             "properties": {
+                "exam_date": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "string",
+                    "maxLength": 100
+                },
                 "limit": {
                     "type": "integer",
                     "maximum": 100,
@@ -4213,9 +4347,14 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 1
                 },
+                "search": {
+                    "type": "string",
+                    "maxLength": 100
+                },
                 "status": {
                     "type": "string",
                     "enum": [
+                        "all",
                         "pending",
                         "verified",
                         "rejected"

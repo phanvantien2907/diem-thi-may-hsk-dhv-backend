@@ -41,7 +41,7 @@ cmd/
 internal/
 ├── audit/                  # Cross-cutting audit log domain (only domain with an exported interface)
 ├── auth/                   # Account management, JWT issuance, session management
-├── candidate/              # Candidate profile and identity documents (with Cloudinary upload)
+├── candidate/              # Candidate profile, identity documents, admin review/listing, metrics, and PDF export
 ├── certificate/            # Certificate issuance and delivery
 ├── config/                 # Configuration loading (config.go)
 ├── dashboard/              # Admin dashboard analytics, live sessions, suspicious payments, manual actions
@@ -91,7 +91,7 @@ internal/<domain>/
 
 All new features must follow this layout exactly.
 
-The `candidate` domain is documented and tagged as one `Candidate` module. Candidate profile, identity-document, upload-signature, admin review, duplicate-detection, and roster endpoints must remain under this module/tag; do not split them into separate Swagger/API modules.
+The `candidate` domain is documented and tagged as one `Candidate` module. Candidate profile, identity-document, upload-signature, admin review, duplicate-detection, roster, admin listing, metrics, and PDF export endpoints must remain under this module/tag; do not split them into separate Swagger/API modules.
 
 ---
 
@@ -249,10 +249,20 @@ All API routes are mounted under `/api/v1`.
 | auth | DELETE | `/me/sessions/:id` | JWT |
 | auth | DELETE | `/admin/delete-account/:id` | JWT + admin |
 | auth | POST | `/admin/staff-accounts` | JWT + admin |
-| candidate | POST | `/candidates` | JWT |
-| candidate | PUT | `/candidates/:id` | JWT |
-| candidate | POST | `/candidates/:id/documents` | JWT |
-| candidate | GET | `/candidates/:id/documents` | JWT |
+| candidate | POST | `/me/candidate-profile` | JWT |
+| candidate | GET | `/me/candidate-profile` | JWT |
+| candidate | PATCH | `/me/candidate-profile` | JWT |
+| candidate | POST | `/me/candidate-profile/documents` | JWT |
+| candidate | GET | `/me/candidate-profile/documents` | JWT |
+| candidate | GET | `/me/candidate-profile/upload-signature` | JWT |
+| candidate | GET | `/admin/candidates` | JWT + admin |
+| candidate | GET | `/admin/candidates/metrics` | JWT + admin |
+| candidate | GET | `/admin/candidates/export` | JWT + admin |
+| candidate | GET | `/admin/candidates/duplicates` | JWT + admin |
+| candidate | GET | `/admin/candidates/:id` | JWT + admin |
+| candidate | POST | `/admin/candidates/:id/approve` | JWT + admin |
+| candidate | POST | `/admin/candidates/:id/reject` | JWT + admin |
+| candidate | GET | `/admin/exam-sessions/:id/roster` | JWT + admin |
 | exam | GET | `/exam-types` | public |
 | exam | GET | `/exam-sessions` | public |
 | exam | GET | `/exam-sessions/:id` | public |
@@ -348,6 +358,20 @@ Path params: parsed via the shared helper `utils.ParamID(c, "key") (int64, bool)
 Query params: bound with `c.ShouldBindQuery(&q)`.
 
 Return `utils.BadRequest` immediately if a required param is missing or invalid.
+
+Candidate admin list and export query conventions:
+
+- `GET /admin/candidates` supports optional `status`, `level`, `search`, `exam_date`, `page`, and `limit`.
+- `status` accepts `all`, `pending`, `verified`, or `rejected`; omitted/`all` means all candidates. `level` and `search` are limited to 100 characters.
+- `exam_date` uses `YYYY-MM-DD` and filters candidates by the exam session date.
+- `GET /admin/candidates/export` requires `exam_date`; it exports only candidates registered for that exam date and may receive the same `status`, `level`, and `search` filters.
+- The export response is a streamed `application/pdf` attachment and is not wrapped in the JSON success envelope. Its filename is `ds_thi_sinh_{dd-mm-yyyy}.pdf` for all, `ds_ho_so_thi_sinh_cho_duyet_{dd-mm-yyyy}.pdf` for pending, `ds_ho_so_thi_sinh_da_duyet_{dd-mm-yyyy}.pdf` for verified, and `ds_ho_so_thi_sinh_tu_choi_{dd-mm-yyyy}.pdf` for rejected. The PDF embeds Noto Serif SC directly (serif/Times New Roman-style, with Vietnamese and Chinese glyphs) and must preserve UTF-8 text; it must not depend on fonts installed in the runtime image.
+- Candidate admin list/export `status` filters accept `all`, `pending`, `verified`, or `rejected`; omitted/`all` means all candidates. Rejected PDF rows include `Từ chối: <rejection_reason>` in the notes column; when no reason exists, the note is `-`.
+- Export preserves the original exam type name, excludes HSK 1–2, and truncates overlong cell values with `...` to preserve table alignment.
+- Admin candidate list/detail responses include the complete candidate profile, account contact fields, latest exam level, and the complete latest identity document. Nullable fields are represented as explicit JSON `null` values. `target_exam_level` currently mirrors the latest registered exam type because the schema has no separate target-level column.
+- The admin candidate response includes `full_name_cn` (`candidate_full_name_cn`) for the candidate's Chinese name; it is returned as `null` when not provided.
+- Candidates update this field through `PATCH /api/v1/me/candidate-profile` using the exact JSON key `full_name_cn`; the service persists it to `candidates.candidate_full_name_cn` and preserves the existing value when the field is omitted. If a client accidentally sends one extra JSON-encoding layer (for example the literal value `"潘文进"` including quote characters), the service removes that single outer layer before persistence.
+- Front-end clients must send `full_name_cn` as a normal UTF-8 Unicode string (for example `潘文进`) and must not call `JSON.stringify()` on that field separately. `PingFang SC` is only a DataGrip/macOS display font; it is not required by the API or database.
 
 ### Validation
 
@@ -819,6 +843,7 @@ go test -race ./...
 
 **The project mandates test files to be placed in a dedicated `tests/` subdirectory within each domain** (e.g. `internal/<domain>/tests/`).
 These tests run in a separate package (e.g. `package tests`), enforcing **black-box testing** where only exported identifiers can be tested. We use `go-sqlmock` and the standard `testing` package. Table-driven tests are preferred when the case set is meaningful.
+Candidate admin listing, metrics, and PDF export behavior is covered by `internal/candidate/tests/admin_features_test.go`, including filter/pagination SQL arguments, metrics counts, exam-date validation, PDF generation, and handler validation.
 
 ---
 

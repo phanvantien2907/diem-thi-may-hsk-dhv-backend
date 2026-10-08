@@ -2,11 +2,11 @@ package tests
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"testing"
 	"time"
 
-	"database/sql"
 	"github.com/DATA-DOG/go-sqlmock"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditres "github.com/hskvinh/backend/internal/audit/dto/response"
@@ -14,6 +14,88 @@ import (
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 )
+
+func TestService_PatchMyProfile_SavesChineseName(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates`).
+		WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	dob := time.Date(2000, 5, 15, 0, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`UPDATE candidates[\s\S]*candidate_full_name_cn[\s\S]*RETURNING`).
+		WithArgs("", "潘文进", "", "", "", (*int16)(nil), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"candidate_id", "candidate_account_id", "candidate_full_name", "candidate_full_name_cn",
+			"candidate_dob", "candidate_gender", "candidate_ethnicity", "candidate_religion",
+			"candidate_birthplace", "candidate_nationality", "candidate_mother_tongue",
+			"candidate_chinese_study_years",
+		}).AddRow(10, 1, "Nguyễn Văn A", "潘文进", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
+	mock.ExpectExec(`UPDATE candidate_documents`).WithArgs(int64(10)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	got, err := svc.PatchMyProfile(context.Background(), 1, request.PatchProfileRequestDTO{FullNameCN: "潘文进"})
+	if err != nil {
+		t.Fatalf("PatchMyProfile() error = %v", err)
+	}
+	if got.FullNameCN == nil || *got.FullNameCN != "潘文进" {
+		t.Fatalf("FullNameCN = %v, want 潘文进", got.FullNameCN)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestService_PatchMyProfile_RemovesAccidentalJSONQuotesFromChineseName(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	mock.ExpectQuery(`SELECT candidate_id FROM candidates`).
+		WithArgs(int64(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
+	mock.ExpectQuery(`SELECT EXISTS`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	dob := time.Date(2000, 5, 15, 0, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`UPDATE candidates[\s\S]*candidate_full_name_cn[\s\S]*RETURNING`).
+		WithArgs("", "潘文进", "", "", "", (*int16)(nil), int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"candidate_id", "candidate_account_id", "candidate_full_name", "candidate_full_name_cn",
+			"candidate_dob", "candidate_gender", "candidate_ethnicity", "candidate_religion",
+			"candidate_birthplace", "candidate_nationality", "candidate_mother_tongue",
+			"candidate_chinese_study_years",
+		}).AddRow(10, 1, "Nguyễn Văn A", "潘文进", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
+	mock.ExpectExec(`UPDATE candidate_documents`).WithArgs(int64(10)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	got, err := svc.PatchMyProfile(context.Background(), 1, request.PatchProfileRequestDTO{
+		FullNameCN: `"潘文进"`,
+	})
+	if err != nil {
+		t.Fatalf("PatchMyProfile() error = %v", err)
+	}
+	if got.FullNameCN == nil || *got.FullNameCN != "潘文进" {
+		t.Fatalf("FullNameCN = %v, want 潘文进", got.FullNameCN)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
 
 // fakeMediaService implements candidate.MediaService for testing.
 type fakeMediaService struct {
