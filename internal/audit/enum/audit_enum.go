@@ -4,20 +4,21 @@ package enum
 type AuditAction string
 
 const (
-	AuditActionCreate         AuditAction = "CREATE"
-	AuditActionUpdate         AuditAction = "UPDATE"
-	AuditActionDelete         AuditAction = "DELETE"
-	AuditActionSoftDelete     AuditAction = "SOFT_DELETE"
-	AuditActionRestore        AuditAction = "RESTORE"
-	AuditActionLogin          AuditAction = "LOGIN"
-	AuditActionLogout         AuditAction = "LOGOUT"
-	AuditActionPasswordChange AuditAction = "PASSWORD_CHANGE"
-	AuditActionPayment        AuditAction = "PAYMENT"
-	AuditActionRefund         AuditAction = "REFUND"
-	AuditActionExport         AuditAction = "EXPORT"
-	AuditActionApprove        AuditAction = "APPROVE"
-	AuditActionReject         AuditAction = "REJECT"
-	AuditActionRecheck        AuditAction = "RECHECK"
+	AuditActionCreate               AuditAction = "CREATE"
+	AuditActionUpdate               AuditAction = "UPDATE"
+	AuditActionDelete               AuditAction = "DELETE"
+	AuditActionSoftDelete           AuditAction = "SOFT_DELETE"
+	AuditActionRestore              AuditAction = "RESTORE"
+	AuditActionLogin                AuditAction = "LOGIN"
+	AuditActionLogout               AuditAction = "LOGOUT"
+	AuditActionPasswordChange       AuditAction = "PASSWORD_CHANGE"
+	AuditActionPayment              AuditAction = "PAYMENT"
+	AuditActionRefund               AuditAction = "REFUND"
+	AuditActionExport               AuditAction = "EXPORT"
+	AuditActionApprove              AuditAction = "APPROVE"
+	AuditActionReject               AuditAction = "REJECT"
+	AuditActionRecheck              AuditAction = "RECHECK"
+	AuditActionCancelSuccessPayment AuditAction = "CANCEL_SUCCESS_PAYMENT"
 )
 
 // Valid reports whether a is a recognised AuditAction.
@@ -27,7 +28,8 @@ func (a AuditAction) Valid() bool {
 		AuditActionSoftDelete, AuditActionRestore,
 		AuditActionLogin, AuditActionLogout, AuditActionPasswordChange,
 		AuditActionPayment, AuditActionRefund, AuditActionExport,
-		AuditActionApprove, AuditActionReject, AuditActionRecheck:
+		AuditActionApprove, AuditActionReject, AuditActionRecheck,
+		AuditActionCancelSuccessPayment:
 		return true
 	}
 	return false

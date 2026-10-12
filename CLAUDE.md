@@ -219,6 +219,7 @@ For any new feature touching `exam_seats`, `exam_registrations`, or `payments` t
 - `updated_at` is maintained by the shared `fn_touch_updated_at()` trigger
 - All column names are prefixed with the table name (e.g., `account_username`, `exam_seat_status`)
 - **All queries must include `AND <table>_is_deleted = FALSE`** when soft-delete applies — omitting this leaks deleted records
+- Payment reconciliation stores the gateway-reported amount in nullable `payment_amount_received`; webhook underpayment uses `partial_paid` and overpayment uses `amount_mismatch` without confirming the registration.
 - Migrations are managed by `golang-migrate` using `*.<up/down>.sql` files
 
 **Never modify the schema directly.** Add a new numbered `.sql` migration file.
@@ -278,8 +279,11 @@ All API routes are mounted under `/api/v1`.
 | payment | POST | `/payments/callback` | public |
 | payment | GET | `/payments?candidate_id=X` | JWT |
 | payment | GET | `/admin/payments` | JWT + admin |
+| payment | GET | `/admin/payments/export` | JWT + admin |
 | payment | POST | `/admin/payments/:id/confirm` | JWT + admin |
+| payment | POST | `/admin/payments/:id/sync` | JWT + admin |
 | payment | POST | `/admin/payments/:id/cancel` | JWT + admin |
+| payment | POST | `/admin/payments/:id/mark-refund` | JWT + admin |
 | result | GET | `/results/:registration_id` | JWT |
 | result | POST | `/rechecks` | JWT |
 | result | POST | `/admin/results` | JWT + admin |
@@ -458,7 +462,7 @@ Valid `AuditAction` values (from `internal/audit/enum`):
 ```
 CREATE, UPDATE, DELETE, SOFT_DELETE, RESTORE,
 LOGIN, LOGOUT, PASSWORD_CHANGE,
-PAYMENT, REFUND,
+PAYMENT, REFUND, CANCEL_SUCCESS_PAYMENT,
 EXPORT, APPROVE, REJECT, RECHECK
 ```
 
@@ -493,8 +497,8 @@ Complete enum reference:
 | exam | `ExamSessionPublicationStatus` | `published`, `draft`, `scheduled` |
 | exam | `ExamSeatStatus` | `available`, `held`, `booked` |
 | registration | `ExamRegistrationStatus` | `pending_payment`, `confirmed`, `cancelled` |
-| payment | `PaymentMethod` | `vnpay`, `momo`, `zalopay`, `bank_transfer`, `cash` |
-| payment | `PaymentStatus` | `pending`, `success`, `failed`, `refunded` |
+| payment | `PaymentMethod` | `vnpay`, `momo`, `zalopay`, `bank_transfer`, `cash`, `payos` |
+| payment | `PaymentStatus` | `pending`, `success`, `failed`, `refunded`, `expired`, `cancelled`, `amount_mismatch`, `partial_paid` |
 | result | `ExamResultStatus` | `pass`, `fail` |
 | result | `RecheckStatus` | `submitted`, `in_review`, `completed`, `rejected` |
 | certificate | `CertificateStatus` | `issued`, `revoked` |
@@ -680,7 +684,7 @@ Introduce a goroutine only when it provides concrete value. For every goroutine 
 (new) → pending_payment
 pending_payment → confirmed   (via payment success callback)
 pending_payment → cancelled
-confirmed       → (terminal)
+confirmed       → cancelled   (admin cancel success before exam date)
 cancelled       → (terminal)
 ```
 
@@ -689,12 +693,26 @@ A cancelled registration cannot be confirmed. Cancellation frees the seat to `av
 ### Payment
 
 ```
-pending → success   (triggers ConfirmRegistration)
+pending → success   (via PayOS callback, PayOS sync, or admin confirm; confirms registration and books seat)
 pending → failed
-pending → refunded
+pending → cancelled (admin cancel or expiry worker; releases registration and seat)
+pending → partial_paid (webhook amount is lower than required; no slot confirmation)
+pending → amount_mismatch (webhook amount is higher than required; no slot confirmation)
+success → refunded   (admin cancel before exam date or mark-refund)
 ```
 
-No other transitions. The service rejects any callback for a non-`pending` payment.
+`expired` is the worker's terminal timeout state for legacy/automated expiry
+records. The service rejects any callback for a non-`pending` payment. Successful
+confirmation and PayOS sync lock the payment, registration, and seat rows with
+`FOR UPDATE` before changing state. Amount mismatches store
+`payment_amount_received` and never confirm the registration.
+
+Admin cancel locks the payment, registration, exam session, and seat in one
+ACID transaction. If `exam_session_date <= CURRENT_DATE` (the exam has passed
+or is in progress), it rejects and rolls back without changing payment,
+registration, or seat. A seat is released only when its current status is
+`held` or `booked`; Redis is not used. Successful-payment cancellation records
+`CANCEL_SUCCESS_PAYMENT` with the admin actor inside the same transaction.
 
 ### Seat
 
@@ -702,6 +720,7 @@ No other transitions. The service rejects any callback for a non-`pending` payme
 available → held    (15-minute window, during reservation)
 held      → booked  (on payment success / registration confirm)
 held      → available (on cancellation or expiry)
+booked    → available (on admin cancellation before exam date)
 booked    → available (on registration cancellation)
 ```
 

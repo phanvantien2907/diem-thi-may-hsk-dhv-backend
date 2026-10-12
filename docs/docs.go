@@ -1471,6 +1471,23 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/payments/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "text/csv"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Xuất đối soát giao dịch",
+                "responses": {}
+            }
+        },
         "/admin/payments/{id}/cancel": {
             "post": {
                 "security": [
@@ -1478,7 +1495,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Admin hủy giao dịch (pending→failed, success→refunded).",
+                "description": "Admin hủy giao dịch trong một transaction ACID. Với payment success,\nhệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.\nSau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1587,6 +1604,58 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/admin/payments/{id}/mark-refund": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Đánh dấu cần hoàn tiền",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {}
+            }
+        },
+        "/admin/payments/{id}/sync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Đồng bộ trạng thái PayOS",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {}
             }
         },
         "/admin/results": {

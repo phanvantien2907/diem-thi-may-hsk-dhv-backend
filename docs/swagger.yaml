@@ -1419,7 +1419,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Admin hủy giao dịch (pending→failed, success→refunded).
+      description: |-
+        Admin hủy giao dịch trong một transaction ACID. Với payment success,
+        hệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.
+        Sau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.
       parameters:
       - description: Payment ID
         in: path
@@ -1491,6 +1494,48 @@ paths:
       security:
       - BearerAuth: []
       summary: '[Admin] Xác nhận thủ công'
+      tags:
+      - Payment
+  /admin/payments/{id}/mark-refund:
+    post:
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Đánh dấu cần hoàn tiền'
+      tags:
+      - Payment
+  /admin/payments/{id}/sync:
+    post:
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses: {}
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Đồng bộ trạng thái PayOS'
+      tags:
+      - Payment
+  /admin/payments/export:
+    get:
+      produces:
+      - text/csv
+      responses: {}
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Xuất đối soát giao dịch'
       tags:
       - Payment
   /admin/results:

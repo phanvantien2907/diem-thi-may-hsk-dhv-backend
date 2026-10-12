@@ -20,6 +20,7 @@ func TestAuditActionValid(t *testing.T) {
 		{"valid soft_delete", enum.AuditActionSoftDelete, true},
 		{"valid approve", enum.AuditActionApprove, true},
 		{"valid reject", enum.AuditActionReject, true},
+		{"valid cancel success payment", enum.AuditActionCancelSuccessPayment, true},
 		{"invalid empty", enum.AuditAction(""), false},
 		{"invalid arbitrary", enum.AuditAction("hacked"), false},
 	}

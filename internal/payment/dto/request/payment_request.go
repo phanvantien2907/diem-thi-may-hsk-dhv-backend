@@ -12,22 +12,22 @@ type CreatePaymentRequestDTO struct {
 
 // PayOSWebhookData mirrors the "data" object PayOS sends in webhooks.
 type PayOSWebhookData struct {
-	OrderCode             int64  `json:"orderCode"`
-	Amount                int64  `json:"amount"`
-	Description           string `json:"description"`
-	AccountNumber         string `json:"accountNumber"`
-	Reference             string `json:"reference"`
-	TransactionDateTime   string `json:"transactionDateTime"`
-	Currency              string `json:"currency"`
-	PaymentLinkID         string `json:"paymentLinkId"`
-	Code                  string `json:"code"`
-	Desc                  string `json:"desc"`
-	CounterAccountBankID  string `json:"counterAccountBankId"`
+	OrderCode              int64  `json:"orderCode"`
+	Amount                 int64  `json:"amount"`
+	Description            string `json:"description"`
+	AccountNumber          string `json:"accountNumber"`
+	Reference              string `json:"reference"`
+	TransactionDateTime    string `json:"transactionDateTime"`
+	Currency               string `json:"currency"`
+	PaymentLinkID          string `json:"paymentLinkId"`
+	Code                   string `json:"code"`
+	Desc                   string `json:"desc"`
+	CounterAccountBankID   string `json:"counterAccountBankId"`
 	CounterAccountBankName string `json:"counterAccountBankName"`
-	CounterAccountName    string `json:"counterAccountName"`
-	CounterAccountNumber  string `json:"counterAccountNumber"`
-	VirtualAccountName    string `json:"virtualAccountName"`
-	VirtualAccountNumber  string `json:"virtualAccountNumber"`
+	CounterAccountName     string `json:"counterAccountName"`
+	CounterAccountNumber   string `json:"counterAccountNumber"`
+	VirtualAccountName     string `json:"virtualAccountName"`
+	VirtualAccountNumber   string `json:"virtualAccountNumber"`
 }
 
 // PayOSWebhookPayload is the top-level JSON envelope PayOS POSTs to our callback.
@@ -43,7 +43,11 @@ type PayOSWebhookPayload struct {
 
 // AdminListPaymentsRequestDTO carries query parameters for the admin payment list.
 type AdminListPaymentsRequestDTO struct {
-	Page   int    `form:"page"`
-	Limit  int    `form:"limit"`
-	Status string `form:"status"`
+	Page          int    `form:"page"`
+	Limit         int    `form:"limit"`
+	Status        string `form:"status"`
+	From          string `form:"from"`
+	To            string `form:"to"`
+	OrderCode     string `form:"order_code"`
+	TransactionID string `form:"transaction_id"`
 }

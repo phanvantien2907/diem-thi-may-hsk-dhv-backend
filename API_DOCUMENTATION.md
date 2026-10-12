@@ -2096,13 +2096,13 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 
 ---
 
-### 6.4. [Admin] Danh sách tất cả giao dịch (Phân trang)
+### 6.4. [Admin] Danh sách & đối soát tất cả giao dịch
 
 | | |
 |---|---|
 | **Endpoint** | `GET /api/v1/admin/payments` |
 | **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Admin xem toàn bộ giao dịch, lọc theo trạng thái, phân trang |
+| **Use-case** | Kế toán tra cứu, đối soát giao dịch PayOS và phân trang |
 
 **Query Params:**
 
@@ -2110,7 +2110,11 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 |---|---|---|---|
 | `page` | `integer` | `1` | Trang hiện tại |
 | `limit` | `integer` | `20` | Số lượng mỗi trang (tối đa 100) |
-| `status` | `string` | *(tất cả)* | Lọc: `pending`, `success`, `failed`, `refunded` |
+| `status` | `string` | *(tất cả)* | Lọc: `pending`, `success`, `cancelled`, `failed`, `expired`, `refunded`, `partial_paid`, `amount_mismatch` (không phân biệt hoa thường) |
+| `from` | `date` | *(tất cả)* | Ngày bắt đầu theo `YYYY-MM-DD` |
+| `to` | `date` | *(tất cả)* | Ngày kết thúc theo `YYYY-MM-DD`, bao gồm cả ngày này |
+| `order_code` | `string` | *(tất cả)* | Mã đơn hàng PayOS (`payment_transaction_ref`) |
+| `transaction_id` | `string` | *(tất cả)* | Mã giao dịch ngân hàng/PayOS (`payment_gateway_trans_id`) |
 
 **Response (200 OK):**
 
@@ -2127,6 +2131,19 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
   }
 }
 ```
+
+---
+
+### 6.4.1. [Admin] Xuất đối soát giao dịch CSV
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/payments/export` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Xuất CSV UTF-8 mở trực tiếp bằng Excel với cùng bộ lọc của danh sách |
+
+Response là file `text/csv` gồm các cột: `Mã đơn hàng`, `Tên thí sinh`,
+`Số tiền yêu cầu`, `Số tiền thực nhận`, `Thời gian`, `Trạng thái`.
 
 ---
 
@@ -2148,6 +2165,23 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 |---|---|---|
 | `404` | `"Không tìm thấy giao dịch"` | ID không tồn tại |
 | `409` | `"Giao dịch không ở trạng thái chờ thanh toán"` | Giao dịch không phải `pending` |
+| `409` | `"Không còn ghế trống cho phiếu đăng ký"` | Ghế đã được đặt hoặc đã hết thời gian giữ; request bị chặn để tránh overbooking |
+
+Mọi lần xác nhận đều khóa payment/registration/seat trong cùng transaction và ghi
+`actor_account_id` của admin vào `audit_logs`.
+
+---
+
+### 6.6.1. [Admin] Đồng bộ trạng thái PayOS
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/sync` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Gọi `GET /v2/payment-requests/{orderCode}` của PayOS; nếu trạng thái `PAID` và số tiền khớp thì tự động success + confirm registration + book seat |
+
+Nếu PayOS chưa báo `PAID`, số tiền không khớp hoặc không còn ghế, API trả `409`
+và không chốt slot.
 
 ---
 
@@ -2157,7 +2191,8 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/payments/:id/cancel` |
 | **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Admin hủy giao dịch. Logic chuyển trạng thái thông minh theo State Machine |
+| **Use-case** | Admin xác nhận hủy trong một transaction ACID. Payment, hồ sơ đăng ký,
+registration, ghế và audit log cùng commit hoặc cùng rollback. Redis không được sử dụng. |
 
 **Path Params:** `id` — ID giao dịch
 
@@ -2165,9 +2200,20 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 
 | Trạng thái hiện tại | Kết quả sau Cancel |
 |---|---|
-| `pending` | → `failed` |
+| `pending` | → `cancelled` |
 | `success` | → `refunded` |
-| `failed` / `refunded` | ❌ Không thể hủy (409) |
+| `failed` / `expired` / `refunded` / `amount_mismatch` / `partial_paid` | ❌ Không thể hủy (409) |
+
+**Điều kiện khóa theo kỳ thi:**
+
+- Backend khóa payment, registration, exam session và exam seat bằng `FOR UPDATE`.
+- Nếu `exam_session_date <= CURRENT_DATE` (đã qua hoặc đang trong ngày thi), API trả
+  `409` và rollback toàn bộ; payment, registration và seat không thay đổi.
+- Chỉ khi kỳ thi chưa đến ngày thi, registration mới chuyển sang `cancelled`.
+- Seat chỉ được trả về `available` nếu đang ở trạng thái `held` hoặc `booked`; không
+  có bộ đếm khả dụng riêng và không cập nhật Redis.
+- Với payment `success`, audit log dùng action `CANCEL_SUCCESS_PAYMENT`, lưu admin
+  actor, `transaction_id`, registration, seat và cờ `seat_released` trong cùng transaction.
 
 **Response (200 OK):** Trả về `AdminPaymentResponseDTO` đã cập nhật.
 
@@ -2177,6 +2223,23 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 |---|---|---|
 | `404` | `"Không tìm thấy giao dịch"` | ID không tồn tại |
 | `409` | `"Không thể hủy giao dịch ở trạng thái này"` | Trạng thái không hợp lệ để hủy |
+| `409` | `"Không thể hủy giao dịch sau ngày thi ..."` | Kỳ thi đã qua hoặc đang diễn ra; toàn bộ dữ liệu được giữ nguyên |
+
+### 6.7. [Admin] Đánh dấu giao dịch cần hoàn tiền
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/mark-refund` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Đưa giao dịch chuyển dư hoặc đã hủy vào trạng thái `refunded` để kế toán hoàn thủ công qua ngân hàng |
+
+---
+
+### 6.8. Tự động hết hạn giao dịch
+
+Worker nền quét định kỳ các payment `pending` quá 15 phút, chuyển sang `expired`,
+hủy registration `pending_payment` và trả seat `held` về `available` trong một
+transaction PostgreSQL. Không sử dụng Redis.
 
 ---
 
@@ -3160,7 +3223,9 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 
 - `pending_payment` → `confirmed`: Khi thanh toán thành công
 - `pending_payment` → `cancelled`: Khi hủy hoặc hết hạn giữ ghế
-- `confirmed` → TERMINAL (không thể hủy sau khi đã xác nhận)
+- `confirmed` → `cancelled`: Admin hủy payment `success` trước ngày thi; chỉ trả
+  ghế nếu trạng thái ghế là `booked`. Nếu ngày thi đã đến hoặc đã qua, API khóa
+  thao tác và rollback.
 - `cancelled` → TERMINAL (không thể xác nhận lại)
 
 ### 13.2. Thanh toán (Payment)
@@ -3177,8 +3242,9 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 
 - `pending` → `success`: Trigger tự động chuyển đăng ký → `confirmed`
 - `pending` → `failed`: Thanh toán thất bại
-- `pending` → `refunded`: Hoàn tiền
-- **Chỉ `pending` mới có thể chuyển trạng thái**
+- `pending` → `refunded`: Không áp dụng trực tiếp; admin cancel chuyển sang `cancelled`
+- `success` → `refunded`: Admin cancel trước ngày thi hoặc đánh dấu hoàn tiền
+- `pending` → `cancelled`: Admin cancel hoặc worker hết hạn
 
 ### 13.3. Ghế thi (Seat)
 
@@ -3194,7 +3260,8 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 - `available` → `held`: Khi thí sinh đăng ký giữ chỗ
 - `held` → `booked`: Khi thanh toán thành công
 - `held` → `available`: Khi hủy hoặc hết hạn 15 phút
-- `booked` → `available`: Khi hủy đăng ký đã xác nhận
+- `booked` → `available`: Khi admin hủy payment success trước ngày thi hoặc hủy
+  đăng ký đã xác nhận; không thực hiện sau ngày thi
 
 ---
 
@@ -3248,12 +3315,18 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 | 41 | `PATCH` | `/proctor/exam-sessions/:id/attendance/:registration_id` | 🔐 | Registration |
 | 42 | `GET` | `/admin/exam-sessions/:id/dashboard` | 🔐👑 | Registration |
 | 43 | `GET` | `/admin/payments/reconcile` | 🔐👑 | Registration |
-| 44 | `POST` | `/payments` | 🔐 | Payment |
+| 44 | `POST` | `/payments/payos/create` | 🔐 | Payment |
 | 45 | `POST` | `/payments/callback` | 🔐 | Payment |
 | 46 | `GET` | `/payments` | 🔐 | Payment |
 | 47 | `GET` | `/results/:registration_id` | 🔐 | Result |
 | 48 | `POST` | `/rechecks` | 🔐 | Result |
 | 49 | `POST` | `/admin/results` | 🔐👑 | Result |
+| 50 | `GET` | `/admin/payments` | 🔐👑 | Payment |
+| 51 | `GET` | `/admin/payments/export` | 🔐👑 | Payment |
+| 52 | `POST` | `/admin/payments/:id/confirm` | 🔐👑 | Payment |
+| 53 | `POST` | `/admin/payments/:id/sync` | 🔐👑 | Payment |
+| 54 | `POST` | `/admin/payments/:id/cancel` | 🔐👑 | Payment |
+| 55 | `POST` | `/admin/payments/:id/mark-refund` | 🔐👑 | Payment |
 | 50 | `GET` | `/me/certificates` | 🔐 | Certificate |
 | 51 | `GET` | `/me/certificates/:id` | 🔐 | Certificate |
 | 52 | `GET` | `/me/certificates/:id/pdf` | 🔐 | Certificate |
@@ -3690,8 +3763,8 @@ function connectWS(token, onMessage) {
 | `exam_type_name` | `string` | ❌ | Tên loại kỳ thi (ví dụ: `"HSK 1"`, `"HSK 4"`, `"HSKK Sơ cấp"`) |
 | `expected_amount` | `integer` | ❌ | Số tiền phải thanh toán (VNĐ) |
 | `actual_amount` | `integer` | ✅ | Số tiền thực nhận (null nếu chưa thanh toán) |
-| `status` | `string` | ❌ | Trạng thái: `pending`, `failed`, `expired` |
-| `exception_type` | `string` | ❌ | Loại ngoại lệ: `webhook_failed`, `expired_payment`, `amount_mismatch` |
+| `status` | `string` | ❌ | Trạng thái: `pending`, `success`, `failed`, `expired`, `cancelled`, `refunded`, `partial_paid`, `amount_mismatch` |
+| `exception_type` | `string` | ❌ | Loại ngoại lệ: `webhook_failed`, `expired_payment`, `amount_mismatch`, `partial_paid` |
 | `transaction_ref` | `string` | ✅ | Mã giao dịch tham chiếu |
 | `created_at` | `datetime` | ❌ | Thời gian tạo giao dịch |
 
@@ -3701,9 +3774,9 @@ function connectWS(token, onMessage) {
 
 | | |
 |---|---|
-| **Endpoint** | `POST /api/v1/admin/transactions/:id/manual-approve` |
+| **Endpoint** | `POST /api/v1/admin/payments/:id/confirm` |
 | **Auth** | 🔐 JWT + Admin |
-| **Use-case** | Admin force-approve một giao dịch bị lỗi, hệ thống sẽ chốt đơn đăng ký và giữ ghế |
+| **Use-case** | Admin xác nhận giao dịch pending; hệ thống kiểm tra slot, chốt đơn đăng ký và book ghế |
 
 **Path Params:**
 
@@ -3711,17 +3784,8 @@ function connectWS(token, onMessage) {
 |---|---|---|
 | `id` | `integer` | ID giao dịch (Payment ID) |
 
-**Request Body:**
-
-```json
-{
-  "reason": "Đã nhận chuyển khoản qua Vietcombank, xác nhận thủ công"
-}
-```
-
-| Field | Kiểu | Bắt buộc | Validate | Mô tả |
-|---|---|---|---|---|
-| `reason` | `string` | ✅ | Min 5, Max 500 ký tự | Lý do duyệt thủ công (ghi nhận vào Audit Log) |
+Request body không cần. Admin được xác định từ JWT; `actor_account_id` được ghi
+vào `audit_logs`.
 
 **Response (200 OK):**
 
@@ -3729,10 +3793,9 @@ function connectWS(token, onMessage) {
 {
   "success": true,
   "data": {
-    "payment_id": 42,
-    "registration_id": 100,
-    "new_status": "success",
-    "message": "Đã duyệt thủ công thành công"
+    "id": 42,
+    "exam_registration_id": 100,
+    "status": "success"
   },
   "error": null,
   "meta": null
@@ -3741,27 +3804,24 @@ function connectWS(token, onMessage) {
 
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `payment_id` | `integer` | ID giao dịch đã duyệt |
-| `registration_id` | `integer` | ID đơn đăng ký được chốt |
-| `new_status` | `string` | Trạng thái mới: `success` |
-| `message` | `string` | Thông báo kết quả |
+| `id` | `integer` | ID giao dịch đã duyệt |
+| `exam_registration_id` | `integer` | ID đơn đăng ký được chốt |
+| `status` | `string` | Trạng thái mới: `success` |
 
 **Lỗi có thể xảy ra:**
 
 | Code | Thông báo | Nguyên nhân |
 |---|---|---|
 | `400` | `"Tham số id không hợp lệ"` | ID không phải số nguyên |
-| `400` | `"Dữ liệu yêu cầu không hợp lệ"` | Body JSON sai format |
-| `400` | Chi tiết lỗi validation | `reason` quá ngắn (< 5 ký tự) |
 | `404` | `"Không tìm thấy giao dịch"` | Payment ID không tồn tại |
-| `409` | `"Giao dịch đã được xác nhận"` | Payment đã ở trạng thái `success` |
-| `409` | `"Giao dịch đã hoàn tiền, không thể duyệt"` | Payment đã ở trạng thái `refunded` |
+| `409` | `"Giao dịch không ở trạng thái chờ thanh toán"` | Payment không còn `pending` |
+| `409` | `"Không còn ghế trống cho phiếu đăng ký"` | Ghế đã được đặt hoặc hết thời gian giữ |
 
 > **⚠️ Lưu ý quan trọng:** Thao tác này sẽ đồng thời:
 > 1. Cập nhật `payment_status` → `success`
 > 2. Cập nhật `exam_registration_status` → `confirmed`
 > 3. Cập nhật `exam_seat_status` → `booked`
-> 4. Ghi Audit Log với lý do Admin cung cấp
+> 4. Ghi Audit Log với `actor_account_id` của Admin
 
 ---
 
@@ -3769,7 +3829,7 @@ function connectWS(token, onMessage) {
 
 | | |
 |---|---|
-| **Endpoint** | `POST /api/v1/admin/transactions/:id/refund-mark` |
+| **Endpoint** | `POST /api/v1/admin/payments/:id/mark-refund` |
 | **Auth** | 🔐 JWT + Admin |
 | **Use-case** | Admin đánh dấu một giao dịch là đã hoàn tiền cho thí sinh |
 
@@ -3779,17 +3839,8 @@ function connectWS(token, onMessage) {
 |---|---|---|
 | `id` | `integer` | ID giao dịch (Payment ID) |
 
-**Request Body:**
-
-```json
-{
-  "reason": "Thí sinh yêu cầu hoàn tiền, đã chuyển khoản lại qua ngân hàng"
-}
-```
-
-| Field | Kiểu | Bắt buộc | Validate | Mô tả |
-|---|---|---|---|---|
-| `reason` | `string` | ✅ | Min 5, Max 500 ký tự | Lý do hoàn tiền (ghi nhận vào Audit Log) |
+Request body không cần. Admin được xác định từ JWT và thao tác được ghi vào
+`audit_logs`.
 
 **Response (200 OK):**
 
@@ -3797,9 +3848,8 @@ function connectWS(token, onMessage) {
 {
   "success": true,
   "data": {
-    "payment_id": 42,
-    "new_status": "refunded",
-    "message": "Đã đánh dấu hoàn tiền thành công"
+    "id": 42,
+    "status": "refunded"
   },
   "error": null,
   "meta": null
@@ -3808,9 +3858,8 @@ function connectWS(token, onMessage) {
 
 | Field | Kiểu | Mô tả |
 |---|---|---|
-| `payment_id` | `integer` | ID giao dịch đã đánh dấu hoàn tiền |
-| `new_status` | `string` | Trạng thái mới: `refunded` |
-| `message` | `string` | Thông báo kết quả |
+| `id` | `integer` | ID giao dịch đã đánh dấu hoàn tiền |
+| `status` | `string` | Trạng thái mới: `refunded` |
 
 **Lỗi có thể xảy ra:**
 
@@ -3818,14 +3867,13 @@ function connectWS(token, onMessage) {
 |---|---|---|
 | `400` | `"Tham số id không hợp lệ"` | ID không phải số nguyên |
 | `404` | `"Không tìm thấy giao dịch"` | Payment ID không tồn tại |
-| `409` | `"Giao dịch chưa thanh toán, không thể hoàn tiền"` | Payment chưa ở trạng thái `success` |
-| `409` | `"Giao dịch đã được hoàn tiền trước đó"` | Payment đã ở trạng thái `refunded` |
+| `409` | `"Giao dịch chưa đủ điều kiện đánh dấu hoàn tiền"` | Payment chưa ở trạng thái có thể hoàn tiền |
 
 > **⚠️ Lưu ý quan trọng:** Thao tác này sẽ đồng thời:
 > 1. Cập nhật `payment_status` → `refunded`
 > 2. Cập nhật `exam_registration_status` → `cancelled`
 > 3. Cập nhật `exam_seat_status` → `available` (trả ghế)
-> 4. Ghi Audit Log với lý do Admin cung cấp
+> 4. Ghi Audit Log với `actor_account_id` của Admin
 
 ---
 

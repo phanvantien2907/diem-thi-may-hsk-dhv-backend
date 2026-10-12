@@ -37,7 +37,10 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 	{
 		admin.GET("/payments", h.AdminListPayments)
+		admin.GET("/payments/export", h.AdminExportPayments)
 		admin.POST("/payments/:id/confirm", h.AdminConfirmPayment)
+		admin.POST("/payments/:id/sync", h.AdminSyncPayment)
 		admin.POST("/payments/:id/cancel", h.AdminCancelPayment)
+		admin.POST("/payments/:id/mark-refund", h.AdminMarkRefund)
 	}
 }

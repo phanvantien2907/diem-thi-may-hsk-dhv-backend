@@ -1,6 +1,8 @@
 package payment
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/payment/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
@@ -49,12 +51,12 @@ func (h *Handler) CreatePayOSLink(c *gin.Context) {
 			utils.NotFound(c, errMsg)
 			return
 		}
-		
+
 		importLog := func(err error) {
 			println("====> PAYOS ERROR:", err.Error())
 		}
 		importLog(err)
-		
+
 		utils.InternalServerError(c, "Tạo link thanh toán thất bại")
 		return
 	}
@@ -148,7 +150,7 @@ func (h *Handler) AdminListPayments(c *gin.Context) {
 	list, meta, err := h.svc.AdminListPayments(c.Request.Context(), req)
 	if err != nil {
 		errMsg := err.Error()
-		if errMsg == "Trạng thái thanh toán không hợp lệ" {
+		if strings.Contains(errMsg, "không hợp lệ") || strings.Contains(errMsg, "YYYY-MM-DD") {
 			utils.BadRequest(c, errMsg)
 			return
 		}
@@ -156,6 +158,27 @@ func (h *Handler) AdminListPayments(c *gin.Context) {
 		return
 	}
 	utils.OKWithMeta(c, list, meta)
+}
+
+// AdminExportPayments exports the filtered accounting list as UTF-8 CSV.
+// @Summary [Admin] Xuất đối soát giao dịch
+// @Tags Payment
+// @Produce text/csv
+// @Security BearerAuth
+// @Router /admin/payments/export [get]
+func (h *Handler) AdminExportPayments(c *gin.Context) {
+	var req request.AdminListPaymentsRequestDTO
+	_ = c.ShouldBindQuery(&req)
+	data, err := h.svc.ExportPaymentsCSV(c.Request.Context(), req)
+	if err != nil {
+		if strings.Contains(err.Error(), "không hợp lệ") || strings.Contains(err.Error(), "YYYY-MM-DD") {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, "Xuất danh sách giao dịch thất bại")
+		return
+	}
+	c.Data(200, "text/csv; charset=utf-8", data)
 }
 
 // AdminConfirmPayment POST /admin/payments/:id/confirm
@@ -177,7 +200,7 @@ func (h *Handler) AdminConfirmPayment(c *gin.Context) {
 		utils.BadRequest(c, "Tham số id không hợp lệ")
 		return
 	}
-	result, err := h.svc.AdminConfirmPayment(c.Request.Context(), id)
+	result, err := h.svc.AdminConfirmPaymentAs(c.Request.Context(), id, utils.MustAccountID(c))
 	if err != nil {
 		errMsg := err.Error()
 		if errMsg == "Không tìm thấy giao dịch" {
@@ -185,7 +208,7 @@ func (h *Handler) AdminConfirmPayment(c *gin.Context) {
 			return
 		}
 		// State machine violations.
-		if len(errMsg) > 0 && errMsg[0] == 'G' {
+		if strings.HasPrefix(errMsg, "Giao dịch") || strings.HasPrefix(errMsg, "Không còn") || strings.HasPrefix(errMsg, "Phiếu") {
 			utils.Conflict(c, errMsg)
 			return
 		}
@@ -195,9 +218,67 @@ func (h *Handler) AdminConfirmPayment(c *gin.Context) {
 	utils.OK(c, result)
 }
 
+// AdminSyncPayment reconciles one payment against the PayOS payment API.
+// @Summary [Admin] Đồng bộ trạng thái PayOS
+// @Tags Payment
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Payment ID"
+// @Router /admin/payments/{id}/sync [post]
+func (h *Handler) AdminSyncPayment(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "Tham số id không hợp lệ")
+		return
+	}
+	result, err := h.svc.SyncPayment(c.Request.Context(), id, utils.MustAccountID(c))
+	if err != nil {
+		msg := err.Error()
+		if msg == "Không tìm thấy giao dịch" {
+			utils.NotFound(c, msg)
+		} else if strings.Contains(msg, "PayOS chưa") || strings.Contains(msg, "không khớp") || strings.Contains(msg, "Không còn") {
+			utils.Conflict(c, msg)
+		} else {
+			utils.InternalServerError(c, "Đồng bộ trạng thái PayOS thất bại")
+		}
+		return
+	}
+	utils.OK(c, result)
+}
+
+// AdminMarkRefund marks a payment for manual bank refund processing.
+// @Summary [Admin] Đánh dấu cần hoàn tiền
+// @Tags Payment
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "Payment ID"
+// @Router /admin/payments/{id}/mark-refund [post]
+func (h *Handler) AdminMarkRefund(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "Tham số id không hợp lệ")
+		return
+	}
+	result, err := h.svc.AdminMarkRefund(c.Request.Context(), id, utils.MustAccountID(c))
+	if err != nil {
+		msg := err.Error()
+		if msg == "Không tìm thấy giao dịch" {
+			utils.NotFound(c, msg)
+		} else if strings.HasPrefix(msg, "Giao dịch") {
+			utils.Conflict(c, msg)
+		} else {
+			utils.InternalServerError(c, "Đánh dấu hoàn tiền thất bại")
+		}
+		return
+	}
+	utils.OK(c, result)
+}
+
 // AdminCancelPayment POST /admin/payments/:id/cancel
 // @Summary [Admin] Hủy giao dịch
-// @Description Admin hủy giao dịch (pending→failed, success→refunded).
+// @Description Admin hủy giao dịch trong một transaction ACID. Với payment success,
+// @Description hệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.
+// @Description Sau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.
 // @Tags Payment
 // @Accept json
 // @Produce json
@@ -214,10 +295,14 @@ func (h *Handler) AdminCancelPayment(c *gin.Context) {
 		utils.BadRequest(c, "Tham số id không hợp lệ")
 		return
 	}
-	result, err := h.svc.AdminCancelPayment(c.Request.Context(), id)
+	result, err := h.svc.AdminCancelPaymentAs(c.Request.Context(), id, utils.MustAccountID(c))
 	if err != nil {
 		errMsg := err.Error()
 		if errMsg == "Không tìm thấy giao dịch" {
+			utils.NotFound(c, errMsg)
+			return
+		}
+		if errMsg == "Không tìm thấy phiếu đăng ký" {
 			utils.NotFound(c, errMsg)
 			return
 		}

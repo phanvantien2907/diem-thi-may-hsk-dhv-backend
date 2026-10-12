@@ -593,12 +593,19 @@ func (s *Service) SyncPayOSPendingPayments(ctx context.Context) (int64, error) {
 				  AND p.payment_created_at >= NOW() - INTERVAL '16 minutes'
 				  AND p.payment_created_at < NOW() - INTERVAL '15 minutes'
 			)
+			, cancelled_regs AS (
+				UPDATE exam_registrations
+				SET exam_registration_status = 'cancelled',
+				    exam_registration_updated_at = NOW()
+				WHERE exam_registration_id IN (SELECT payment_exam_registration_id FROM expired_regs)
+				  AND exam_registration_status = 'pending_payment'
+				  AND exam_registration_is_deleted = FALSE
+				RETURNING exam_registration_exam_seat_id
+			)
 			UPDATE exam_seats s
-			SET exam_seat_status = 'available', exam_seat_held_until = NULL
-			FROM exam_registrations er
-			WHERE er.exam_registration_exam_seat_id = s.exam_seat_id
-			  AND er.exam_registration_id IN (SELECT payment_exam_registration_id FROM expired_regs)
-			  AND er.exam_registration_status = 'pending_payment'
+			SET exam_seat_status = 'available', exam_seat_held_until = NULL,
+			    exam_seat_updated_at = NOW()
+			WHERE s.exam_seat_id IN (SELECT exam_registration_exam_seat_id FROM cancelled_regs)
 			  AND s.exam_seat_status = 'held'
 			  AND s.exam_seat_is_deleted = FALSE`)
 		if err != nil {

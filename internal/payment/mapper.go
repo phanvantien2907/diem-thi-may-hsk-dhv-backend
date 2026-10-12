@@ -22,6 +22,7 @@ func ToAdminPaymentResponseDTO(e PaymentEntity) response.AdminPaymentResponseDTO
 		ID:             e.PaymentID,
 		RegistrationID: e.PaymentExamRegistrationID,
 		Amount:         e.PaymentAmount,
+		AmountReceived: e.PaymentAmountReceived,
 		Method:         string(e.PaymentMethod),
 		Gateway:        e.PaymentGateway,
 		TransactionRef: e.PaymentTransactionRef,

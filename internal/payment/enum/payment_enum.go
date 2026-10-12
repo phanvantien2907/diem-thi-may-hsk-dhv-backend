@@ -28,16 +28,21 @@ func (m PaymentMethod) String() string { return string(m) }
 type PaymentStatus string
 
 const (
-	PayStatusPending  PaymentStatus = "pending"
-	PayStatusSuccess  PaymentStatus = "success"
-	PayStatusFailed   PaymentStatus = "failed"
-	PayStatusRefunded PaymentStatus = "refunded"
+	PayStatusPending        PaymentStatus = "pending"
+	PayStatusSuccess        PaymentStatus = "success"
+	PayStatusFailed         PaymentStatus = "failed"
+	PayStatusRefunded       PaymentStatus = "refunded"
+	PayStatusExpired        PaymentStatus = "expired"
+	PayStatusCancelled      PaymentStatus = "cancelled"
+	PayStatusAmountMismatch PaymentStatus = "amount_mismatch"
+	PayStatusPartialPaid    PaymentStatus = "partial_paid"
 )
 
 // Valid reports whether s is a recognised PaymentStatus.
 func (s PaymentStatus) Valid() bool {
 	switch s {
-	case PayStatusPending, PayStatusSuccess, PayStatusFailed, PayStatusRefunded:
+	case PayStatusPending, PayStatusSuccess, PayStatusFailed, PayStatusRefunded,
+		PayStatusExpired, PayStatusCancelled, PayStatusAmountMismatch, PayStatusPartialPaid:
 		return true
 	}
 	return false

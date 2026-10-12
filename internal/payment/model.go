@@ -11,6 +11,7 @@ type PaymentEntity struct {
 	PaymentID                 int64
 	PaymentExamRegistrationID int64
 	PaymentAmount             int64
+	PaymentAmountReceived     *int64
 	PaymentMethod             enum.PaymentMethod
 	PaymentGateway            *string
 	PaymentTransactionRef     *string

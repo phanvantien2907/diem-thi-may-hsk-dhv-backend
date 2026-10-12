@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,11 +66,26 @@ const paymentCols = `payment_id, payment_exam_registration_id, payment_amount, p
 	payment_status, payment_expires_at, payment_paid_at,
 	payment_is_deleted, payment_deleted_at, payment_created_at, payment_updated_at`
 
+const adminPaymentCols = `p.payment_id, p.payment_exam_registration_id, p.payment_amount,
+	p.payment_amount_received, p.payment_method, p.payment_gateway, p.payment_transaction_ref,
+	p.payment_gateway_trans_id, p.payment_content, p.payment_status, p.payment_expires_at,
+	p.payment_paid_at, p.payment_is_deleted, p.payment_deleted_at, p.payment_created_at,
+	p.payment_updated_at`
+
 func scanPayment(row interface{ Scan(dest ...any) error }, e *PaymentEntity) error {
 	return row.Scan(
 		&e.PaymentID, &e.PaymentExamRegistrationID, &e.PaymentAmount, &e.PaymentMethod,
 		&e.PaymentGateway, &e.PaymentTransactionRef, &e.PaymentGatewayTransID, &e.PaymentContent,
 		&e.PaymentStatus, &e.PaymentExpiresAt, &e.PaymentPaidAt,
+		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
+	)
+}
+
+func scanAdminPayment(row interface{ Scan(dest ...any) error }, e *PaymentEntity) error {
+	return row.Scan(
+		&e.PaymentID, &e.PaymentExamRegistrationID, &e.PaymentAmount, &e.PaymentAmountReceived,
+		&e.PaymentMethod, &e.PaymentGateway, &e.PaymentTransactionRef, &e.PaymentGatewayTransID,
+		&e.PaymentContent, &e.PaymentStatus, &e.PaymentExpiresAt, &e.PaymentPaidAt,
 		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
 	)
 }
@@ -82,6 +99,19 @@ func (s *Service) fetchPaymentByID(ctx context.Context, id int64) (PaymentEntity
 		&e.PaymentID, &e.PaymentExamRegistrationID, &e.PaymentAmount, &e.PaymentMethod,
 		&e.PaymentGateway, &e.PaymentTransactionRef, &e.PaymentGatewayTransID, &e.PaymentContent,
 		&e.PaymentStatus, &e.PaymentExpiresAt, &e.PaymentPaidAt,
+		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
+	)
+	return e, err
+}
+
+func (s *Service) fetchAdminPaymentByID(ctx context.Context, id int64) (PaymentEntity, error) {
+	var e PaymentEntity
+	err := s.db.QueryRowContext(ctx,
+		`SELECT `+adminPaymentCols+` FROM payments p WHERE p.payment_id = $1 AND p.payment_is_deleted = FALSE`, id,
+	).Scan(
+		&e.PaymentID, &e.PaymentExamRegistrationID, &e.PaymentAmount, &e.PaymentAmountReceived,
+		&e.PaymentMethod, &e.PaymentGateway, &e.PaymentTransactionRef, &e.PaymentGatewayTransID,
+		&e.PaymentContent, &e.PaymentStatus, &e.PaymentExpiresAt, &e.PaymentPaidAt,
 		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
 	)
 	return e, err
@@ -319,6 +349,9 @@ func (s *Service) GetPaymentHistory(ctx context.Context, candidateID int64) ([]r
 
 // AdminListPayments returns all payments for the admin panel with pagination.
 func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPaymentsRequestDTO) ([]response.AdminPaymentResponseDTO, *utils.Meta, error) {
+	if err := validateDateFilters(req); err != nil {
+		return nil, nil, err
+	}
 	page := req.Page
 	if page < 1 {
 		page = 1
@@ -335,11 +368,35 @@ func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPa
 	argIdx := 1
 
 	if req.Status != "" {
-		if !payenum.PaymentStatus(req.Status).Valid() {
+		status := strings.ToLower(strings.TrimSpace(req.Status))
+		if status == "cancelled" {
+			where += " AND p.payment_status IN ('cancelled', 'failed', 'expired')"
+		} else if !payenum.PaymentStatus(status).Valid() {
 			return nil, nil, errors.New("Trạng thái thanh toán không hợp lệ")
+		} else {
+			where += fmt.Sprintf(" AND p.payment_status = $%d", argIdx)
+			args = append(args, status)
+			argIdx++
 		}
-		where += fmt.Sprintf(" AND p.payment_status = $%d", argIdx)
-		args = append(args, req.Status)
+	}
+	if req.From != "" {
+		where += fmt.Sprintf(" AND p.payment_created_at >= $%d::date", argIdx)
+		args = append(args, req.From)
+		argIdx++
+	}
+	if req.To != "" {
+		where += fmt.Sprintf(" AND p.payment_created_at < ($%d::date + INTERVAL '1 day')", argIdx)
+		args = append(args, req.To)
+		argIdx++
+	}
+	if req.OrderCode != "" {
+		where += fmt.Sprintf(" AND p.payment_transaction_ref = $%d", argIdx)
+		args = append(args, req.OrderCode)
+		argIdx++
+	}
+	if req.TransactionID != "" {
+		where += fmt.Sprintf(" AND p.payment_gateway_trans_id = $%d", argIdx)
+		args = append(args, req.TransactionID)
 		argIdx++
 	}
 
@@ -352,7 +409,7 @@ func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPa
 
 	// Fetch page.
 	selectQuery := fmt.Sprintf(`SELECT %s FROM payments p WHERE %s ORDER BY p.payment_created_at DESC LIMIT $%d OFFSET $%d`,
-		paymentCols, where, argIdx, argIdx+1)
+		adminPaymentCols, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, selectQuery, args...)
@@ -364,7 +421,7 @@ func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPa
 	var list []response.AdminPaymentResponseDTO
 	for rows.Next() {
 		var e PaymentEntity
-		if err := scanPayment(rows, &e); err != nil {
+		if err := scanAdminPayment(rows, &e); err != nil {
 			return nil, nil, fmt.Errorf("payment: admin scan: %w", err)
 		}
 		list = append(list, ToAdminPaymentResponseDTO(e))
@@ -384,6 +441,506 @@ func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPa
 		TotalPages: totalPages,
 	}
 	return list, meta, nil
+}
+
+// ExportPaymentsCSV returns an accounting-friendly CSV export using the same
+// filters as the admin list endpoint.
+func (s *Service) ExportPaymentsCSV(ctx context.Context, req request.AdminListPaymentsRequestDTO) ([]byte, error) {
+	if err := validateDateFilters(req); err != nil {
+		return nil, err
+	}
+	where := "p.payment_is_deleted = FALSE"
+	args := []any{}
+	argIdx := 1
+	if req.Status != "" {
+		status := strings.ToLower(strings.TrimSpace(req.Status))
+		if status == "cancelled" {
+			where += " AND p.payment_status IN ('cancelled', 'failed', 'expired')"
+		} else if !payenum.PaymentStatus(status).Valid() {
+			return nil, errors.New("Trạng thái thanh toán không hợp lệ")
+		} else {
+			where += fmt.Sprintf(" AND p.payment_status = $%d", argIdx)
+			args = append(args, status)
+			argIdx++
+		}
+	}
+	if req.From != "" {
+		where += fmt.Sprintf(" AND p.payment_created_at >= $%d::date", argIdx)
+		args = append(args, req.From)
+		argIdx++
+	}
+	if req.To != "" {
+		where += fmt.Sprintf(" AND p.payment_created_at < ($%d::date + INTERVAL '1 day')", argIdx)
+		args = append(args, req.To)
+		argIdx++
+	}
+	if req.OrderCode != "" {
+		where += fmt.Sprintf(" AND p.payment_transaction_ref = $%d", argIdx)
+		args = append(args, req.OrderCode)
+		argIdx++
+	}
+	if req.TransactionID != "" {
+		where += fmt.Sprintf(" AND p.payment_gateway_trans_id = $%d", argIdx)
+		args = append(args, req.TransactionID)
+	}
+
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT p.payment_transaction_ref, c.candidate_full_name, p.payment_amount,
+		       p.payment_amount_received, p.payment_created_at, p.payment_status
+		FROM payments p
+		JOIN exam_registrations er ON er.exam_registration_id = p.payment_exam_registration_id
+		  AND er.exam_registration_is_deleted = FALSE
+		JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
+		  AND c.candidate_is_deleted = FALSE
+		WHERE %s
+		ORDER BY p.payment_created_at DESC`, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("payment: export query: %w", err)
+	}
+	defer rows.Close()
+
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	if err := w.Write([]string{"Mã đơn hàng", "Tên thí sinh", "Số tiền yêu cầu", "Số tiền thực nhận", "Thời gian", "Trạng thái"}); err != nil {
+		return nil, fmt.Errorf("payment: export header: %w", err)
+	}
+	for rows.Next() {
+		var orderCode, name, status string
+		var amount int64
+		var received sql.NullInt64
+		var created time.Time
+		if err := rows.Scan(&orderCode, &name, &amount, &received, &created, &status); err != nil {
+			return nil, fmt.Errorf("payment: export scan: %w", err)
+		}
+		receivedValue := ""
+		if received.Valid {
+			receivedValue = strconv.FormatInt(received.Int64, 10)
+		}
+		if err := w.Write([]string{orderCode, name, strconv.FormatInt(amount, 10), receivedValue, created.Format(time.RFC3339), status}); err != nil {
+			return nil, fmt.Errorf("payment: export row: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("payment: export rows: %w", err)
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return nil, fmt.Errorf("payment: export flush: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func validateDateFilters(req request.AdminListPaymentsRequestDTO) error {
+	for _, value := range []string{req.From, req.To} {
+		if value == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", value); err != nil {
+			return errors.New("Ngày lọc phải có định dạng YYYY-MM-DD")
+		}
+	}
+	if req.From != "" && req.To != "" && req.From > req.To {
+		return errors.New("Khoảng ngày lọc không hợp lệ")
+	}
+	return nil
+}
+
+// AdminConfirmPaymentAs confirms a pending payment while locking the payment,
+// registration, and seat in one transaction. actorID is written to audit_logs.
+func (s *Service) AdminConfirmPaymentAs(ctx context.Context, paymentID, actorID int64) (response.AdminPaymentResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var regID, amount int64
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT payment_exam_registration_id, payment_amount, payment_status
+		FROM payments
+		WHERE payment_id = $1 AND payment_is_deleted = FALSE
+		FOR UPDATE`, paymentID).Scan(&regID, &amount, &status); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm lock payment: %w", err)
+	}
+	if status != payenum.PayStatusPending.String() {
+		return response.AdminPaymentResponseDTO{}, errors.New("Giao dịch không ở trạng thái chờ thanh toán")
+	}
+
+	var seatID int64
+	var regStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT exam_registration_exam_seat_id, exam_registration_status
+		FROM exam_registrations
+		WHERE exam_registration_id = $1 AND exam_registration_is_deleted = FALSE
+		FOR UPDATE`, regID).Scan(&seatID, &regStatus); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy phiếu đăng ký")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm lock registration: %w", err)
+	}
+	if regStatus != regenum.RegStatusPendingPayment.String() {
+		return response.AdminPaymentResponseDTO{}, errors.New("Phiếu đăng ký không còn ở trạng thái chờ thanh toán")
+	}
+
+	var seatStatus string
+	var heldUntil *time.Time
+	if err := tx.QueryRowContext(ctx, `
+		SELECT exam_seat_status, exam_seat_held_until
+		FROM exam_seats
+		WHERE exam_seat_id = $1 AND exam_seat_is_deleted = FALSE
+		FOR UPDATE`, seatID).Scan(&seatStatus, &heldUntil); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không còn ghế trống cho phiếu đăng ký")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm lock seat: %w", err)
+	}
+	if seatStatus == "booked" || (seatStatus == "held" && heldUntil != nil && heldUntil.Before(time.Now())) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không còn ghế trống cho phiếu đăng ký")
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payments SET payment_status = 'success', payment_paid_at = NOW(),
+		       payment_amount_received = COALESCE(payment_amount_received, payment_amount)
+		WHERE payment_id = $1`, paymentID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm payment: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE exam_registrations SET exam_registration_status = 'confirmed'
+		WHERE exam_registration_id = $1`, regID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm registration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE exam_seats SET exam_seat_status = 'booked', exam_seat_held_until = NULL
+		WHERE exam_seat_id = $1`, seatID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm seat: %w", err)
+	}
+	oldVal, _ := json.Marshal(map[string]any{"status": "pending"})
+	newVal, _ := json.Marshal(map[string]any{"status": "success", "action": "admin_manual_confirm"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID, Action: auditenum.AuditActionApprove.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(), EntityID: paymentID,
+		OldValue: oldVal, NewValue: newVal,
+	})
+	if err := tx.Commit(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: confirm commit: %w", err)
+	}
+	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: reload after confirm: %w", err)
+	}
+	updated.PaymentAmountReceived = &amount
+	return ToAdminPaymentResponseDTO(updated), nil
+}
+
+// AdminMarkRefund marks a paid or cancelled payment for manual bank refund.
+func (s *Service) AdminMarkRefund(ctx context.Context, paymentID, actorID int64) (response.AdminPaymentResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: refund begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT payment_status FROM payments
+		WHERE payment_id = $1 AND payment_is_deleted = FALSE FOR UPDATE`, paymentID).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: refund lock: %w", err)
+	}
+	if status != "success" && status != "cancelled" && status != "failed" && status != "expired" {
+		return response.AdminPaymentResponseDTO{}, errors.New("Giao dịch chưa đủ điều kiện đánh dấu hoàn tiền")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE payments SET payment_status = 'refunded' WHERE payment_id = $1`, paymentID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: mark refund: %w", err)
+	}
+	oldVal, _ := json.Marshal(map[string]any{"status": status})
+	newVal, _ := json.Marshal(map[string]any{"status": "refunded", "action": "mark_refund"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID, Action: auditenum.AuditActionRefund.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(), EntityID: paymentID,
+		OldValue: oldVal, NewValue: newVal,
+	})
+	if err := tx.Commit(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: refund commit: %w", err)
+	}
+	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: reload after refund: %w", err)
+	}
+	return ToAdminPaymentResponseDTO(updated), nil
+}
+
+// AdminCancelPaymentAs cancels a payment and releases its registration seat
+// atomically. It is used by the admin route and expiry workflow.
+func (s *Service) AdminCancelPaymentAs(ctx context.Context, paymentID, actorID int64) (response.AdminPaymentResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var status string
+	var regID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT payment_status, payment_exam_registration_id
+		FROM payments WHERE payment_id = $1 AND payment_is_deleted = FALSE FOR UPDATE`,
+		paymentID).Scan(&status, &regID); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel lock: %w", err)
+	}
+	var newStatus string
+	switch status {
+	case "pending":
+		newStatus = "cancelled"
+	case "success":
+		newStatus = "refunded"
+	default:
+		return response.AdminPaymentResponseDTO{}, errors.New("Không thể hủy giao dịch ở trạng thái này")
+	}
+	paymentUpdate, err := tx.ExecContext(ctx, `
+		UPDATE payments SET payment_status = $1 WHERE payment_id = $2`, newStatus, paymentID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel payment: %w", err)
+	}
+	if affected, err := paymentUpdate.RowsAffected(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel payment affected rows: %w", err)
+	} else if affected != 1 {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không thể cập nhật giao dịch")
+	}
+	var seatID int64
+	var regStatus string
+	var seatStatus string
+	var examDate time.Time
+	var examPassed bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT er.exam_registration_exam_seat_id, er.exam_registration_status,
+		       es.exam_session_date, es.exam_session_date <= CURRENT_DATE,
+		       seat.exam_seat_status
+		FROM exam_registrations er
+		JOIN exam_sessions es
+		  ON es.exam_session_id = er.exam_registration_exam_session_id
+		 AND es.exam_session_is_deleted = FALSE
+		JOIN exam_seats seat
+		  ON seat.exam_seat_id = er.exam_registration_exam_seat_id
+		 AND seat.exam_seat_is_deleted = FALSE
+		WHERE er.exam_registration_id = $1
+		  AND er.exam_registration_is_deleted = FALSE
+		FOR UPDATE OF er, es, seat`, regID).
+		Scan(&seatID, &regStatus, &examDate, &examPassed, &seatStatus); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy phiếu đăng ký")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel registration lock: %w", err)
+	}
+	if examPassed {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf(
+			"Không thể hủy giao dịch sau ngày thi (%s); giao dịch và ghế được giữ nguyên",
+			examDate.Format("2006-01-02"),
+		)
+	}
+	if regStatus == "cancelled" {
+		return response.AdminPaymentResponseDTO{}, errors.New("Phiếu đăng ký đã bị hủy từ trước")
+	}
+	if regStatus != "pending_payment" && regStatus != "confirmed" {
+		return response.AdminPaymentResponseDTO{}, errors.New("Phiếu đăng ký không ở trạng thái có thể hủy")
+	}
+	registrationUpdate, err := tx.ExecContext(ctx, `
+		UPDATE exam_registrations SET exam_registration_status = 'cancelled'
+		WHERE exam_registration_id = $1
+		  AND exam_registration_is_deleted = FALSE`, regID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel registration: %w", err)
+	}
+	if affected, err := registrationUpdate.RowsAffected(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel registration affected rows: %w", err)
+	} else if affected != 1 {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không thể cập nhật phiếu đăng ký")
+	}
+	seatReleased := false
+	if seatStatus == "held" || seatStatus == "booked" {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE exam_seats
+			SET exam_seat_status = 'available', exam_seat_held_until = NULL
+			WHERE exam_seat_id = $1
+			  AND exam_seat_status IN ('held', 'booked')
+			  AND exam_seat_is_deleted = FALSE`, seatID)
+		if err != nil {
+			return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel seat: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel seat affected rows: %w", err)
+		}
+		if affected != 1 {
+			return response.AdminPaymentResponseDTO{}, errors.New("Không thể trả lại ghế")
+		}
+		seatReleased = true
+	}
+	oldVal, _ := json.Marshal(map[string]any{"status": status})
+	action := auditenum.AuditActionReject
+	actionName := "admin_cancel"
+	if status == "success" {
+		action = auditenum.AuditActionCancelSuccessPayment
+		actionName = action.String()
+	}
+	newVal, _ := json.Marshal(map[string]any{
+		"status":          newStatus,
+		"action":          actionName,
+		"transaction_id":  paymentID,
+		"registration_id": regID,
+		"seat_id":         seatID,
+		"seat_released":   seatReleased,
+	})
+	if err := s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID, Action: action.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(), EntityID: paymentID,
+		OldValue: oldVal, NewValue: newVal,
+	}); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel commit: %w", err)
+	}
+	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: reload after cancel: %w", err)
+	}
+	return ToAdminPaymentResponseDTO(updated), nil
+}
+
+// SyncPayment checks PayOS and applies a PAID result atomically.
+func (s *Service) SyncPayment(ctx context.Context, paymentID, actorID int64) (response.AdminPaymentResponseDTO, error) {
+	var orderCode string
+	var expected int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT payment_transaction_ref, payment_amount
+		FROM payments WHERE payment_id = $1 AND payment_is_deleted = FALSE`, paymentID).Scan(&orderCode, &expected); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync load: %w", err)
+	}
+	code, err := strconv.ParseInt(orderCode, 10, 64)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, errors.New("Giao dịch không có mã đơn PayOS hợp lệ")
+	}
+	state, received, gatewayRef, err := s.callPayOSStatus(ctx, code)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync payos: %w", err)
+	}
+	if strings.ToUpper(state) != "PAID" {
+		return response.AdminPaymentResponseDTO{}, errors.New("PayOS chưa ghi nhận giao dịch đã thanh toán")
+	}
+	if os.Getenv("MOCK_PAYOS") == "true" && received == 0 {
+		received = expected
+	}
+	if received != expected {
+		return response.AdminPaymentResponseDTO{}, errors.New("Số tiền thanh toán không khớp")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+	var current string
+	var regID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT payment_status, payment_exam_registration_id
+		FROM payments WHERE payment_id = $1 AND payment_is_deleted = FALSE FOR UPDATE`, paymentID).Scan(&current, &regID); errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không tìm thấy giao dịch")
+	} else if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync lock: %w", err)
+	}
+	if current != "pending" {
+		_ = tx.Rollback()
+		updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
+		if err != nil {
+			return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync reload: %w", err)
+		}
+		return ToAdminPaymentResponseDTO(updated), nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payments SET payment_status = 'success', payment_amount_received = $1,
+		       payment_gateway_trans_id = NULLIF($2, ''), payment_paid_at = NOW()
+		WHERE payment_id = $3`, received, gatewayRef, paymentID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync payment: %w", err)
+	}
+	var seatID int64
+	var regStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT exam_registration_exam_seat_id, exam_registration_status
+		FROM exam_registrations WHERE exam_registration_id = $1
+		  AND exam_registration_is_deleted = FALSE FOR UPDATE`, regID).Scan(&seatID, &regStatus); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync registration: %w", err)
+	}
+	if regStatus != regenum.RegStatusPendingPayment.String() {
+		return response.AdminPaymentResponseDTO{}, errors.New("Phiếu đăng ký không còn ở trạng thái chờ thanh toán")
+	}
+	var seatStatus string
+	var heldUntil *time.Time
+	if err := tx.QueryRowContext(ctx, `
+		SELECT exam_seat_status, exam_seat_held_until FROM exam_seats
+		WHERE exam_seat_id = $1 AND exam_seat_is_deleted = FALSE FOR UPDATE`, seatID).Scan(&seatStatus, &heldUntil); err != nil {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không còn ghế trống cho phiếu đăng ký")
+	}
+	if seatStatus == "booked" || (seatStatus == "held" && heldUntil != nil && heldUntil.Before(time.Now())) {
+		return response.AdminPaymentResponseDTO{}, errors.New("Không còn ghế trống cho phiếu đăng ký")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE exam_registrations SET exam_registration_status = 'confirmed' WHERE exam_registration_id = $1`, regID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync confirm registration: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE exam_seats SET exam_seat_status = 'booked', exam_seat_held_until = NULL WHERE exam_seat_id = $1`, seatID); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync book seat: %w", err)
+	}
+	newVal, _ := json.Marshal(map[string]any{"status": "success", "action": "payos_sync"})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID, Action: auditenum.AuditActionPayment.String(),
+		EntityTable: auditenum.AuditEntityPayment.String(), EntityID: paymentID, NewValue: newVal,
+	})
+	if err := tx.Commit(); err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync commit: %w", err)
+	}
+	updated, err := s.fetchPaymentByID(ctx, paymentID)
+	if err != nil {
+		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync reload: %w", err)
+	}
+	return ToAdminPaymentResponseDTO(updated), nil
+}
+
+func (s *Service) callPayOSStatus(ctx context.Context, orderCode int64) (status string, amount int64, reference string, err error) {
+	if os.Getenv("MOCK_PAYOS") == "true" {
+		return "PAID", 0, "", nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("https://api-merchant.payos.vn/v2/payment-requests/%d", orderCode), nil)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("x-client-id", s.payOS.ClientID)
+	req.Header.Set("x-api-key", s.payOS.ApiKey)
+	resp, err := s.httpCli.Do(req)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("http do: %w", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Code string `json:"code"`
+		Desc string `json:"desc"`
+		Data struct {
+			Status    string `json:"status"`
+			Amount    int64  `json:"amount"`
+			Reference string `json:"reference"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", 0, "", fmt.Errorf("decode response: %w", err)
+	}
+	if result.Code != "00" {
+		return "", 0, "", fmt.Errorf("payos error: code=%s desc=%s", result.Code, result.Desc)
+	}
+	return result.Data.Status, result.Data.Amount, result.Data.Reference, nil
 }
 
 // ─── UC5: Admin manual confirm via stored procedure ─────────────────────────
