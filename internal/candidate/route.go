@@ -20,6 +20,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		me.POST("/documents", h.UploadDocument)
 		me.GET("/documents", h.GetMyDocuments)
 		me.GET("/upload-signature", h.GetUploadSignature)
+		me.POST("/validate-portrait", h.ValidatePortrait)
 	}
 
 	// ── Admin (JWT + admin role required) ─────────────────────────────────

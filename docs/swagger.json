@@ -3076,6 +3076,103 @@
                         }
                     }
                 }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lưu URL ảnh CCCD/Passport đã upload lên Cloudinary. Ảnh chân dung được kiểm tra tự động; nếu không hợp lệ, yêu cầu bị chặn với HTTP 400 và không lưu hồ sơ.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Upload giấy tờ tùy thân",
+                "parameters": [
+                    {
+                        "description": "Thông tin giấy tờ",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UploadDocumentRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created (verification_status: verified hoặc pending)",
+                        "schema": {
+                            "$ref": "#/definitions/response.DocumentResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu không hợp lệ hoặc ảnh chân dung không đạt yêu cầu",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Chưa có hồ sơ thí sinh",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/me/candidate-profile/validate-portrait": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Phân tích ảnh chân dung qua AI và trả về kết quả đạt chuẩn hay vi phạm (màu nền, kính mắt, khuôn mặt, góc chụp, ánh sáng) trước khi lưu hồ sơ.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Kiểm tra tính hợp lệ của ảnh chân dung",
+                "parameters": [
+                    {
+                        "description": "URL ảnh chân dung cần kiểm tra",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.ValidatePortraitRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Kết quả kiểm tra ảnh",
+                        "schema": {
+                            "$ref": "#/definitions/response.PortraitValidationResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/me/certificates": {
@@ -4990,6 +5087,66 @@
                 }
             }
         },
+        "request.UploadDocumentRequestDTO": {
+            "type": "object",
+            "required": [
+                "doc_number",
+                "doc_type",
+                "front_image_url",
+                "issue_date",
+                "issue_place",
+                "portrait_image_url"
+            ],
+            "properties": {
+                "address_detail": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "back_image_url": {
+                    "type": "string"
+                },
+                "doc_number": {
+                    "type": "string",
+                    "maxLength": 30
+                },
+                "doc_type": {
+                    "type": "string",
+                    "enum": [
+                        "cccd",
+                        "passport"
+                    ]
+                },
+                "front_image_url": {
+                    "type": "string"
+                },
+                "issue_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "issue_place": {
+                    "type": "string",
+                    "maxLength": 150
+                },
+                "portrait_image_url": {
+                    "type": "string"
+                },
+                "ward_id": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "request.ValidatePortraitRequestDTO": {
+            "type": "object",
+            "required": [
+                "portrait_image_url"
+            ],
+            "properties": {
+                "portrait_image_url": {
+                    "type": "string"
+                }
+            }
+        },
         "request.VerifyCertRequestDTO": {
             "type": "object",
             "properties": {
@@ -5002,6 +5159,88 @@
                 "dob": {
                     "description": "YYYY-MM-DD — required when certificate_no is used",
                     "type": "string"
+                }
+            }
+        },
+        "response.DocumentResponseDTO": {
+            "type": "object",
+            "properties": {
+                "address_detail": {
+                    "type": "string"
+                },
+                "back_image_url": {
+                    "type": "string"
+                },
+                "candidate_id": {
+                    "type": "integer"
+                },
+                "doc_number": {
+                    "type": "string"
+                },
+                "doc_type": {
+                    "type": "string"
+                },
+                "front_image_url": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "issue_date": {
+                    "type": "string"
+                },
+                "issue_place": {
+                    "type": "string"
+                },
+                "portrait_image_url": {
+                    "type": "string"
+                },
+                "province_id": {
+                    "type": "integer"
+                },
+                "rejection_reason": {
+                    "type": "string"
+                },
+                "verification_status": {
+                    "type": "string"
+                },
+                "ward_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "response.PortraitValidationResponseDTO": {
+            "type": "object",
+            "properties": {
+                "brightness": {
+                    "type": "number"
+                },
+                "has_face": {
+                    "type": "boolean"
+                },
+                "has_glasses": {
+                    "type": "boolean"
+                },
+                "is_blurred": {
+                    "type": "boolean"
+                },
+                "is_too_dark": {
+                    "type": "boolean"
+                },
+                "is_white_background": {
+                    "type": "boolean"
+                },
+                "reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "rejection_reason": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },

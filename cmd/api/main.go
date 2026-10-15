@@ -68,9 +68,24 @@ func main() {
 		log.Fatalf("[main] media: %v", err)
 	}
 
+	// Vision Service for image validation (Google Cloud Vision with local pixel fallback)
+	var visionSvc candidate.VisionService
+	if cfg.GoogleCloudCredentialsPath != "" {
+		visionSvc, err = candidate.NewGoogleVisionService(context.Background(), cfg.GoogleCloudCredentialsPath)
+		if err != nil {
+			log.Printf("[main] Google Vision initialization failed (%v); falling back to local portrait validator", err)
+			visionSvc = candidate.NewLocalPortraitValidator()
+		} else {
+			log.Println("[main] Google Vision service initialized successfully")
+		}
+	} else {
+		log.Println("[main] GOOGLE_CLOUD_CREDENTIALS_PATH not set; using local portrait validator (background, brightness, quality checks)")
+		visionSvc = candidate.NewLocalPortraitValidator()
+	}
+
 	// ── Services ──────────────────────────────────────────────────────────
 	authSvc := auth.NewService(db, auditSvc, cfg.JWTSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
-	candSvc := candidate.NewService(db, auditSvc, mediaSvc)
+	candSvc := candidate.NewService(db, auditSvc, mediaSvc, visionSvc)
 	examSvc := exam.NewService(db, auditSvc)
 	regSvc := registration.NewService(db, auditSvc)
 	paySvc := payment.NewService(db, auditSvc, payment.PayOSConfig{
@@ -193,6 +208,14 @@ func main() {
 	log.Println("[main] graceful shutdown (30s timeout)…")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Close vision service if it was initialized
+	if visionSvc != nil {
+		if err := visionSvc.Close(); err != nil {
+			log.Printf("[main] vision service close error: %v", err)
+		}
+	}
+
 	if err := srv.Shutdown(shutCtx); err != nil {
 		log.Fatalf("[main] forced shutdown: %v", err)
 	}

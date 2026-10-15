@@ -25,6 +25,7 @@ The existing implementation is the source of truth. Rules here describe what the
 | Migration tool | `golang-migrate/migrate` via Docker compose |
 | Rate limiting | Custom in-memory token bucket (`internal/middleware/ratelimit.go`) |
 | Redis | **Not used** — commented out in `docker-compose.yml` |
+| Image validation | Google Cloud Vision API (`cloud.google.com/go/vision/apiv1 v1.2.0`) |
 | Dependency injection | Manual constructor wiring in `cmd/api/main.go` |
 | Build | Multi-stage Docker, `CGO_ENABLED=0`, statically linked binary |
 | Module path | `github.com/hskvinh/backend` |
@@ -256,6 +257,7 @@ All API routes are mounted under `/api/v1`.
 | candidate | POST | `/me/candidate-profile/documents` | JWT |
 | candidate | GET | `/me/candidate-profile/documents` | JWT |
 | candidate | GET | `/me/candidate-profile/upload-signature` | JWT |
+| candidate | POST | `/me/candidate-profile/validate-portrait` | JWT |
 | candidate | GET | `/admin/candidates` | JWT + admin |
 | candidate | GET | `/admin/candidates/metrics` | JWT + admin |
 | candidate | GET | `/admin/candidates/export` | JWT + admin |
@@ -376,6 +378,58 @@ Candidate admin list and export query conventions:
 - The admin candidate response includes `full_name_cn` (`candidate_full_name_cn`) for the candidate's Chinese name; it is returned as `null` when not provided.
 - Candidates update this field through `PATCH /api/v1/me/candidate-profile` using the exact JSON key `full_name_cn`; the service persists it to `candidates.candidate_full_name_cn` and preserves the existing value when the field is omitted. If a client accidentally sends one extra JSON-encoding layer (for example the literal value `"潘文进"` including quote characters), the service removes that single outer layer before persistence.
 - Front-end clients must send `full_name_cn` as a normal UTF-8 Unicode string (for example `潘文进`) and must not call `JSON.stringify()` on that field separately. `PingFang SC` is only a DataGrip/macOS display font; it is not required by the API or database.
+
+### Portrait Image Validation
+
+When candidates upload identity documents via `POST /me/candidate-profile/documents`, the portrait image (`portrait_image_url`) is automatically validated using Google Cloud Vision API. The validation runs synchronously during document upload and sets the `candidate_document_verification_status` accordingly.
+
+**Validation Rules:**
+
+1. **Input Validation** (before calling Vision API):
+   - URL must not be empty → "URL ảnh không được để trống!"
+   - URL must be valid format → "URL ảnh không hợp lệ!"
+
+2. **Face Detection**:
+   - Exactly one face must be detected → "phải có chính xác một khuôn mặt trong ảnh!"
+   - No glasses or headwear (checks `POSSIBLE`, `LIKELY`, and `VERY_LIKELY` likelihoods) → "không được đeo kính hoặc trang phục che khuôn mặt!"
+
+3. **Image Quality**:
+   - Image must not be blurred → "ảnh bị mờ, không rõ nét!"
+   - Brightness must be between 80-240 (out of 255) → "ảnh quá tối, không đủ sáng!" or "ảnh quá sáng, bị cháy sáng!"
+
+4. **Face Geometry**:
+   - Roll angle < 20° (rotation around camera axis)
+   - Pan angle < 25° (rotation around vertical axis)
+   - Tilt angle < 20° (rotation around horizontal axis)
+   - If any angle exceeds threshold → "góc chụp khuôn mặt không hợp lệ (đầu nghiêng quá nhiều)!"
+
+5. **Background Color**:
+   - Background must be white (RGB within threshold of 30 from 255,255,255 for dominant color)
+   - If dominant color is not white, checks top 3 dominant colors for at least one white color
+   - This handles cases where the subject (skin/clothes) dominates but background is white
+   - If not white → "nền ảnh phải màu trắng!"
+
+6. **Safe Search**:
+   - Image must not contain explicit content (adult, violence, medical, racy)
+   - If unsafe → "ảnh chứa nội dung không phù hợp!"
+
+**Behavior:**
+
+- If validation passes → stored in database with status `verified` (HTTP 201 Created)
+- If validation fails → **action blocked immediately** with HTTP 400 Bad Request and error message detailing all rejection reasons; **no database record is persisted**
+- If Vision API is not configured or fails → status saved as `pending` (HTTP 201 Created) for manual admin review
+- Graceful degradation: system continues to work without Vision API, but documents require manual approval
+
+**Configuration:**
+
+- Vision API credentials are configured via `GOOGLE_CLOUD_CREDENTIALS_PATH` environment variable
+- The credentials file should be a Google Cloud service account JSON key placed in the `secrets/` directory
+- Docker Compose mounts the secrets directory at `/app/secrets` in the container
+
+**API Call Optimization:**
+
+- The implementation uses `AnnotateImage` with batch features (FACE_DETECTION, IMAGE_PROPERTIES, SAFE_SEARCH_DETECTION) in a single API call
+- This reduces API cost and latency compared to multiple separate calls
 
 ### Validation
 

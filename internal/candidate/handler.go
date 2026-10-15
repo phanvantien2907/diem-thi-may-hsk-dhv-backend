@@ -3,6 +3,7 @@ package candidate
 import (
 	"bytes"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -142,7 +143,18 @@ func (h *Handler) GetUploadSignature(c *gin.Context) {
 	utils.OK(c, sig)
 }
 
-// UploadDocument POST /candidates/:id/documents
+// UploadDocument POST /me/candidate-profile/documents
+// @Summary Upload giấy tờ tùy thân
+// @Description Lưu URL ảnh CCCD/Passport đã upload lên Cloudinary. Ảnh chân dung được kiểm tra tự động; nếu không hợp lệ, yêu cầu bị chặn với HTTP 400 và không lưu hồ sơ.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body request.UploadDocumentRequestDTO true "Thông tin giấy tờ"
+// @Success 201 {object} response.DocumentResponseDTO "Created (verification_status: verified hoặc pending)"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu không hợp lệ hoặc ảnh chân dung không đạt yêu cầu"
+// @Failure 404 {object} map[string]interface{} "Chưa có hồ sơ thí sinh"
+// @Router /me/candidate-profile/documents [post]
 func (h *Handler) UploadDocument(c *gin.Context) {
 	var req request.UploadDocumentRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -155,11 +167,53 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 	}
 	doc, err := h.svc.UploadDocument(c.Request.Context(), utils.MustAccountID(c), req)
 	if err != nil {
-		utils.InternalServerError(c, err.Error())
+		var rejected *PortraitRejectedError
+		switch {
+		case errors.As(err, &rejected):
+			utils.BadRequest(c, rejected.Error())
+		case errors.Is(err, ErrInvalidIssueDate):
+			utils.BadRequest(c, err.Error())
+		case errors.Is(err, ErrCandidateProfileNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			log.Printf("[candidate] upload document: %v", err)
+			utils.InternalServerError(c, "Không thể lưu giấy tờ tùy thân")
+		}
 		return
 	}
 	utils.Created(c, doc)
 }
+
+// ValidatePortrait POST /me/candidate-profile/validate-portrait
+// @Summary Kiểm tra tính hợp lệ của ảnh chân dung
+// @Description Phân tích ảnh chân dung qua AI và trả về kết quả đạt chuẩn hay vi phạm (màu nền, kính mắt, khuôn mặt, góc chụp, ánh sáng) trước khi lưu hồ sơ.
+// @Tags Candidate
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body request.ValidatePortraitRequestDTO true "URL ảnh chân dung cần kiểm tra"
+// @Success 200 {object} response.PortraitValidationResponseDTO "Kết quả kiểm tra ảnh"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu không hợp lệ"
+// @Router /me/candidate-profile/validate-portrait [post]
+func (h *Handler) ValidatePortrait(c *gin.Context) {
+	var req request.ValidatePortraitRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	res, err := h.svc.ValidatePortrait(c.Request.Context(), req)
+	if err != nil {
+		log.Printf("[candidate] validate portrait: %v", err)
+		utils.InternalServerError(c, "Không thể kiểm tra ảnh chân dung")
+		return
+	}
+	utils.OK(c, res)
+}
+
 
 // AdminListCandidates GET /admin/candidates
 // @Summary Danh sách thí sinh (Admin)

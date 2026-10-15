@@ -33,3 +33,6 @@ tmp/
 
 # Docker override
 docker-compose.override.yml
+
+#secrets
+secrets/*.json

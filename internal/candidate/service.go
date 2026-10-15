@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -102,18 +103,35 @@ type MediaService interface {
 
 // Service handles candidate profiles and documents.
 type Service struct {
-	db       *sql.DB
-	auditSvc audit.Service
-	mediaSvc MediaService
+	db        *sql.DB
+	auditSvc  audit.Service
+	mediaSvc  MediaService
+	visionSvc VisionService
 }
 
 // ErrActiveRegistration is returned when a candidate has an active registration
 // and attempts to modify their profile.
 var ErrActiveRegistration = errors.New("không thể sửa hồ sơ khi đã có đăng ký ca thi đang hoạt động")
 
+// ErrCandidateProfileNotFound is returned when the account has no candidate profile.
+var ErrCandidateProfileNotFound = errors.New("chưa có hồ sơ thí sinh")
+
+// ErrInvalidIssueDate is returned when a document issue date is not YYYY-MM-DD.
+var ErrInvalidIssueDate = errors.New("ngày cấp không hợp lệ (định dạng YYYY-MM-DD)")
+
+// PortraitRejectedError is returned when the portrait image violates the photo
+// rules. The upload is blocked and nothing is persisted.
+type PortraitRejectedError struct {
+	Reasons []string
+}
+
+func (e *PortraitRejectedError) Error() string {
+	return "Ảnh chân dung không hợp lệ: " + strings.Join(e.Reasons, " ")
+}
+
 // NewService creates a candidate Service.
-func NewService(db *sql.DB, auditSvc audit.Service, mediaSvc MediaService) *Service {
-	return &Service{db: db, auditSvc: auditSvc, mediaSvc: mediaSvc}
+func NewService(db *sql.DB, auditSvc audit.Service, mediaSvc MediaService, visionSvc VisionService) *Service {
+	return &Service{db: db, auditSvc: auditSvc, mediaSvc: mediaSvc, visionSvc: visionSvc}
 }
 
 // scanCandidate scans the standard candidate projection (no soft-delete cols).
@@ -390,6 +408,12 @@ func (s *Service) GetUploadSignature(ctx context.Context) (response.UploadSignat
 }
 
 // UploadDocument saves the direct-uploaded identity images to a document record.
+//
+// The portrait image is validated BEFORE anything is persisted:
+//   - invalid portrait  → *PortraitRejectedError, upload blocked, no row written
+//   - valid (Vision)    → stored as 'verified'
+//   - valid (local only, Vision not configured) or validator infra error
+//     → stored as 'pending' for manual admin review
 func (s *Service) UploadDocument(ctx context.Context, accountID int64, req request.UploadDocumentRequestDTO) (response.DocumentResponseDTO, error) {
 	// Resolve candidate_id from accountID (authoritative ownership check)
 	var candidateID int64
@@ -397,14 +421,20 @@ func (s *Service) UploadDocument(ctx context.Context, accountID int64, req reque
 		`SELECT candidate_id FROM candidates WHERE candidate_account_id = $1 AND candidate_is_deleted = FALSE`,
 		accountID,
 	).Scan(&candidateID); errors.Is(err, sql.ErrNoRows) {
-		return response.DocumentResponseDTO{}, errors.New("chưa có hồ sơ thí sinh")
+		return response.DocumentResponseDTO{}, ErrCandidateProfileNotFound
 	} else if err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: lookup: %w", err)
 	}
 
 	issueDate, err := time.Parse("2006-01-02", req.IssueDate)
 	if err != nil {
-		return response.DocumentResponseDTO{}, errors.New("candidate: ngày cấp không hợp lệ (định dạng YYYY-MM-DD)")
+		return response.DocumentResponseDTO{}, ErrInvalidIssueDate
+	}
+
+	// Validate the portrait outside the transaction (network call) and fail fast.
+	verificationStatus, err := s.validatePortrait(ctx, candidateID, req.PortraitImageURL)
+	if err != nil {
+		return response.DocumentResponseDTO{}, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -420,32 +450,83 @@ func (s *Service) UploadDocument(ctx context.Context, accountID int64, req reque
 		        candidate_document_issue_date, candidate_document_issue_place,
 		        candidate_document_front_image_url, candidate_document_back_image_url,
 		        candidate_document_portrait_image_url, candidate_document_ward_id,
-		        candidate_document_address_detail)
-		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,''))
+		        candidate_document_address_detail, candidate_document_verification_status)
+		VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,''), $11)
 		RETURNING `+docSelectCols,
 		candidateID, enum.DocumentType(req.DocType), req.DocNumber,
 		issueDate, req.IssuePlace,
 		req.FrontImageURL, req.BackImageURL, req.PortraitImageURL,
-		req.WardID, req.AddressDetail,
+		req.WardID, req.AddressDetail, verificationStatus.String(),
 	), &e)
 	if err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: upload document: %w", err)
 	}
 
-	newVal, _ := json.Marshal(map[string]any{"doc_type": string(e.CandidateDocumentType), "doc_number": e.CandidateDocumentNumber})
-	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &accountID,
-		Action:         auditenum.AuditActionCreate.String(),
-		EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
-		EntityID:       e.CandidateDocumentID,
-		NewValue:       newVal,
-	})
+	newVal, _ := json.Marshal(map[string]any{"doc_type": string(e.CandidateDocumentType), "doc_number": e.CandidateDocumentNumber, "verification_status": e.CandidateDocumentVerificationStatus})
+	if s.auditSvc != nil {
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &accountID,
+			Action:         auditenum.AuditActionCreate.String(),
+			EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+			EntityID:       e.CandidateDocumentID,
+			NewValue:       newVal,
+		})
+	}
 
 	if err := tx.Commit(); err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
 	}
 	return ToDocumentResponseDTO(e), nil
 }
+
+// validatePortrait runs the portrait validator and maps its outcome to the
+// verification status to persist. Invalid portraits return *PortraitRejectedError.
+func (s *Service) validatePortrait(ctx context.Context, candidateID int64, portraitURL string) (enum.DocumentVerificationStatus, error) {
+	if s.visionSvc == nil {
+		return enum.DocVerificationPending, nil
+	}
+	result, err := s.visionSvc.ValidatePortraitImage(ctx, portraitURL)
+	if err != nil {
+		// Infrastructure failure (network, Vision API): degrade to manual review.
+		log.Printf("[candidate] portrait validation unavailable for candidate %d: %v", candidateID, err)
+		return enum.DocVerificationPending, nil
+	}
+	if result == nil {
+		return enum.DocVerificationPending, nil
+	}
+	if !result.Valid {
+		reasons := result.Reasons
+		if len(reasons) == 0 && result.RejectionReason != "" {
+			reasons = []string{result.RejectionReason}
+		}
+		return "", &PortraitRejectedError{Reasons: reasons}
+	}
+	if result.ManualReviewRequired {
+		return enum.DocVerificationPending, nil
+	}
+	return enum.DocVerificationVerified, nil
+}
+
+// ValidatePortrait inspects a portrait image URL and returns the detailed validation results.
+// This allows the front-end to pre-validate the portrait immediately upon file selection.
+func (s *Service) ValidatePortrait(ctx context.Context, req request.ValidatePortraitRequestDTO) (response.PortraitValidationResponseDTO, error) {
+	if s.visionSvc == nil {
+		return response.PortraitValidationResponseDTO{
+			Valid:   true,
+			Reasons: []string{},
+		}, nil
+	}
+	result, err := s.visionSvc.ValidatePortraitImage(ctx, req.PortraitImageURL)
+	if err != nil {
+		log.Printf("[candidate] validate portrait image error: %v", err)
+		return response.PortraitValidationResponseDTO{
+			Valid:   true,
+			Reasons: []string{},
+		}, nil
+	}
+	return ToPortraitValidationResponseDTO(result), nil
+}
+
 
 // AdminListCandidates returns a paginated list of candidates filtered by document verification status.
 func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminListCandidatesRequestDTO) ([]response.AdminCandidateResponseDTO, utils.Meta, error) {

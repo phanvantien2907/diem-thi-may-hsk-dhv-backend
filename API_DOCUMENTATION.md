@@ -3,8 +3,21 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.1.0
-> **Cập nhật lần cuối:** 2026-10-04
+> **Phiên bản:** v1.2.1
+> **Cập nhật lần cuối:** 2026-10-14
+
+## Changelog
+
+### v1.2.0 (2026-10-14)
+- ✨ Thêm tự động kiểm tra ảnh chân dung bằng Google Cloud Vision API khi upload giấy tờ tùy thân
+- 📝 Validation ảnh chân dung bao gồm: URL hợp lệ, khuôn mặt, chất lượng ảnh, góc chụp, nền trắng, nội dung an toàn
+- 🎯 Ảnh hợp lệ tự động được `verified`, ảnh không hợp lệ tự động bị `rejected` với lý do cụ thể
+- 🔄 Graceful degradation: nếu Vision API không khả dụng, giấy tờ giữ `pending` để admin kiểm tra thủ công
+- 🐛 **v1.2.1 (2026-10-14)**: 
+  - Chặn ngay lập tức hành động upload khi ảnh chân dung không đạt yêu cầu: trả về lỗi **HTTP 400 Bad Request** thay vì lưu hồ sơ rồi trả 201 Created. Giúp Front-end không còn hiển thị nhầm thông báo "Upload thành công".
+  - Phân tích màu nền thực tế (pixel border analysis) kiểm tra nền trắng chuẩn xác.
+  - Tích hợp kiểm tra kính qua Object Localization và Label Detection (`eyewear`, `glasses`, `sunglasses`) kết hợp Headwear Likelihood.
+  - Quét toàn bộ lỗi và trả về danh sách chi tiết lý do vi phạm bằng tiếng Việt.
 
 ---
 
@@ -940,6 +953,49 @@ font này ở Front-end.
 | `province_id` | `integer` | ✅ | ID của Tỉnh/Thành phố |
 | `address_detail` | `string` | ✅ | Địa chỉ chi tiết |
 
+> **🤖 Tự động kiểm tra ảnh chân dung:**
+> 
+> - Ảnh chân dung (`portrait_image_url`) sẽ được tự động kiểm tra bằng Google Cloud Vision API và bộ phân tích ảnh ngay khi upload.
+> - **Nếu validation passes**: Lưu thông tin giấy tờ với `verification_status: "verified"` (HTTP 201 Created).
+> - **Nếu validation fails**: **Chặn ngay lập tức** bằng lỗi **HTTP 400 Bad Request**, KHÔNG lưu bản ghi vào database. Response lỗi chuẩn:
+>   ```json
+>   {
+>     "statusCode": 400,
+>     "timestamp": "2026-10-14T14:30:00+07:00",
+>     "path": "/api/v1/me/candidate-profile/documents",
+>     "msg": "Ảnh chân dung không hợp lệ: <danh sách lý do vi phạm>"
+>   }
+>   ```
+> - **Nếu Vision API không khả dụng hoặc lỗi hạ tầng**: Giữ nguyên cơ chế graceful degradation, lưu với trạng thái `pending` (HTTP 201 Created) để admin kiểm tra thủ công.
+> 
+> **Quy tắc validation ảnh chân dung:**
+> 
+> 1. **URL ảnh**: Bắt buộc là HTTPS từ Cloudinary (`res.cloudinary.com`), không để trống.
+> 2. **Khuôn mặt**: Phải có chính xác 1 khuôn mặt, không được đeo kính (`glasses`, `eyewear`, `sunglasses`) hoặc trang phục che khuôn mặt.
+> 3. **Chất lượng ảnh**: Không được mờ, độ sáng vùng khuôn mặt phải hợp lý (80–240 / 255).
+> 4. **Góc chụp**: Đầu không được nghiêng quá nhiều (roll < 20°, pan < 25°, tilt < 20°).
+> 5. **Nền ảnh**: Phải màu trắng (tỷ lệ điểm ảnh trắng ở vùng viền trên và 2 bên đạt ≥ 80%).
+> 6. **Nội dung**: Không được chứa nội dung nhạy cảm (adult, violence, medical, racy).
+> 
+> **Lý do từ chối (msg) bằng tiếng Việt:**
+> 
+> - "URL ảnh không được để trống!"
+> - "URL ảnh không hợp lệ!"
+> - "phải có chính xác một khuôn mặt trong ảnh!"
+> - "không được đeo kính hoặc trang phục che khuôn mặt!"
+> - "ảnh bị mờ, không rõ nét!"
+> - "ảnh quá tối, không đủ sáng!"
+> - "ảnh quá sáng, bị cháy sáng!"
+> - "góc chụp khuôn mặt không hợp lệ (đầu nghiêng quá nhiều)!"
+> - "nền ảnh phải màu trắng!"
+> - "không thể xác định màu nền ảnh!"
+> - "ảnh chứa nội dung không phù hợp!"
+> 
+> **⚠️ Lưu ý cho Front-end:**
+> 
+> - Khi nhận **HTTP 201 Created**: Ảnh đã đạt chuẩn (hoặc đang chờ duyệt thủ công nếu Vision API offline). Hiển thị thông báo thành công và chuyển bước tiếp theo.
+> - Khi nhận **HTTP 400 Bad Request**: Bắt lỗi trong khối `catch` (Axios/Fetch), hiển thị ngay Toast/Modal cảnh báo lỗi màu đỏ với nội dung từ `error.response.data.msg`, chặn người dùng tiến hành và yêu cầu chọn lại ảnh khác.
+
 ---
 
 ### 3.5. Lấy danh sách giấy tờ tùy thân
@@ -1022,7 +1078,61 @@ font này ở Front-end.
 
 ---
 
-### 3.7. [Admin] Danh sách thí sinh
+### 3.7. Kiểm tra tính hợp lệ của ảnh chân dung (Pre-validation)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/me/candidate-profile/validate-portrait` |
+| **Auth** | 🔐 JWT |
+| **Use-case** | Front-end gọi ngay sau khi thí sinh chọn ảnh hoặc upload lên Cloudinary để kiểm tra tiêu chuẩn ảnh (nền trắng, không đeo kính, 1 khuôn mặt, đủ sáng) trước khi nhấn "Lưu giấy tờ" |
+
+**Request Body:**
+
+```json
+{
+  "portrait_image_url": "https://res.cloudinary.com/.../portrait.jpg"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `portrait_image_url` | `string` | ✅ | URL hợp lệ | URL ảnh chân dung cần phân tích |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "valid": false,
+    "has_face": true,
+    "has_glasses": true,
+    "is_white_background": false,
+    "is_blurred": false,
+    "is_too_dark": false,
+    "brightness": 184.2,
+    "reasons": [
+      "nền ảnh phải màu trắng!",
+      "không được đeo kính hoặc trang phục che khuôn mặt!"
+    ],
+    "rejection_reason": "Ảnh chân dung không hợp lệ: nền ảnh phải màu trắng! không được đeo kính hoặc trang phục che khuôn mặt!"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+> **Hướng dẫn cho Front-end:**
+> - Gọi API này ngay khi ảnh chân dung được tải lên Cloudinary.
+> - Nếu `data.valid === false`:
+>   - Hiển thị Toast/Cảnh báo lỗi màu đỏ với nội dung từ `data.rejection_reason` (hoặc liệt kê từng lỗi trong `data.reasons`).
+>   - Reset/Xóa trường ảnh chân dung (`setValue("portrait_image_url", "")`) để người dùng không thể gửi ảnh sai.
+> - Nếu `data.valid === true`:
+>   - Hiển thị thông báo: "Ảnh chân dung đạt tiêu chuẩn 3×4 cm!" và lưu URL vào form.
+
+---
+
+### 3.8. [Admin] Danh sách thí sinh
 
 | | |
 |---|---|

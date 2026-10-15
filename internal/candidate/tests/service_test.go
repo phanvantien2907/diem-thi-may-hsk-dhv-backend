@@ -22,7 +22,7 @@ func TestService_PatchMyProfile_SavesChineseName(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{}, nil)
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates`).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
@@ -62,7 +62,7 @@ func TestService_PatchMyProfile_RemovesAccidentalJSONQuotesFromChineseName(t *te
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{}, nil)
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates`).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
@@ -132,7 +132,7 @@ func TestService_GetUploadSignature(t *testing.T) {
 	defer db.Close()
 
 	fakeMedia := &fakeMediaService{}
-	svc := candidate.NewService(db, &fakeAuditService{}, fakeMedia)
+	svc := candidate.NewService(db, &fakeAuditService{}, fakeMedia, nil)
 
 	res, err := svc.GetUploadSignature(context.Background())
 	if err != nil {
@@ -156,7 +156,7 @@ func TestService_UploadDocument_Success(t *testing.T) {
 	defer db.Close()
 
 	fakeMedia := &fakeMediaService{}
-	svc := candidate.NewService(db, &fakeAuditService{}, fakeMedia)
+	svc := candidate.NewService(db, &fakeAuditService{}, fakeMedia, nil)
 
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
 		WithArgs(int64(1)).
@@ -195,7 +195,7 @@ func TestService_GetMyDocuments_Success(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{}, nil)
 
 	// Mock candidate lookup
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
@@ -246,7 +246,7 @@ func TestService_GetMyDocuments_NoCandidateProfile(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{})
+	svc := candidate.NewService(db, &fakeAuditService{}, &fakeMediaService{}, nil)
 
 	// Mock candidate lookup returning no rows
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).

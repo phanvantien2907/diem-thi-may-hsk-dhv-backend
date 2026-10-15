@@ -22,7 +22,7 @@ func TestService_AdminListCandidatesFiltered(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	req := request.AdminListCandidatesRequestDTO{
 		Status: "verified",
 		Level:  "HSK 3",
@@ -93,7 +93,7 @@ func TestService_AdminCandidateMetrics(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	mock.ExpectQuery(`(?s)WITH latest_documents AS.*COUNT\(\*\) AS total.*WHERE c\.candidate_is_deleted = FALSE`).
 		WillReturnRows(sqlmock.NewRows([]string{"total", "pending", "verified", "rejected"}).
 			AddRow(int64(10), int64(4), int64(5), int64(1)))
@@ -117,7 +117,7 @@ func TestService_AdminExportCandidatesByExamDate(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	examDate := "2026-11-27"
 	registeredAt := time.Date(2026, 10, 6, 8, 30, 0, 0, time.FixedZone("ICT", 7*60*60))
 	dob := time.Date(2000, 5, 15, 0, 0, 0, 0, time.UTC)
@@ -157,7 +157,7 @@ func TestService_AdminExportCandidates_AllStatusDoesNotFilter(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	mock.ExpectQuery(`(?s)WITH latest_documents AS.*SELECT c\.candidate_full_name.*ORDER BY c\.candidate_full_name ASC`).
 		WithArgs(time.Date(2026, 11, 27, 0, 0, 0, 0, time.UTC)).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -184,7 +184,7 @@ func TestService_AdminExportCandidates_InvalidExamDate(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	_, err = svc.AdminExportCandidates(context.Background(), request.AdminListCandidatesRequestDTO{ExamDate: "27/11/2026"})
 	if err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD") {
 		t.Fatalf("expected invalid date error, got %v", err)
@@ -202,7 +202,7 @@ func TestHandler_AdminExportCandidates_RequiresExamDate(t *testing.T) {
 	}
 	defer db.Close()
 
-	h := candidate.NewHandler(candidate.NewService(db, nil, nil))
+	h := candidate.NewHandler(candidate.NewService(db, nil, nil, nil))
 	r := gin.New()
 	r.GET("/admin/candidates/export", h.AdminExportCandidates)
 

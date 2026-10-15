@@ -18,7 +18,7 @@ func setupCandidateMockService(t *testing.T) (*candidate.Service, sqlmock.Sqlmoc
 	if err != nil {
 		t.Fatalf("failed to open sqlmock: %v", err)
 	}
-	svc := candidate.NewService(db, nil, nil) // passing nil for audit and media services
+	svc := candidate.NewService(db, nil, nil, nil) // passing nil for audit, media, and vision services
 	return svc, mock, db
 }
 
@@ -78,7 +78,7 @@ func TestHandler_GetMyDocuments_Success(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	h := candidate.NewHandler(svc)
 	_, _, r := testutils.SetupTestRouter()
 
@@ -127,7 +127,7 @@ func TestHandler_GetMyDocuments_NoProfile(t *testing.T) {
 	}
 	defer db.Close()
 
-	svc := candidate.NewService(db, nil, nil)
+	svc := candidate.NewService(db, nil, nil, nil)
 	h := candidate.NewHandler(svc)
 	_, _, r := testutils.SetupTestRouter()
 
@@ -153,3 +153,51 @@ func TestHandler_GetMyDocuments_NoProfile(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %s", err)
 	}
 }
+
+func TestHandler_ValidatePortrait_Validation(t *testing.T) {
+	svc, _, db := setupCandidateMockService(t)
+	defer db.Close()
+
+	h := candidate.NewHandler(svc)
+	_, _, r := testutils.SetupTestRouter()
+
+	r.Use(func(ctx *gin.Context) {
+		ctx.Set("user_id", int64(1))
+	})
+	r.POST("/me/candidate-profile/validate-portrait", h.ValidatePortrait)
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "empty body is rejected (required)",
+			body:       `{}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid url format",
+			body:       `{"portrait_image_url":"not-a-url"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "valid url passes validation",
+			body:       `{"portrait_image_url":"https://example.com/portrait.jpg"}`,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := testutils.BuildJSONRequest(http.MethodPost, "/me/candidate-profile/validate-portrait", tt.body)
+			r.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("expected status %d, got %d; body: %s", tt.wantStatus, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+

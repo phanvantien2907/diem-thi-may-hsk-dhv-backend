@@ -83,3 +83,26 @@ func ToDocumentResponseDTOList(entities []entities.CandidateDocumentEntity) []re
 	}
 	return dtos
 }
+
+// ToPortraitValidationResponseDTO maps PortraitValidationResult to its response DTO.
+func ToPortraitValidationResponseDTO(res *PortraitValidationResult) response.PortraitValidationResponseDTO {
+	if res == nil {
+		return response.PortraitValidationResponseDTO{Valid: true, Reasons: []string{}}
+	}
+	reasons := res.Reasons
+	if reasons == nil {
+		reasons = []string{}
+	}
+	return response.PortraitValidationResponseDTO{
+		Valid:             res.Valid,
+		HasFace:           res.HasFace,
+		HasGlasses:        res.HasGlasses,
+		IsWhiteBackground: res.IsWhiteBackground,
+		IsBlurred:         res.IsBlurred,
+		IsTooDark:         res.IsTooDark,
+		Brightness:        res.Brightness,
+		Reasons:           reasons,
+		RejectionReason:   res.RejectionReason,
+	}
+}
+
