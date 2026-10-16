@@ -61,7 +61,7 @@ func TestService_ManualApprove(t *testing.T) {
 
 		// Update payment
 		mock.ExpectExec(`UPDATE payments SET payment_status = 'success'`).
-			WithArgs(int64(100)).
+			WithArgs(int64(100), `["https://res.cloudinary.com/test.png"]`, "test manual approve").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		// Update registration
@@ -76,7 +76,7 @@ func TestService_ManualApprove(t *testing.T) {
 
 		mock.ExpectCommit()
 
-		res, err := svc.ManualApprove(context.Background(), 100, 1, "test manual approve")
+		res, err := svc.ManualApprove(context.Background(), 100, 1, "test manual approve", []string{"https://res.cloudinary.com/test.png"})
 		require.NoError(t, err)
 		assert.Equal(t, int64(100), res.PaymentID)
 		assert.Equal(t, "success", res.NewStatus)
@@ -90,7 +90,7 @@ func TestService_ManualApprove(t *testing.T) {
 				AddRow("success", int64(201), "confirmed", int64(301)))
 		mock.ExpectRollback()
 
-		_, err := svc.ManualApprove(context.Background(), 101, 1, "test manual approve")
+		_, err := svc.ManualApprove(context.Background(), 101, 1, "test manual approve", []string{"https://res.cloudinary.com/test.png"})
 		require.Error(t, err)
 		assert.True(t, dashboard.IsBusinessError(err))
 		assert.Contains(t, err.Error(), "Giao dịch đã được xác nhận")

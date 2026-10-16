@@ -2263,9 +2263,25 @@ Response là file `text/csv` gồm các cột: `Mã đơn hàng`, `Tên thí sin
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/payments/:id/confirm` |
 | **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Admin xác nhận thủ công cho các giao dịch chuyển khoản ngân hàng hoặc thanh toán ngoại tuyến (Bank Transfer / Cash). Chuyển trạng thái `pending → success` và tự động confirm đăng ký + đặt ghế |
+| **Use-case** | Admin xác nhận thủ công cho các giao dịch chuyển khoản ngân hàng hoặc tiền mặt (Bank Transfer / Cash). Bắt buộc đính kèm hình ảnh bằng chứng (biên lai/sao kê). Chuyển trạng thái `pending → success` và tự động confirm đăng ký + đặt ghế. |
 
 **Path Params:** `id` — ID giao dịch
+
+**Request Body:**
+
+```json
+{
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/receipt_01.jpg"
+  ],
+  "note": "Xác nhận đối chiếu sao kê ngân hàng Vietcombank"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Danh sách URL hình ảnh bằng chứng chuyển tiền |
+| `note` | `string` | ❌ | Tùy chọn | Ghi chú của quản trị viên |
 
 **Response (200 OK):** Trả về `AdminPaymentResponseDTO` đã cập nhật.
 
@@ -2273,25 +2289,15 @@ Response là file `text/csv` gồm các cột: `Mã đơn hàng`, `Tên thí sin
 
 | HTTP Code | Thông báo | Nguyên nhân |
 |---|---|---|
+| `400` | `"Dữ liệu yêu cầu không hợp lệ"` | Thiếu hoặc sai định dạng `evidence_urls` |
 | `404` | `"Không tìm thấy giao dịch"` | ID không tồn tại |
 | `409` | `"Giao dịch không ở trạng thái chờ thanh toán"` | Giao dịch không phải `pending` |
 | `409` | `"Không còn ghế trống cho phiếu đăng ký"` | Ghế đã được đặt hoặc đã hết thời gian giữ; request bị chặn để tránh overbooking |
 
-Mọi lần xác nhận đều khóa payment/registration/seat trong cùng transaction và ghi
+Mọi lần xác nhận đều khóa payment/registration/seat trong cùng transaction bằng `SELECT ... FOR UPDATE` và ghi
 `actor_account_id` của admin vào `audit_logs`.
 
----
-
-### 6.6.1. [Admin] Đồng bộ trạng thái PayOS
-
-| | |
-|---|---|
-| **Endpoint** | `POST /api/v1/admin/payments/:id/sync` |
-| **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Gọi `GET /v2/payment-requests/{orderCode}` của PayOS; nếu trạng thái `PAID` và số tiền khớp thì tự động success + confirm registration + book seat |
-
-Nếu PayOS chưa báo `PAID`, số tiền không khớp hoặc không còn ghế, API trả `409`
-và không chốt slot.
+> **🛡️ Cơ chế chống Double-Click (Idempotent):** Endpoint này được thiết kế an toàn tuyệt đối khi Admin bấm đúp chuột hoặc nhiều Admin cùng xác nhận đồng thời. Khi request thứ hai đi vào sau khi request đầu tiên đã commit thành công, hệ thống phát hiện giao dịch đã ở trạng thái `success`, tự động giải phóng lock và trả về ngay kết quả `200 OK` với dữ liệu thanh toán hiện tại, không gây lỗi `409 Conflict` khó hiểu trên giao diện và tuyệt đối không cộng dồn/overbook ghế.
 
 ---
 
@@ -2301,18 +2307,33 @@ và không chốt slot.
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/payments/:id/cancel` |
 | **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Admin xác nhận hủy trong một transaction ACID. Payment, hồ sơ đăng ký,
-registration, ghế và audit log cùng commit hoặc cùng rollback. Redis không được sử dụng. |
+| **Use-case** | Admin xác nhận hủy trong một transaction ACID kèm hình ảnh bằng chứng và lý do. Payment, hồ sơ đăng ký, ghế và audit log cùng commit hoặc cùng rollback. |
 
 **Path Params:** `id` — ID giao dịch
+
+**Request Body:**
+
+```json
+{
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/cancel_request.jpg"
+  ],
+  "reason": "Thí sinh có đơn xin rút đăng ký kèm giấy xác nhận viện phí"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Hình ảnh đơn/bằng chứng hủy giao dịch |
+| `reason` | `string` | ✅ | Min 3 ký tự | Lý do hủy giao dịch |
 
 **State Machine:**
 
 | Trạng thái hiện tại | Kết quả sau Cancel |
 |---|---|
 | `pending` | → `cancelled` |
-| `success` | → `refunded` |
-| `failed` / `expired` / `refunded` / `amount_mismatch` / `partial_paid` | ❌ Không thể hủy (409) |
+| `success` | → `pending_refund` (chờ kế toán thực hiện chuyển khoản hoàn tiền) |
+| `failed` / `expired` / `refunded` / `pending_refund` / `amount_mismatch` / `partial_paid` | ❌ Không thể hủy (409) |
 
 **Điều kiện khóa theo kỳ thi:**
 
@@ -2320,10 +2341,9 @@ registration, ghế và audit log cùng commit hoặc cùng rollback. Redis khô
 - Nếu `exam_session_date <= CURRENT_DATE` (đã qua hoặc đang trong ngày thi), API trả
   `409` và rollback toàn bộ; payment, registration và seat không thay đổi.
 - Chỉ khi kỳ thi chưa đến ngày thi, registration mới chuyển sang `cancelled`.
-- Seat chỉ được trả về `available` nếu đang ở trạng thái `held` hoặc `booked`; không
-  có bộ đếm khả dụng riêng và không cập nhật Redis.
+- Seat chỉ được trả về `available` nếu đang ở trạng thái `held` hoặc `booked`.
 - Với payment `success`, audit log dùng action `CANCEL_SUCCESS_PAYMENT`, lưu admin
-  actor, `transaction_id`, registration, seat và cờ `seat_released` trong cùng transaction.
+  actor, `transaction_id`, registration, seat và cờ `seat_released` trong cùng transaction. Payment chuyển sang `pending_refund`.
 
 **Response (200 OK):** Trả về `AdminPaymentResponseDTO` đã cập nhật.
 
@@ -2331,21 +2351,546 @@ registration, ghế và audit log cùng commit hoặc cùng rollback. Redis khô
 
 | HTTP Code | Thông báo | Nguyên nhân |
 |---|---|---|
+| `400` | `"Dữ liệu yêu cầu không hợp lệ"` | Thiếu `evidence_urls` hoặc `reason` |
 | `404` | `"Không tìm thấy giao dịch"` | ID không tồn tại |
 | `409` | `"Không thể hủy giao dịch ở trạng thái này"` | Trạng thái không hợp lệ để hủy |
 | `409` | `"Không thể hủy giao dịch sau ngày thi ..."` | Kỳ thi đã qua hoặc đang diễn ra; toàn bộ dữ liệu được giữ nguyên |
 
-### 6.7. [Admin] Đánh dấu giao dịch cần hoàn tiền
+---
+
+### 6.7. [Admin] Đánh dấu giao dịch cần hoàn tiền (Bước 1: Mark Refund)
 
 | | |
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/payments/:id/mark-refund` |
 | **Auth** | 🔐👑 JWT + Admin |
-| **Use-case** | Đưa giao dịch chuyển dư hoặc đã hủy vào trạng thái `refunded` để kế toán hoàn thủ công qua ngân hàng |
+| **Use-case** | Đưa giao dịch vào trạng thái `pending_refund` (Đã duyệt nhu cầu hoàn tiền, trả ghế về `available`, hủy đơn đăng ký). Đơn được đưa vào danh sách chờ kế toán chuyển khoản thủ công qua ngân hàng. |
+
+**Path Params:** `id` — ID giao dịch
+
+**Request Body:**
+
+```json
+{
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/refund_proof.jpg"
+  ],
+  "reason": "Chuyển tiền thừa ca thi, kế toán lập lệnh hoàn trả"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Bằng chứng yêu cầu hoàn tiền |
+| `reason` | `string` | ✅ | Min 3 ký tự | Lý do hoàn tiền |
+
+**State Machine:** Chuyển trạng thái giao dịch sang `pending_refund`.
+- Idempotent: Nếu giao dịch đã ở `pending_refund`, API trả về 200 OK ngay lập tức.
+- Nếu kỳ thi chưa diễn ra, ghế được trả về `available` và đơn đăng ký chuyển sang `cancelled`.
+
+**Response (200 OK):** Trả về `AdminPaymentResponseDTO` với `status: "pending_refund"`.
 
 ---
 
-### 6.8. Tự động hết hạn giao dịch
+### 6.7.1. [Admin] Xác nhận đã hoàn tiền xong (Bước 2: Confirm Refund)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/confirm-refund` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | **Đóng vòng lặp hoàn tiền**: Sau khi bộ phận kế toán/Admin đã thực hiện chuyển khoản lại tiền vào tài khoản ngân hàng của thí sinh, Admin gọi endpoint này để xác nhận hoàn tiền thành công, chuyển từ `pending_refund → refunded`. |
+
+**Path Params:** `id` — ID giao dịch
+
+**Request Body:**
+
+```json
+{
+  "bank_ref": "FT261016888899",
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/bank_refund_slip.jpg"
+  ],
+  "note": "Đã chuyển khoản hoàn 100% lệ phí về STK VCB 0123456789 của thí sinh"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `bank_ref` | `string` | ✅ | Min 3 ký tự | Mã giao dịch chuyển khoản hoàn tiền trên ngân hàng (FT... / VCB...) |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Ảnh ủy nhiệm chi / biên lai chuyển khoản ngân hàng hoàn tiền |
+| `note` | `string` | ❌ | Tùy chọn | Ghi chú kế toán/admin |
+
+**State Machine:**
+- Chỉ cho phép giao dịch đang ở trạng thái `pending_refund`.
+- Idempotent: Nếu giao dịch đã ở `refunded`, API trả về 200 OK với dữ liệu hiện tại (an toàn khi double-click).
+- Cập nhật `status = 'refunded'`, lưu `refunded_at`, `refund_bank_ref`, `refund_evidence_urls`.
+- Ghi Audit Log với hành động `CONFIRM_REFUND`.
+
+**Response (200 OK):** Trả về `AdminPaymentResponseDTO` với `status: "refunded"`, `refunded_at`, `refund_bank_ref`, `refund_evidence_urls`.
+
+**Lỗi có thể xảy ra:**
+
+| HTTP Code | Thông báo | Nguyên nhân |
+|---|---|---|
+| `400` | `"Dữ liệu yêu cầu không hợp lệ"` | Thiếu `bank_ref` hoặc `evidence_urls` |
+| `404` | `"Không tìm thấy giao dịch"` | ID không tồn tại |
+| `409` | `"Giao dịch không ở trạng thái chờ hoàn tiền (pending_refund)"` | Giao dịch chưa qua bước mark-refund |
+
+---
+
+### 6.8. [Admin] Lấy chữ ký tải ảnh bằng chứng Cloudinary
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/payments/evidence-upload-signature` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Frontend gọi endpoint này để lấy chữ ký bảo mật (signature) trước khi tải ảnh bằng chứng trực tiếp lên Cloudinary folder `hsk/payment-evidence`. |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "timestamp": 1727400000,
+    "signature": "a1b2c3d4e5f6...",
+    "api_key": "123456789012345",
+    "cloud_name": "dhv-hsk",
+    "folder": "hsk/payment-evidence"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 6.9. [Admin] Edge Case 1: Đồng bộ trạng thái PayOS & Khôi phục chỗ
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/sync` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | **Thí sinh bị trừ tiền thành công nhưng đơn bị hủy**: Thí sinh quét QR lúc phút 14, ngân hàng xử lý chậm sang phút 16 webhook mới đến (ghế đã bị nhả sau 15p). Admin bấm "Đồng bộ PayOS" để truy vấn trực tiếp cổng thanh toán. |
+
+**Path Params:** `id` — ID giao dịch
+
+**Logic xử lý tự động:**
+1. Backend gọi trực tiếp API Query Status sang PayOS (`GET /v2/payment-requests/{orderCode}`).
+2. Nếu PayOS xác nhận đã thanh toán (`PAID`) và số tiền khớp:
+   - **Trường hợp ghế còn khả dụng (`available` hoặc `held` của chính mình):** Hệ thống tự động kích hoạt lại đơn đăng ký sang `confirmed`, khóa ghế sang `booked`, và đánh dấu payment thành `success`.
+   - **Trường hợp ghế đã bị người khác đặt mất:** Hệ thống tự động chuyển payment sang trạng thái `refunded` (đánh dấu hoàn tiền 100% cho thí sinh), hủy đơn đăng ký và ghi rõ lý do trong log kiểm toán.
+
+**Response (200 OK):** Trả về `AdminPaymentResponseDTO` đã đồng bộ.
+
+---
+
+### 6.10. [Admin] Edge Case 2: Thanh toán sai số tiền (Underpayment & Overpayment)
+
+#### 6.10.1. Thanh toán thiếu tiền (Underpayment): Tạo link nộp bổ sung
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/top-up` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Thí sinh chuyển khoản thiếu (ví dụ lệ phí 500k nhưng chỉ chuyển 400k). Admin tạo link thanh toán bổ sung PayOS cho số tiền còn thiếu (100k), hệ thống đóng băng và gia hạn giữ chỗ thêm X giờ, đồng thời gửi thông báo tự động (Email & Zalo). |
+
+**Path Params:** `id` — ID giao dịch gốc
+
+**Request Body:**
+
+```json
+{
+  "additional_amount": 100000,
+  "extend_hours": 24,
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/underpaid_stmt.jpg"
+  ],
+  "note": "Thí sinh mới chuyển 400k/500k, tạo link nộp thêm 100k",
+  "return_url": "https://diemthihsk.dhv.edu.vn/dang-ky-thi?payment=topup_success",
+  "cancel_url": "https://diemthihsk.dhv.edu.vn/dang-ky-thi?payment=topup_cancel"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `additional_amount` | `integer` | ❌ | Min 1000 VNĐ | Số tiền bổ sung (nếu bỏ trống, hệ thống tự tính: `lệ phí ca thi - số tiền đã nhận`) |
+| `extend_hours` | `integer` | ❌ | 1 đến 168 (giờ) | Số giờ gia hạn giữ chỗ (mặc định 24 giờ) |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Bằng chứng thí sinh chuyển thiếu tiền |
+| `note` | `string` | ❌ | Tùy chọn | Ghi chú của quản trị viên |
+| `return_url` | `string` | ❌ | URL hợp lệ | Trang quay về khi thanh toán bổ sung thành công |
+| `cancel_url` | `string` | ❌ | URL hợp lệ | Trang quay về khi hủy thanh toán bổ sung |
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "top_up_payment_id": 105,
+    "parent_payment_id": 101,
+    "exam_registration_id": 42,
+    "additional_amount": 100000,
+    "checkout_url": "https://pay.payos.vn/web/topup123",
+    "held_until": "2026-09-28T09:00:00+07:00",
+    "notification_sent": true,
+    "created_at": "2026-09-27T09:00:00+07:00"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+#### 6.10.2. Thanh toán thừa tiền (Overpayment): Xác nhận giữ chỗ & hoàn tiền chênh lệch
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/:id/resolve-overpayment` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Thí sinh chuyển thừa tiền (ví dụ lệ phí 500k nhưng chuyển 600k). Admin bấm xử lý: hệ thống xác nhận đăng ký và khóa chỗ (`success`), đồng thời tạo bản ghi hoàn tiền thừa 100k (`refunded`) cho kế toán hoàn lại. |
+
+**Path Params:** `id` — ID giao dịch
+
+**Request Body:**
+
+```json
+{
+  "refund_amount": 100000,
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/overpaid_stmt.jpg"
+  ],
+  "note": "Xác nhận đăng ký và tạo lệnh hoàn trả 100.000 VNĐ nộp thừa"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `refund_amount` | `integer` | ❌ | Min 1000 VNĐ | Số tiền hoàn lại (nếu bỏ trống, hệ thống tự tính: `số tiền đã nhận - lệ phí ca thi`) |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Hình ảnh sao kê chuyển thừa |
+| `note` | `string` | ✅ | Min 3 ký tự | Ghi chú xử lý thừa tiền |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "payment_id": 101,
+    "status": "success",
+    "exam_registration_id": 42,
+    "refund_payment_id": 106,
+    "refund_amount": 100000,
+    "refund_status": "refunded",
+    "seat_booked": true,
+    "message": "Đã xác nhận đăng ký thi và tạo bản ghi hoàn tiền phần chênh lệch thừa"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 6.11. [Admin] Edge Case 3: Giao dịch trùng lặp (Double Charge)
+
+#### 6.11.1. Danh sách cảnh báo trùng lặp
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/payments/double-charges` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Hệ thống tự động quét và cảnh báo các trường hợp thí sinh có từ 2 giao dịch thành công trở lên cho cùng 1 ca thi. |
+
+**Query Params:**
+- `page`: Trang hiện tại (mặc định 1)
+- `limit`: Số bản ghi mỗi trang (mặc định 20)
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "candidate_id": 12,
+      "candidate_name": "Nguyễn Văn A",
+      "candidate_email": "vana@example.com",
+      "exam_session_id": 5,
+      "exam_name": "HSK 4 - Ca sáng",
+      "payment_count": 2,
+      "total_amount": 1000000,
+      "payments": [
+        {
+          "payment_id": 101,
+          "order_code": 101,
+          "amount": 500000,
+          "status": "success",
+          "paid_at": "2026-09-27T08:00:00+07:00"
+        },
+        {
+          "payment_id": 102,
+          "order_code": 102,
+          "amount": 500000,
+          "status": "success",
+          "paid_at": "2026-09-27T08:02:00+07:00"
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "per_page": 20,
+    "total_items": 1,
+    "total_pages": 1
+  }
+}
+```
+
+#### 6.11.2. Giải quyết giao dịch trùng lặp
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/resolve-double-charge` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Admin chọn giữ lại 1 giao dịch hợp lệ và đưa tất cả giao dịch trùng lặp còn lại vào danh sách hoàn tiền 100% (`refunded`). |
+
+**Request Body:**
+
+```json
+{
+  "keep_payment_id": 101,
+  "refund_payment_ids": [102],
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/double_charge_proof.jpg"
+  ],
+  "note": "Giữ giao dịch 101, hoàn trả giao dịch 102 do thí sinh quét mã QR 2 lần"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `keep_payment_id` | `integer` | ✅ | Min 1 | ID giao dịch hợp lệ được giữ lại (`success`) |
+| `refund_payment_ids` | `array[integer]` | ✅ | Min 1 item | Danh sách ID giao dịch trùng cần hoàn lại 100% |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Hình ảnh sao kê chứng minh trùng lặp |
+| `note` | `string` | ✅ | Min 3 ký tự | Ghi chú xử lý |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "keep_payment_id": 101,
+    "refunded_payment_ids": [102],
+    "total_refund_amount": 500000,
+    "message": "Đã giữ 1 giao dịch hợp lệ và chuyển các giao dịch trùng sang trạng thái hoàn tiền"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 6.12. [Admin] Edge Case 4: Quản lý tài khoản treo / Chuyển khoản sai nội dung (Suspense Account)
+
+> **Cơ chế bắt tự động:** Khi thí sinh chuyển khoản nhưng gõ sai `orderCode`, Webhook PayOS không khớp được với đơn hàng nào trong hệ thống. Stored Procedure `fn_process_payos_webhook` tự động lưu bản ghi vào bảng `payment_suspense_transactions` với `suspense_source = 'webhook'`, giúp Admin không bị sót bất kỳ khoản tiền nào.
+
+#### 6.12.1. Danh sách giao dịch treo
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/payments/suspense` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Xem danh sách các khoản tiền chuyển sai nội dung, chưa khớp được với đơn đăng ký. |
+
+**Query Params:**
+- `page`: Trang hiện tại (mặc định 1)
+- `limit`: Số bản ghi mỗi trang (mặc định 20)
+- `status`: Lọc trạng thái (`pending`, `matched`, `refunded`)
+- `from`: Ngày bắt đầu (`YYYY-MM-DD`)
+- `to`: Ngày kết thúc (`YYYY-MM-DD`)
+- `search`: Tìm kiếm theo nội dung chuyển khoản hoặc mã giao dịch ngân hàng
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "suspense_id": 1,
+      "amount": 500000,
+      "bank_ref": "FT2409270001",
+      "transfer_content": "Nguyen Van A nop le phi",
+      "transfer_time": "2026-09-27T08:30:00+07:00",
+      "status": "pending",
+      "source": "webhook",
+      "evidence_urls": [],
+      "admin_note": "",
+      "created_at": "2026-09-27T08:30:05+07:00"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "per_page": 20,
+    "total_items": 1,
+    "total_pages": 1
+  }
+}
+```
+
+#### 6.12.2. Nhập giao dịch treo thủ công
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/suspense` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Kế toán phát hiện tiền nổi trên sao kê tài khoản ngân hàng của trường nhưng không qua PayOS hoặc chuyển nhầm, nhập vào hệ thống để theo dõi. |
+
+**Request Body:**
+
+```json
+{
+  "amount": 500000,
+  "bank_ref": "VCB.20260927.999",
+  "transfer_content": "LE HOANG NAM THI HSK",
+  "transfer_time": "2026-09-27T09:15:00+07:00",
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/vcb_slip.jpg"
+  ],
+  "admin_note": "Chuyển khoản trực tiếp tới tài khoản VCB của nhà trường"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `amount` | `integer` | ✅ | Min 1000 VNĐ | Số tiền nhận được |
+| `bank_ref` | `string` | ✅ | Không rỗng | Mã giao dịch ngân hàng |
+| `transfer_content` | `string` | ✅ | Không rỗng | Nội dung chuyển khoản trên sao kê |
+| `transfer_time` | `string` | ❌ | ISO8601/RFC3339 | Thời gian chuyển tiền |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Hình ảnh chứng từ sao kê |
+| `admin_note` | `string` | ❌ | Tùy chọn | Ghi chú của Admin |
+
+**Response (201 Created):** Trả về `SuspenseTransactionResponseDTO`.
+
+#### 6.12.3. Khớp giao dịch treo vào phiếu đăng ký
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/suspense/:id/match` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | Sau khi đối chiếu xác minh được thí sinh sở hữu khoản tiền treo, Admin khớp tiền vào phiếu đăng ký thi. Hệ thống tự động chuyển đơn sang `confirmed`, khóa ghế `booked` và ghi nhận giao dịch `success`. |
+
+**Path Params:** `id` — ID giao dịch treo (`suspense_id`)
+
+**Request Body:**
+
+```json
+{
+  "exam_registration_id": 42,
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/reconcile_match.jpg"
+  ],
+  "note": "Khớp giao dịch treo cho thí sinh Lê Hoàng Nam sau khi xuất trình căn cước"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `exam_registration_id` | `integer` | ✅ | Min 1 | ID phiếu đăng ký thi cần khớp tiền |
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL hợp lệ | Bằng chứng đối chiếu xác minh |
+| `note` | `string` | ❌ | Tùy chọn | Ghi chú đối soát |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "suspense_id": 1,
+    "payment_id": 107,
+    "exam_registration_id": 42,
+    "amount": 500000,
+    "status": "matched",
+    "seat_booked": true,
+    "message": "Khớp giao dịch treo thành công và đã giữ chỗ cho thí sinh"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+#### 6.12.4. Nhập sao kê ngân hàng tự động hàng loạt (Bulk Import Statement)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/payments/suspense/import` |
+| **Auth** | 🔐👑 JWT + Admin |
+| **Use-case** | **Giải quyết bài toán volume giao dịch thực tế**: Khi ngân hàng gửi file sao kê định kỳ hoặc kế toán trích xuất danh sách giao dịch từ Internet Banking (Vietcombank, BIDV, VietinBank...). Thay vì gõ tay từng dòng, Admin import file CSV hoặc gửi danh sách JSON. Hệ thống tự động: <br>1. Khử trùng lặp theo `bank_ref` (bỏ qua giao dịch đã tồn tại). <br>2. Tự động bóc tách nội dung chuyển khoản để nhận diện mã `orderCode`. <br>3. Tự động khớp (Auto-match) với đơn đăng ký thi đang `pending` và book ghế ngay lập tức. |
+
+**Header Hỗ trợ:**
+- `Content-Type: multipart/form-data`: Upload file CSV sao kê (field `file`).
+- `Content-Type: application/json`: Gửi danh sách bản ghi trực tiếp qua JSON body.
+
+**Cách 1: Upload file CSV (`multipart/form-data`)**
+- Form field: `file` (File `.csv` UTF-8).
+- Header CSV tự động nhận diện linh hoạt các định dạng phổ biến:
+  - Cột mã giao dịch: `bank_ref`, `ref`, `transaction_id`, `so_giao_dich`, `ma_gd`
+  - Cột số tiền: `amount`, `credit`, `so_tien`, `co`
+  - Cột nội dung: `transfer_content`, `content`, `description`, `noi_dung`
+  - Cột thời gian: `transfer_time`, `time`, `date`, `ngay_gd`
+
+**Cách 2: Gửi JSON body (`application/json`)**
+
+```json
+{
+  "items": [
+    {
+      "bank_ref": "VCB.20261016.001",
+      "amount": 500000,
+      "transfer_content": "HSK 101 nop le phi",
+      "transfer_time": "2026-10-16T08:00:00+07:00",
+      "admin_note": "Import từ sao kê VCB sáng 16/10"
+    },
+    {
+      "bank_ref": "VCB.20261016.002",
+      "amount": 600000,
+      "transfer_content": "Chuyen tien thi HSK",
+      "transfer_time": "2026-10-16T08:05:00+07:00",
+      "admin_note": "Nội dung thiếu orderCode -> lưu vào suspense để tra cứu sau"
+    }
+  ]
+}
+```
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "imported_count": 2,
+    "matched_count": 1,
+    "skipped_count": 0,
+    "message": "Nhập sao kê thành công: 2 giao dịch mới, 1 giao dịch tự động khớp, 0 giao dịch trùng lặp bỏ qua"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+| Field | Kiểu | Mô tả |
+|---|---|---|
+| `imported_count` | `integer` | Số lượng bản ghi mới được lưu vào hệ thống |
+| `matched_count` | `integer` | Số lượng bản ghi tự động khớp thành công với đơn đăng ký thi |
+| `skipped_count` | `integer` | Số lượng bản ghi bị trùng `bank_ref` được tự động bỏ qua (idempotent) |
+
+---
+
+### 6.13. Tự động hết hạn giao dịch (Worker)
 
 Worker nền quét định kỳ các payment `pending` quá 15 phút, chuyển sang `expired`,
 hủy registration `pending_payment` và trả seat `held` về `available` trong một
@@ -3255,10 +3800,15 @@ transaction PostgreSQL. Không sử dụng Redis.
 
 | Giá trị | Mô tả |
 |---|---|
-| `pending` | Chờ xử lý |
-| `success` | Thành công |
-| `failed` | Thất bại |
-| `refunded` | Đã hoàn tiền |
+| `pending` | Chờ xử lý thanh toán |
+| `success` | Thanh toán thành công |
+| `failed` | Thanh toán thất bại |
+| `cancelled` | Đã hủy (trước khi thanh toán thành công) |
+| `expired` | Hết hạn giữ chỗ (quá 15 phút chưa thanh toán) |
+| `pending_refund` | Chờ hoàn tiền (đã duyệt hoàn tiền, ghế đã nhả, chờ kế toán chuyển khoản lại cho thí sinh) |
+| `refunded` | Đã hoàn tiền xong (kế toán đã chuyển khoản thực tế, kèm mã `bank_ref` và ảnh ủy nhiệm chi) |
+| `partial_paid` | Thanh toán thiếu tiền (chờ nộp bổ sung qua top-up) |
+| `amount_mismatch` | Thanh toán sai số tiền (thừa hoặc không khớp) |
 
 ### 12.11. Exam Result Status
 
@@ -3341,20 +3891,29 @@ transaction PostgreSQL. Không sử dụng Redis.
 ### 13.2. Thanh toán (Payment)
 
 ```
-     ┌─────────┐
-     │ pending  │
-     └────┬────┘
-          │
-    ┌─────┼─────────┐
-    ▼     ▼         ▼
- success failed  refunded
+           ┌──────────┐
+           │ pending  │
+           └────┬─────┘
+                │
+     ┌──────────┼──────────────┬───────────────┐
+     ▼          ▼              ▼               ▼
+  success     failed       cancelled        expired
+     │                         (admin hủy)   (quá 15p)
+     │ (hủy / mark-refund / double-charge / overpayment / sync mất ghế)
+     ▼
+ pending_refund (Bước 1: ghế đã nhả, registration đã hủy, tiền chờ kế toán chuyển khoản)
+     │
+     │ POST /admin/payments/:id/confirm-refund (Bước 2: chuyển khoản + ủy nhiệm chi + bank_ref)
+     ▼
+  refunded (TERMINAL)
 ```
 
-- `pending` → `success`: Trigger tự động chuyển đăng ký → `confirmed`
-- `pending` → `failed`: Thanh toán thất bại
-- `pending` → `refunded`: Không áp dụng trực tiếp; admin cancel chuyển sang `cancelled`
-- `success` → `refunded`: Admin cancel trước ngày thi hoặc đánh dấu hoàn tiền
-- `pending` → `cancelled`: Admin cancel hoặc worker hết hạn
+- `pending` → `success`: Webhook PayOS khớp hoặc Admin xác nhận thủ công (Idempotent chống double-click)
+- `pending` → `failed`: Thanh toán thất bại qua cổng
+- `pending` → `cancelled`: Admin cancel hoặc thí sinh chủ động hủy trước khi thanh toán
+- `pending` → `expired`: Quá 15 phút không thanh toán
+- `success` → `pending_refund`: Admin cancel trước ngày thi, hoặc bấm `mark-refund`, hoặc giải quyết `double-charge`/`overpayment`/`sync`
+- `pending_refund` → `refunded`: Admin gọi `confirm-refund` cung cấp `bank_ref` và ảnh chứng từ ủy nhiệm chi để đóng vòng lặp kế toán (Terminal)
 
 ### 13.3. Ghế thi (Seat)
 
@@ -3437,6 +3996,16 @@ transaction PostgreSQL. Không sử dụng Redis.
 | 53 | `POST` | `/admin/payments/:id/sync` | 🔐👑 | Payment |
 | 54 | `POST` | `/admin/payments/:id/cancel` | 🔐👑 | Payment |
 | 55 | `POST` | `/admin/payments/:id/mark-refund` | 🔐👑 | Payment |
+| 56 | `POST` | `/admin/payments/:id/confirm-refund` | 🔐👑 | Payment |
+| 57 | `GET` | `/admin/payments/evidence-upload-signature` | 🔐👑 | Payment |
+| 58 | `POST` | `/admin/payments/:id/top-up` | 🔐👑 | Payment |
+| 59 | `POST` | `/admin/payments/:id/resolve-overpayment` | 🔐👑 | Payment |
+| 60 | `GET` | `/admin/payments/double-charges` | 🔐👑 | Payment |
+| 61 | `POST` | `/admin/payments/resolve-double-charge` | 🔐👑 | Payment |
+| 62 | `GET` | `/admin/payments/suspense` | 🔐👑 | Payment |
+| 63 | `POST` | `/admin/payments/suspense` | 🔐👑 | Payment |
+| 64 | `POST` | `/admin/payments/suspense/:id/match` | 🔐👑 | Payment |
+| 65 | `POST` | `/admin/payments/suspense/import` | 🔐👑 | Payment |
 | 50 | `GET` | `/me/certificates` | 🔐 | Certificate |
 | 51 | `GET` | `/me/certificates/:id` | 🔐 | Certificate |
 | 52 | `GET` | `/me/certificates/:id/pdf` | 🔐 | Certificate |
@@ -3894,8 +4463,21 @@ function connectWS(token, onMessage) {
 |---|---|---|
 | `id` | `integer` | ID giao dịch (Payment ID) |
 
-Request body không cần. Admin được xác định từ JWT; `actor_account_id` được ghi
-vào `audit_logs`.
+**Request Body:**
+
+```json
+{
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/receipt_01.jpg"
+  ],
+  "note": "Xác nhận đối chiếu sao kê ngân hàng"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL | Hình ảnh biên lai/sao kê chứng minh thanh toán |
+| `note` | `string` | ❌ | Tùy chọn | Ghi chú của quản trị viên |
 
 **Response (200 OK):**
 
@@ -3949,8 +4531,21 @@ vào `audit_logs`.
 |---|---|---|
 | `id` | `integer` | ID giao dịch (Payment ID) |
 
-Request body không cần. Admin được xác định từ JWT và thao tác được ghi vào
-`audit_logs`.
+**Request Body:**
+
+```json
+{
+  "evidence_urls": [
+    "https://res.cloudinary.com/demo/image/upload/v1/hsk/payment-evidence/refund_proof.jpg"
+  ],
+  "reason": "Hoàn tiền cho thí sinh chuyển khoản thừa"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `evidence_urls` | `array[string]` | ✅ | Min 1 URL | Hình ảnh chứng từ/ủy nhiệm chi hoàn tiền |
+| `reason` | `string` | ✅ | Min 3 ký tự | Lý do hoàn tiền |
 
 **Response (200 OK):**
 
@@ -3959,7 +4554,7 @@ Request body không cần. Admin được xác định từ JWT và thao tác đ
   "success": true,
   "data": {
     "id": 42,
-    "status": "refunded"
+    "status": "pending_refund"
   },
   "error": null,
   "meta": null
@@ -3969,7 +4564,7 @@ Request body không cần. Admin được xác định từ JWT và thao tác đ
 | Field | Kiểu | Mô tả |
 |---|---|---|
 | `id` | `integer` | ID giao dịch đã đánh dấu hoàn tiền |
-| `status` | `string` | Trạng thái mới: `refunded` |
+| `status` | `string` | Trạng thái mới: `pending_refund` |
 
 **Lỗi có thể xảy ra:**
 
@@ -3979,11 +4574,12 @@ Request body không cần. Admin được xác định từ JWT và thao tác đ
 | `404` | `"Không tìm thấy giao dịch"` | Payment ID không tồn tại |
 | `409` | `"Giao dịch chưa đủ điều kiện đánh dấu hoàn tiền"` | Payment chưa ở trạng thái có thể hoàn tiền |
 
-> **⚠️ Lưu ý quan trọng:** Thao tác này sẽ đồng thời:
-> 1. Cập nhật `payment_status` → `refunded`
+> **⚠️ Lưu ý quan trọng:** Thao tác này là Bước 1 trong quy trình 2 bước:
+> 1. Cập nhật `payment_status` → `pending_refund`
 > 2. Cập nhật `exam_registration_status` → `cancelled`
-> 3. Cập nhật `exam_seat_status` → `available` (trả ghế)
+> 3. Cập nhật `exam_seat_status` → `available` (nhả ghế thi trước ngày thi)
 > 4. Ghi Audit Log với `actor_account_id` của Admin
+> 5. **Bước tiếp theo (Bước 2):** Sau khi kế toán thực hiện chuyển khoản lại cho thí sinh, Admin gọi `POST /api/v1/admin/payments/:id/confirm-refund` (kèm mã giao dịch ngân hàng `bank_ref` và ảnh ủy nhiệm chi) để đóng vòng lặp trạng thái sang `refunded`.
 
 ---
 

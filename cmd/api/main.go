@@ -92,7 +92,7 @@ func main() {
 		ClientID:    cfg.PayOSClientID,
 		ApiKey:      cfg.PayOSApiKey,
 		ChecksumKey: cfg.PayOSChecksumKey,
-	})
+	}, mediaSvc)
 	resSvc := result.NewService(db, auditSvc)
 	certSvc := certificate.NewService(db, auditSvc, cfg.WebhookSecret)
 	notifSvc := notification.NewService(db)

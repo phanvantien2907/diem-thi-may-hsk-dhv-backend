@@ -24,18 +24,23 @@ func NewService(cloudinaryURL string) (*Service, error) {
 	return &Service{cld: cld}, nil
 }
 
-// GenerateSignature creates a signature for direct uploads from the client.
-func (s *Service) GenerateSignature() (string, int64, string, string, error) {
+// GenerateFolderSignature creates a signature for direct uploads to a specific folder.
+func (s *Service) GenerateFolderSignature(folder string) (string, int64, string, string, error) {
 	timestamp := time.Now().Unix()
 	params := url.Values{}
 	params.Set("timestamp", strconv.FormatInt(timestamp, 10))
-	params.Set("folder", "hsk_vinh_university/candidates")
+	params.Set("folder", folder)
 
 	signature, err := api.SignParameters(params, s.cld.Config.Cloud.APISecret)
 	if err != nil {
 		return "", 0, "", "", fmt.Errorf("media: generate signature: %w", err)
 	}
 	return signature, timestamp, s.cld.Config.Cloud.APIKey, s.cld.Config.Cloud.CloudName, nil
+}
+
+// GenerateSignature creates a signature for direct uploads from the client (candidate documents).
+func (s *Service) GenerateSignature() (string, int64, string, string, error) {
+	return s.GenerateFolderSignature("hsk_vinh_university/candidates")
 }
 
 // DeleteImage removes an image from Cloudinary if a DB transaction fails.

@@ -13,12 +13,14 @@ type ExceptionListRequestDTO struct {
 
 // ManualApproveRequestDTO holds the body for manual-approve.
 type ManualApproveRequestDTO struct {
-	Reason string `json:"reason" validate:"required,min=5,max=500"`
+	Reason       string   `json:"reason" validate:"required,min=5,max=500"`
+	EvidenceURLs []string `json:"evidence_urls" validate:"required,min=1,dive,url"`
 }
 
 // RefundMarkRequestDTO holds the body for refund-mark.
 type RefundMarkRequestDTO struct {
-	Reason string `json:"reason" validate:"required,min=5,max=500"`
+	Reason       string   `json:"reason" validate:"required,min=5,max=500"`
+	EvidenceURLs []string `json:"evidence_urls" validate:"required,min=1,dive,url"`
 }
 
 // AuditLogMeRequestDTO holds query params for the admin's own audit log.

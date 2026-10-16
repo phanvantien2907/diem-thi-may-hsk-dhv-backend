@@ -32,6 +32,7 @@ const (
 	PayStatusSuccess        PaymentStatus = "success"
 	PayStatusFailed         PaymentStatus = "failed"
 	PayStatusRefunded       PaymentStatus = "refunded"
+	PayStatusPendingRefund  PaymentStatus = "pending_refund"
 	PayStatusExpired        PaymentStatus = "expired"
 	PayStatusCancelled      PaymentStatus = "cancelled"
 	PayStatusAmountMismatch PaymentStatus = "amount_mismatch"
@@ -41,7 +42,7 @@ const (
 // Valid reports whether s is a recognised PaymentStatus.
 func (s PaymentStatus) Valid() bool {
 	switch s {
-	case PayStatusPending, PayStatusSuccess, PayStatusFailed, PayStatusRefunded,
+	case PayStatusPending, PayStatusSuccess, PayStatusFailed, PayStatusRefunded, PayStatusPendingRefund,
 		PayStatusExpired, PayStatusCancelled, PayStatusAmountMismatch, PayStatusPartialPaid:
 		return true
 	}

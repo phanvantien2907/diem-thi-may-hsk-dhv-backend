@@ -1465,6 +1465,88 @@
                 }
             }
         },
+        "/admin/payments/double-charges": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cảnh báo các thí sinh / ca thi có từ 2 giao dịch thành công trở lên.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Danh sách cảnh báo giao dịch trùng (Double Charge)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Trang",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Số lượng mỗi trang",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/evidence-upload-signature": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Trả về Cloudinary upload signature để frontend tải ảnh bằng chứng trực tiếp lên Cloudinary folder hsk/payment-evidence.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Lấy chữ ký tải ảnh bằng chứng",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/payments/export": {
             "get": {
                 "security": [
@@ -1482,6 +1564,341 @@
                 "responses": {}
             }
         },
+        "/admin/payments/resolve-double-charge": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Giữ lại 1 giao dịch hợp lệ và đánh dấu hoàn tiền 100% cho các giao dịch trùng lặp còn lại.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Giải quyết giao dịch trùng (Double Charge)",
+                "parameters": [
+                    {
+                        "description": "Dữ liệu xử lý giao dịch trùng",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminResolveDoubleChargeRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Xung đột nghiệp vụ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/suspense": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy danh sách giao dịch chuyển khoản sai nội dung / chưa khớp.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Danh sách giao dịch treo (Suspense Account)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Trang",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Số lượng mỗi trang",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Trạng thái (pending, matched, refunded)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Từ ngày (YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Đến ngày (YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tìm kiếm (nội dung chuyển khoản hoặc mã giao dịch ngân hàng)",
+                        "name": "search",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin nhập thông tin chuyển khoản không xác định để theo dõi trong tài khoản treo.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Thêm giao dịch treo / chuyển khoản sai nội dung",
+                "parameters": [
+                    {
+                        "description": "Dữ liệu giao dịch treo",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminCreateSuspenseRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/suspense/import": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hỗ trợ upload file CSV sao kê ngân hàng hoặc gửi danh sách JSON để tự động lưu vào tài khoản treo và đối soát tự động.",
+                "consumes": [
+                    "multipart/form-data",
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Import sao kê ngân hàng vào tài khoản treo",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "File CSV sao kê ngân hàng",
+                        "name": "file",
+                        "in": "formData"
+                    },
+                    {
+                        "description": "Dữ liệu JSON nếu không dùng file",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminImportSuspenseRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/payments/suspense/{id}/match": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Khớp tiền từ tài khoản treo vào phiếu đăng ký của thí sinh, tạo giao dịch thanh toán thành công và giữ chỗ thi.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Khớp giao dịch treo vào phiếu đăng ký",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Suspense ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu khớp giao dịch",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminMatchSuspenseRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy bản ghi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Xung đột nghiệp vụ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/payments/{id}/cancel": {
             "post": {
                 "security": [
@@ -1489,7 +1906,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Admin hủy giao dịch trong một transaction ACID. Với payment success,\nhệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.\nSau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.",
+                "description": "Admin hủy giao dịch trong một transaction ACID kèm hình ảnh bằng chứng và lý do.\nVới payment success, hệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.\nSau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1507,11 +1924,27 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Dữ liệu hủy giao dịch kèm bằng chứng",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminCancelPaymentRequestDTO"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1548,7 +1981,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Admin xác nhận thanh toán thủ công (chuyển pending → success).",
+                "description": "Admin xác nhận thanh toán thủ công (chuyển pending → success). Cần đính kèm bằng chứng.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1566,11 +1999,27 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Dữ liệu xác nhận kèm bằng chứng",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminConfirmPaymentRequestDTO"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1600,12 +2049,91 @@
                 }
             }
         },
+        "/admin/payments/{id}/confirm-refund": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Kế toán/Admin xác nhận đã chuyển khoản trả lại tiền cho thí sinh thành công (chuyển pending_refund → refunded).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Xác nhận đã hoàn tiền",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu xác nhận hoàn tiền",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminConfirmRefundRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Xung đột nghiệp vụ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/payments/{id}/mark-refund": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
+                ],
+                "description": "Đánh dấu giao dịch cần hoàn tiền với lý do và hình ảnh bằng chứng.",
+                "consumes": [
+                    "application/json"
                 ],
                 "produces": [
                     "application/json"
@@ -1621,9 +2149,93 @@
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Dữ liệu đánh dấu hoàn tiền",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminMarkRefundRequestDTO"
+                        }
                     }
                 ],
                 "responses": {}
+            }
+        },
+        "/admin/payments/{id}/resolve-overpayment": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Giữ chỗ hợp lệ cho thí sinh và tạo bản ghi hoàn tiền phần chênh lệch thừa.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Xử lý thanh toán thừa (Overpayment)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu xử lý thanh toán thừa",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminResolveOverpaymentRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Xung đột nghiệp vụ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/admin/payments/{id}/sync": {
@@ -1650,6 +2262,81 @@
                     }
                 ],
                 "responses": {}
+            }
+        },
+        "/admin/payments/{id}/top-up": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Khi thí sinh thanh toán thiếu, Admin tạo link thanh toán bổ sung PayOS, gia hạn giữ chỗ và gửi thông báo qua Email \u0026 Zalo.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payment"
+                ],
+                "summary": "[Admin] Tạo link nộp tiền bổ sung (Underpayment)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Payment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu bổ sung tiền",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminTopUpPaymentRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy giao dịch",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Xung đột nghiệp vụ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/admin/results": {
@@ -4488,6 +5175,145 @@
         }
     },
     "definitions": {
+        "request.AdminCancelPaymentRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls",
+                "reason"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reason": {
+                    "type": "string",
+                    "minLength": 3
+                }
+            }
+        },
+        "request.AdminConfirmPaymentRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminConfirmRefundRequestDTO": {
+            "type": "object",
+            "required": [
+                "bank_ref",
+                "evidence_urls"
+            ],
+            "properties": {
+                "bank_ref": {
+                    "type": "string",
+                    "minLength": 2
+                },
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminCreateSuspenseRequestDTO": {
+            "type": "object",
+            "required": [
+                "amount",
+                "bank_ref",
+                "evidence_urls",
+                "transfer_content"
+            ],
+            "properties": {
+                "admin_note": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "integer",
+                    "minimum": 1000
+                },
+                "bank_ref": {
+                    "type": "string"
+                },
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "transfer_content": {
+                    "type": "string"
+                },
+                "transfer_time": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminImportSuspenseItemDTO": {
+            "type": "object",
+            "required": [
+                "amount",
+                "bank_ref",
+                "transfer_content"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "minimum": 1000
+                },
+                "bank_ref": {
+                    "type": "string"
+                },
+                "transfer_content": {
+                    "type": "string"
+                },
+                "transfer_time": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminImportSuspenseRequestDTO": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/request.AdminImportSuspenseItemDTO"
+                    }
+                }
+            }
+        },
         "request.AdminListCandidatesRequestDTO": {
             "type": "object",
             "properties": {
@@ -4519,6 +5345,139 @@
                         "verified",
                         "rejected"
                     ]
+                }
+            }
+        },
+        "request.AdminMarkRefundRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls",
+                "reason"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reason": {
+                    "type": "string",
+                    "minLength": 3
+                }
+            }
+        },
+        "request.AdminMatchSuspenseRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls",
+                "exam_registration_id"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "exam_registration_id": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminResolveDoubleChargeRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls",
+                "keep_payment_id",
+                "note",
+                "refund_payment_ids"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "keep_payment_id": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "note": {
+                    "type": "string",
+                    "minLength": 3
+                },
+                "refund_payment_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "request.AdminResolveOverpaymentRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls",
+                "note"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "note": {
+                    "type": "string",
+                    "minLength": 3
+                },
+                "refund_amount": {
+                    "type": "integer",
+                    "minimum": 1000
+                }
+            }
+        },
+        "request.AdminTopUpPaymentRequestDTO": {
+            "type": "object",
+            "required": [
+                "evidence_urls"
+            ],
+            "properties": {
+                "additional_amount": {
+                    "type": "integer",
+                    "minimum": 1000
+                },
+                "cancel_url": {
+                    "type": "string"
+                },
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "extend_hours": {
+                    "type": "integer",
+                    "maximum": 168,
+                    "minimum": 1
+                },
+                "note": {
+                    "type": "string"
+                },
+                "return_url": {
+                    "type": "string"
                 }
             }
         },
@@ -4877,9 +5836,17 @@
         "request.ManualApproveRequestDTO": {
             "type": "object",
             "required": [
+                "evidence_urls",
                 "reason"
             ],
             "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "reason": {
                     "type": "string",
                     "maxLength": 500,
@@ -4974,9 +5941,17 @@
         "request.RefundMarkRequestDTO": {
             "type": "object",
             "required": [
+                "evidence_urls",
                 "reason"
             ],
             "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "reason": {
                     "type": "string",
                     "maxLength": 500,

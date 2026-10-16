@@ -10,6 +10,7 @@ import (
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditresp "github.com/hskvinh/backend/internal/audit/dto/response"
 	"github.com/hskvinh/backend/internal/payment"
+	payreq "github.com/hskvinh/backend/internal/payment/dto/request"
 )
 
 type fakeAudit struct{ logErr error }
@@ -32,7 +33,7 @@ func setupServiceTest(t *testing.T) (*payment.Service, sqlmock.Sqlmock) {
 		ClientID:    "test-client",
 		ApiKey:      "test-api",
 		ChecksumKey: "test-checksum",
-	})
+	}, nil)
 	return svc, mock
 }
 
@@ -120,3 +121,57 @@ func TestService_AdminConfirmPayment_Success(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
+
+func TestService_AdminConfirmPaymentAs_IdempotentOnDoubleClick(t *testing.T) {
+	svc, mock := setupServiceTest(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`^SELECT payment_exam_registration_id, payment_amount, payment_status FROM payments WHERE payment_id = \$1 AND payment_is_deleted = FALSE FOR UPDATE$`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"payment_exam_registration_id", "payment_amount", "payment_status"}).
+			AddRow(5, 500000, "success"))
+	mock.ExpectRollback()
+
+	mock.ExpectQuery(`^SELECT p\.payment_id,.* FROM payments p WHERE p\.payment_id = \$1 AND p\.payment_is_deleted = FALSE$`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"payment_id", "payment_exam_registration_id", "payment_amount", "payment_amount_received",
+			"payment_method", "payment_gateway", "payment_transaction_ref", "payment_gateway_trans_id",
+			"payment_content", "payment_status", "payment_evidence_urls", "payment_admin_note",
+			"payment_refund_amount", "payment_refund_reason",
+			"payment_refund_evidence_urls", "payment_refunded_at", "payment_refund_bank_ref",
+			"payment_is_top_up", "payment_parent_payment_id",
+			"payment_expires_at", "payment_paid_at", "payment_is_deleted", "payment_deleted_at", "payment_created_at",
+			"payment_updated_at",
+		}).AddRow(
+			10, 5, 500000, 500000,
+			"cash", "payos", "10", "trans123",
+			"HSK-5", "success", "[]", "confirmed",
+			nil, nil,
+			"[]", nil, nil,
+			false, nil,
+			nil, now, false, nil, now, now,
+		))
+
+	resp, err := svc.AdminConfirmPaymentAs(ctx, 10, 1, payreq.AdminConfirmPaymentRequestDTO{
+		EvidenceURLs: []string{"https://res.cloudinary.com/test.png"},
+		Note:         "double click test",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on idempotent double click: %v", err)
+	}
+
+	if resp.ID != 10 {
+		t.Errorf("expected ID 10, got %d", resp.ID)
+	}
+	if resp.Status != "success" {
+		t.Errorf("expected status success, got %s", resp.Status)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+

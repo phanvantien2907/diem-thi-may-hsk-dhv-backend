@@ -177,7 +177,7 @@ func (h *Handler) ManualApprove(c *gin.Context) {
 	}
 
 	adminID := utils.MustAccountID(c)
-	data, err := h.svc.ManualApprove(c.Request.Context(), id, adminID, req.Reason)
+	data, err := h.svc.ManualApprove(c.Request.Context(), id, adminID, req.Reason, req.EvidenceURLs)
 	if err != nil {
 		if IsBusinessError(err) {
 			errMsg := err.Error()
@@ -224,7 +224,7 @@ func (h *Handler) RefundMark(c *gin.Context) {
 	}
 
 	adminID := utils.MustAccountID(c)
-	data, err := h.svc.RefundMark(c.Request.Context(), id, adminID, req.Reason)
+	data, err := h.svc.RefundMark(c.Request.Context(), id, adminID, req.Reason, req.EvidenceURLs)
 	if err != nil {
 		if IsBusinessError(err) {
 			errMsg := err.Error()

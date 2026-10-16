@@ -36,11 +36,30 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	admin := r.Group("/admin")
 	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 	{
+		// Evidence & helper endpoints
+		admin.GET("/payments/evidence-upload-signature", h.GetEvidenceUploadSignature)
+
+		// Edge case: Double charge
+		admin.GET("/payments/double-charges", h.AdminGetDoubleCharges)
+		admin.POST("/payments/resolve-double-charge", h.AdminResolveDoubleCharge)
+
+		// Edge case: Suspense account / unmatched bank transfers
+		admin.GET("/payments/suspense", h.AdminListSuspense)
+		admin.POST("/payments/suspense", h.AdminCreateSuspense)
+		admin.POST("/payments/suspense/import", h.AdminImportSuspense)
+		admin.POST("/payments/suspense/:id/match", h.AdminMatchSuspense)
+
+		// List & export
 		admin.GET("/payments", h.AdminListPayments)
 		admin.GET("/payments/export", h.AdminExportPayments)
+
+		// Single payment actions & edge cases
 		admin.POST("/payments/:id/confirm", h.AdminConfirmPayment)
 		admin.POST("/payments/:id/sync", h.AdminSyncPayment)
 		admin.POST("/payments/:id/cancel", h.AdminCancelPayment)
 		admin.POST("/payments/:id/mark-refund", h.AdminMarkRefund)
+		admin.POST("/payments/:id/confirm-refund", h.AdminConfirmRefund)
+		admin.POST("/payments/:id/top-up", h.AdminTopUpPayment)
+		admin.POST("/payments/:id/resolve-overpayment", h.AdminResolveOverpayment)
 	}
 }

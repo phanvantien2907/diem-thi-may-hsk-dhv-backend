@@ -1,5 +1,101 @@
 basePath: /api/v1
 definitions:
+  request.AdminCancelPaymentRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      reason:
+        minLength: 3
+        type: string
+    required:
+    - evidence_urls
+    - reason
+    type: object
+  request.AdminConfirmPaymentRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      note:
+        type: string
+    required:
+    - evidence_urls
+    type: object
+  request.AdminConfirmRefundRequestDTO:
+    properties:
+      bank_ref:
+        minLength: 2
+        type: string
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      note:
+        type: string
+    required:
+    - bank_ref
+    - evidence_urls
+    type: object
+  request.AdminCreateSuspenseRequestDTO:
+    properties:
+      admin_note:
+        type: string
+      amount:
+        minimum: 1000
+        type: integer
+      bank_ref:
+        type: string
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      transfer_content:
+        type: string
+      transfer_time:
+        type: string
+    required:
+    - amount
+    - bank_ref
+    - evidence_urls
+    - transfer_content
+    type: object
+  request.AdminImportSuspenseItemDTO:
+    properties:
+      amount:
+        minimum: 1000
+        type: integer
+      bank_ref:
+        type: string
+      transfer_content:
+        type: string
+      transfer_time:
+        type: string
+    required:
+    - amount
+    - bank_ref
+    - transfer_content
+    type: object
+  request.AdminImportSuspenseRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        type: array
+      items:
+        items:
+          $ref: '#/definitions/request.AdminImportSuspenseItemDTO'
+        minItems: 1
+        type: array
+    required:
+    - items
+    type: object
   request.AdminListCandidatesRequestDTO:
     properties:
       exam_date:
@@ -24,6 +120,100 @@ definitions:
         - verified
         - rejected
         type: string
+    type: object
+  request.AdminMarkRefundRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      reason:
+        minLength: 3
+        type: string
+    required:
+    - evidence_urls
+    - reason
+    type: object
+  request.AdminMatchSuspenseRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      exam_registration_id:
+        minimum: 1
+        type: integer
+      note:
+        type: string
+    required:
+    - evidence_urls
+    - exam_registration_id
+    type: object
+  request.AdminResolveDoubleChargeRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      keep_payment_id:
+        minimum: 1
+        type: integer
+      note:
+        minLength: 3
+        type: string
+      refund_payment_ids:
+        items:
+          type: integer
+        minItems: 1
+        type: array
+    required:
+    - evidence_urls
+    - keep_payment_id
+    - note
+    - refund_payment_ids
+    type: object
+  request.AdminResolveOverpaymentRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      note:
+        minLength: 3
+        type: string
+      refund_amount:
+        minimum: 1000
+        type: integer
+    required:
+    - evidence_urls
+    - note
+    type: object
+  request.AdminTopUpPaymentRequestDTO:
+    properties:
+      additional_amount:
+        minimum: 1000
+        type: integer
+      cancel_url:
+        type: string
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
+      extend_hours:
+        maximum: 168
+        minimum: 1
+        type: integer
+      note:
+        type: string
+      return_url:
+        type: string
+    required:
+    - evidence_urls
     type: object
   request.AdminUpdateDeliveryRequestDTO:
     properties:
@@ -280,11 +470,17 @@ definitions:
     type: object
   request.ManualApproveRequestDTO:
     properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
       reason:
         maxLength: 500
         minLength: 5
         type: string
     required:
+    - evidence_urls
     - reason
     type: object
   request.PayOSWebhookData:
@@ -344,11 +540,17 @@ definitions:
     type: object
   request.RefundMarkRequestDTO:
     properties:
+      evidence_urls:
+        items:
+          type: string
+        minItems: 1
+        type: array
       reason:
         maxLength: 500
         minLength: 5
         type: string
     required:
+    - evidence_urls
     - reason
     type: object
   request.RegisterRequestDTO:
@@ -1517,8 +1719,8 @@ paths:
       consumes:
       - application/json
       description: |-
-        Admin hủy giao dịch trong một transaction ACID. Với payment success,
-        hệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.
+        Admin hủy giao dịch trong một transaction ACID kèm hình ảnh bằng chứng và lý do.
+        Với payment success, hệ thống chuyển sang refunded, hủy hồ sơ và trả ghế nếu kỳ thi chưa bắt đầu.
         Sau ngày thi (bao gồm ngày thi hiện tại), toàn bộ thao tác bị khóa và rollback.
       parameters:
       - description: Payment ID
@@ -1526,11 +1728,22 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Dữ liệu hủy giao dịch kèm bằng chứng
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminCancelPaymentRequestDTO'
       produces:
       - application/json
       responses:
         "200":
           description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
           schema:
             additionalProperties: true
             type: object
@@ -1559,17 +1772,29 @@ paths:
       consumes:
       - application/json
       description: Admin xác nhận thanh toán thủ công (chuyển pending → success).
+        Cần đính kèm bằng chứng.
       parameters:
       - description: Payment ID
         in: path
         name: id
         required: true
         type: integer
+      - description: Dữ liệu xác nhận kèm bằng chứng
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminConfirmPaymentRequestDTO'
       produces:
       - application/json
       responses:
         "200":
           description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
           schema:
             additionalProperties: true
             type: object
@@ -1593,20 +1818,131 @@ paths:
       summary: '[Admin] Xác nhận thủ công'
       tags:
       - Payment
-  /admin/payments/{id}/mark-refund:
+  /admin/payments/{id}/confirm-refund:
     post:
+      consumes:
+      - application/json
+      description: Kế toán/Admin xác nhận đã chuyển khoản trả lại tiền cho thí sinh
+        thành công (chuyển pending_refund → refunded).
       parameters:
       - description: Payment ID
         in: path
         name: id
         required: true
         type: integer
+      - description: Dữ liệu xác nhận hoàn tiền
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminConfirmRefundRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Xung đột nghiệp vụ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Xác nhận đã hoàn tiền'
+      tags:
+      - Payment
+  /admin/payments/{id}/mark-refund:
+    post:
+      consumes:
+      - application/json
+      description: Đánh dấu giao dịch cần hoàn tiền với lý do và hình ảnh bằng chứng.
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu đánh dấu hoàn tiền
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminMarkRefundRequestDTO'
       produces:
       - application/json
       responses: {}
       security:
       - BearerAuth: []
       summary: '[Admin] Đánh dấu cần hoàn tiền'
+      tags:
+      - Payment
+  /admin/payments/{id}/resolve-overpayment:
+    post:
+      consumes:
+      - application/json
+      description: Giữ chỗ hợp lệ cho thí sinh và tạo bản ghi hoàn tiền phần chênh
+        lệch thừa.
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu xử lý thanh toán thừa
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminResolveOverpaymentRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Xung đột nghiệp vụ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Xử lý thanh toán thừa (Overpayment)'
       tags:
       - Payment
   /admin/payments/{id}/sync:
@@ -1625,6 +1961,112 @@ paths:
       summary: '[Admin] Đồng bộ trạng thái PayOS'
       tags:
       - Payment
+  /admin/payments/{id}/top-up:
+    post:
+      consumes:
+      - application/json
+      description: Khi thí sinh thanh toán thiếu, Admin tạo link thanh toán bổ sung
+        PayOS, gia hạn giữ chỗ và gửi thông báo qua Email & Zalo.
+      parameters:
+      - description: Payment ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu bổ sung tiền
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminTopUpPaymentRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Xung đột nghiệp vụ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Tạo link nộp tiền bổ sung (Underpayment)'
+      tags:
+      - Payment
+  /admin/payments/double-charges:
+    get:
+      description: Cảnh báo các thí sinh / ca thi có từ 2 giao dịch thành công trở
+        lên.
+      parameters:
+      - default: 1
+        description: Trang
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Số lượng mỗi trang
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Danh sách cảnh báo giao dịch trùng (Double Charge)'
+      tags:
+      - Payment
+  /admin/payments/evidence-upload-signature:
+    get:
+      description: Trả về Cloudinary upload signature để frontend tải ảnh bằng chứng
+        trực tiếp lên Cloudinary folder hsk/payment-evidence.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Lấy chữ ký tải ảnh bằng chứng'
+      tags:
+      - Payment
   /admin/payments/export:
     get:
       produces:
@@ -1633,6 +2075,231 @@ paths:
       security:
       - BearerAuth: []
       summary: '[Admin] Xuất đối soát giao dịch'
+      tags:
+      - Payment
+  /admin/payments/resolve-double-charge:
+    post:
+      consumes:
+      - application/json
+      description: Giữ lại 1 giao dịch hợp lệ và đánh dấu hoàn tiền 100% cho các giao
+        dịch trùng lặp còn lại.
+      parameters:
+      - description: Dữ liệu xử lý giao dịch trùng
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminResolveDoubleChargeRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy giao dịch
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Xung đột nghiệp vụ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Giải quyết giao dịch trùng (Double Charge)'
+      tags:
+      - Payment
+  /admin/payments/suspense:
+    get:
+      description: Lấy danh sách giao dịch chuyển khoản sai nội dung / chưa khớp.
+      parameters:
+      - default: 1
+        description: Trang
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Số lượng mỗi trang
+        in: query
+        name: limit
+        type: integer
+      - description: Trạng thái (pending, matched, refunded)
+        in: query
+        name: status
+        type: string
+      - description: Từ ngày (YYYY-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: Đến ngày (YYYY-MM-DD)
+        in: query
+        name: to
+        type: string
+      - description: Tìm kiếm (nội dung chuyển khoản hoặc mã giao dịch ngân hàng)
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Danh sách giao dịch treo (Suspense Account)'
+      tags:
+      - Payment
+    post:
+      consumes:
+      - application/json
+      description: Admin nhập thông tin chuyển khoản không xác định để theo dõi trong
+        tài khoản treo.
+      parameters:
+      - description: Dữ liệu giao dịch treo
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminCreateSuspenseRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Thêm giao dịch treo / chuyển khoản sai nội dung'
+      tags:
+      - Payment
+  /admin/payments/suspense/{id}/match:
+    post:
+      consumes:
+      - application/json
+      description: Khớp tiền từ tài khoản treo vào phiếu đăng ký của thí sinh, tạo
+        giao dịch thanh toán thành công và giữ chỗ thi.
+      parameters:
+      - description: Suspense ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu khớp giao dịch
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminMatchSuspenseRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy bản ghi
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Xung đột nghiệp vụ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Khớp giao dịch treo vào phiếu đăng ký'
+      tags:
+      - Payment
+  /admin/payments/suspense/import:
+    post:
+      consumes:
+      - multipart/form-data
+      - application/json
+      description: Hỗ trợ upload file CSV sao kê ngân hàng hoặc gửi danh sách JSON
+        để tự động lưu vào tài khoản treo và đối soát tự động.
+      parameters:
+      - description: File CSV sao kê ngân hàng
+        in: formData
+        name: file
+        type: file
+      - description: Dữ liệu JSON nếu không dùng file
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/request.AdminImportSuspenseRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: '[Admin] Import sao kê ngân hàng vào tài khoản treo'
       tags:
       - Payment
   /admin/results:

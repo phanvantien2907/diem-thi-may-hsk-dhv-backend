@@ -296,7 +296,7 @@ func (s *Service) GetTransactionExceptions(ctx context.Context, page, limit int)
 	return items, meta, nil
 }
 
-func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, reason string) (response.ManualApproveResponseDTO, error) {
+func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, reason string, evidenceURLs []string) (response.ManualApproveResponseDTO, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return response.ManualApproveResponseDTO{}, fmt.Errorf("dashboard: begin tx: %w", err)
@@ -329,10 +329,14 @@ func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, r
 		return response.ManualApproveResponseDTO{}, errors.New("Phiếu đăng ký đã bị hủy, không thể duyệt")
 	}
 
+	evidenceBytes, _ := json.Marshal(evidenceURLs)
+	evidenceJSON := string(evidenceBytes)
+
 	// Update payment → success
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE payments SET payment_status = 'success', payment_paid_at = NOW()
-		 WHERE payment_id = $1`, paymentID); err != nil {
+		`UPDATE payments SET payment_status = 'success', payment_paid_at = NOW(),
+		       payment_evidence_urls = $2, payment_admin_note = $3
+		 WHERE payment_id = $1`, paymentID, evidenceJSON, reason); err != nil {
 		return response.ManualApproveResponseDTO{}, fmt.Errorf("dashboard: update payment: %w", err)
 	}
 
@@ -352,7 +356,13 @@ func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, r
 
 	// Audit log
 	oldVal, _ := json.Marshal(map[string]any{"status": status, "reg_status": regStatus})
-	newVal, _ := json.Marshal(map[string]any{"status": "success", "reg_status": "confirmed", "reason": reason, "action": "manual_approve"})
+	newVal, _ := json.Marshal(map[string]any{
+		"status":        "success",
+		"reg_status":    "confirmed",
+		"reason":        reason,
+		"evidence_urls": evidenceURLs,
+		"action":        "manual_approve",
+	})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &adminID,
 		Action:         auditenum.AuditActionApprove.String(),
@@ -383,7 +393,7 @@ func (s *Service) ManualApprove(ctx context.Context, paymentID, adminID int64, r
 	}, nil
 }
 
-func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reason string) (response.RefundMarkResponseDTO, error) {
+func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reason string, evidenceURLs []string) (response.RefundMarkResponseDTO, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return response.RefundMarkResponseDTO{}, fmt.Errorf("dashboard: begin tx: %w", err)
@@ -391,10 +401,12 @@ func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reas
 	defer tx.Rollback() //nolint:errcheck
 
 	var status string
+	var amount int64
+	var amountReceived sql.NullInt64
 	err = tx.QueryRowContext(ctx, `
-		SELECT payment_status FROM payments
+		SELECT payment_status, payment_amount, payment_amount_received FROM payments
 		WHERE payment_id = $1 AND payment_is_deleted = FALSE
-		FOR UPDATE`, paymentID).Scan(&status)
+		FOR UPDATE`, paymentID).Scan(&status, &amount, &amountReceived)
 	if errors.Is(err, sql.ErrNoRows) {
 		return response.RefundMarkResponseDTO{}, errors.New("Không tìm thấy giao dịch")
 	}
@@ -404,17 +416,33 @@ func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reas
 	if status == "refunded" {
 		return response.RefundMarkResponseDTO{}, errors.New("Giao dịch đã được đánh dấu hoàn tiền trước đó")
 	}
-	if status != "success" && status != "pending" {
-		return response.RefundMarkResponseDTO{}, errors.New("Chỉ có thể đánh dấu hoàn tiền cho giao dịch thành công hoặc đang chờ")
+	if status != "success" && status != "pending" && status != "cancelled" && status != "failed" && status != "expired" && status != "amount_mismatch" && status != "partial_paid" {
+		return response.RefundMarkResponseDTO{}, errors.New("Chỉ có thể đánh dấu hoàn tiền cho giao dịch hợp lệ")
+	}
+
+	evidenceBytes, _ := json.Marshal(evidenceURLs)
+	evidenceJSON := string(evidenceBytes)
+	refundAmount := amount
+	if amountReceived.Valid && amountReceived.Int64 > 0 {
+		refundAmount = amountReceived.Int64
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE payments SET payment_status = 'refunded' WHERE payment_id = $1`, paymentID); err != nil {
+		`UPDATE payments
+		 SET payment_status = 'pending_refund', payment_evidence_urls = $2,
+		     payment_admin_note = $3, payment_refund_reason = $3,
+		     payment_refund_amount = $4
+		 WHERE payment_id = $1`, paymentID, evidenceJSON, reason, refundAmount); err != nil {
 		return response.RefundMarkResponseDTO{}, fmt.Errorf("dashboard: update refund: %w", err)
 	}
 
 	oldVal, _ := json.Marshal(map[string]any{"status": status})
-	newVal, _ := json.Marshal(map[string]any{"status": "refunded", "reason": reason, "action": "refund_mark"})
+	newVal, _ := json.Marshal(map[string]any{
+		"status":        "pending_refund",
+		"reason":        reason,
+		"evidence_urls": evidenceURLs,
+		"action":        "refund_mark",
+	})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &adminID,
 		Action:         auditenum.AuditActionRefund.String(),
@@ -430,8 +458,8 @@ func (s *Service) RefundMark(ctx context.Context, paymentID, adminID int64, reas
 
 	return response.RefundMarkResponseDTO{
 		PaymentID: paymentID,
-		NewStatus: "refunded",
-		Message:   "Đã đánh dấu hoàn tiền thành công",
+		NewStatus: "pending_refund",
+		Message:   "Đã đánh dấu cần hoàn tiền thành công",
 	}, nil
 }
 
