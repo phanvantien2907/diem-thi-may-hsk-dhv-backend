@@ -217,6 +217,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/candidates/clear-cache": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xoá toàn bộ cache hồ sơ và giấy tờ thí sinh trên Redis để phục vụ FE/Admin làm mới dữ liệu",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Xoá toàn bộ bộ nhớ đệm thí sinh (Admin)",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/candidates/duplicates": {
             "get": {
                 "security": [
@@ -3247,6 +3273,27 @@ const docTemplate = `{
                 }
             }
         },
+        "/exam-sessions/clear-cache": {
+            "post": {
+                "description": "Xoá cache danh sách loại thi và ca thi trên Redis để phục vụ FE/Admin làm mới dữ liệu",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Sessions"
+                ],
+                "summary": "Xoá bộ nhớ đệm Ca thi",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/exam-types": {
             "get": {
                 "security": [
@@ -3296,6 +3343,27 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/locations/clear-cache": {
+            "post": {
+                "description": "Xoá cache danh sách tỉnh/thành và phường/xã trên Redis để phục vụ FE/Admin làm mới dữ liệu",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Locations"
+                ],
+                "summary": "Xoá bộ nhớ đệm Địa điểm",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3713,6 +3781,32 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/me/candidate-profile/clear-cache": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xoá cache hồ sơ và giấy tờ của thí sinh hiện tại trên Redis để phục vụ FE làm mới dữ liệu",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Candidate"
+                ],
+                "summary": "Xoá bộ nhớ đệm hồ sơ cá nhân",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5114,6 +5208,27 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/results/clear-cache": {
+            "post": {
+                "description": "Xoá cache tra cứu kết quả thi trên Redis để phục vụ FE/Admin làm mới dữ liệu",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Results"
+                ],
+                "summary": "Xoá bộ nhớ đệm Kết quả thi",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

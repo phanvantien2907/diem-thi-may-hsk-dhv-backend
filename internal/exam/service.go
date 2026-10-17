@@ -11,15 +11,23 @@ import (
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	examreq "github.com/hskvinh/backend/internal/exam/dto/request"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
 	"github.com/hskvinh/backend/internal/exam/enum"
+)
+
+const (
+	cacheKeyExamTypes       = "hsk:exam:types"
+	cacheKeyExamSessionsPub = "hsk:exam:sessions:published"
+	cachePrefixExamSession  = "hsk:exam:session:"
 )
 
 // Service handles exam types, rooms, sessions, and seat generation.
 type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
+	cacheSvc *cache.Service
 }
 
 var errExamSessionNotFound = errors.New("Không tìm thấy ca thi")
@@ -29,8 +37,40 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
 }
 
+// SetCache injects the Redis cache service.
+func (s *Service) SetCache(cacheSvc *cache.Service) {
+	s.cacheSvc = cacheSvc
+}
+
+// ClearCache clears all exam-related caches (types, published sessions, individual sessions).
+func (s *Service) ClearCache(ctx context.Context) error {
+	if s.cacheSvc == nil {
+		return nil
+	}
+	_ = s.cacheSvc.Delete(ctx, cacheKeyExamTypes, cacheKeyExamSessionsPub)
+	return s.cacheSvc.DeletePrefix(ctx, cachePrefixExamSession)
+}
+
+func (s *Service) invalidateSessionCache(ctx context.Context, sessionIDs ...int64) {
+	if s.cacheSvc == nil {
+		return
+	}
+	keys := []string{cacheKeyExamSessionsPub}
+	for _, id := range sessionIDs {
+		keys = append(keys, fmt.Sprintf("%s%d", cachePrefixExamSession, id))
+	}
+	_ = s.cacheSvc.Delete(ctx, keys...)
+}
+
 // ListExamTypes returns all non-deleted exam types as DTOs.
 func (s *Service) ListExamTypes(ctx context.Context) ([]response.ExamTypeResponseDTO, error) {
+	if s.cacheSvc != nil {
+		var cached []response.ExamTypeResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKeyExamTypes, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_type_id, exam_type_code, exam_type_name, exam_type_description
 		FROM exam_types WHERE exam_type_is_deleted = FALSE ORDER BY exam_type_code ASC`)
@@ -46,11 +86,25 @@ func (s *Service) ListExamTypes(ctx context.Context) ([]response.ExamTypeRespons
 		}
 		list = append(list, ToExamTypeResponseDTO(e))
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKeyExamTypes, list, 24*time.Hour)
+	}
+	return list, nil
 }
 
 // ListExamSessions returns all non-deleted sessions as DTOs.
 func (s *Service) ListExamSessions(ctx context.Context) ([]response.ExamSessionResponseDTO, error) {
+	if s.cacheSvc != nil {
+		var cached []response.ExamSessionResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKeyExamSessionsPub, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
@@ -79,11 +133,27 @@ func (s *Service) ListExamSessions(ctx context.Context) ([]response.ExamSessionR
 		}
 		list = append(list, ToExamSessionResponseDTO(e))
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.cacheSvc != nil {
+		// Apply ±35% dynamic jitter to prevent simultaneous expiry of batch-published sessions
+		_ = s.cacheSvc.SetWithJitter(ctx, cacheKeyExamSessionsPub, list, 10*time.Minute, 0.35)
+	}
+	return list, nil
 }
 
 // GetExamSession returns a single session DTO by ID.
 func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSessionResponseDTO, error) {
+	cacheKey := fmt.Sprintf("%s%d", cachePrefixExamSession, id)
+	if s.cacheSvc != nil {
+		var cached response.ExamSessionResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	var e ExamSessionEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id,
@@ -103,12 +173,20 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSe
 		&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
+		if s.cacheSvc != nil {
+			s.cacheSvc.SetSentinel(ctx, cacheKey, 1*time.Minute)
+		}
 		return response.ExamSessionResponseDTO{}, errors.New("Không tìm thấy ca thi")
 	}
 	if err != nil {
 		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: get session: %w", err)
 	}
-	return ToExamSessionResponseDTO(e), nil
+	dto := ToExamSessionResponseDTO(e)
+	if s.cacheSvc != nil {
+		// Apply ±35% dynamic jitter to prevent simultaneous expiry
+		_ = s.cacheSvc.SetWithJitter(ctx, cacheKey, dto, 10*time.Minute, 0.35)
+	}
+	return dto, nil
 }
 
 // ListExamSeats returns seats for a given session as DTOs.
@@ -295,7 +373,11 @@ func (s *Service) CancelExamSession(ctx context.Context, sessionID, actorID int6
 		NewValue:       newVal,
 	})
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateSessionCache(ctx, sessionID)
+	return nil
 }
 
 // UpdatePublicationStatus changes the public visibility state of an exam session.
@@ -364,6 +446,7 @@ func (s *Service) UpdatePublicationStatus(ctx context.Context, sessionID, actorI
 	if err := tx.Commit(); err != nil {
 		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: commit publication status: %w", err)
 	}
+	s.invalidateSessionCache(ctx, sessionID)
 	return response.UpdatePublicationStatusResponseDTO{
 		Message:           "Cập nhật trạng thái phát hành thành công",
 		PublicationStatus: publicationStatus.String(),
@@ -415,6 +498,7 @@ func (s *Service) PublishScheduledSessions(ctx context.Context) (int64, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("exam: commit scheduled publication: %w", err)
 	}
+	s.invalidateSessionCache(ctx)
 	return published, nil
 }
 
@@ -517,6 +601,7 @@ func (s *Service) BatchCreateExamSessions(ctx context.Context, reqs []examreq.Cr
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("exam: commit batch: %w", err)
 	}
+	s.invalidateSessionCache(ctx)
 	return list, nil
 }
 

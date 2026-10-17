@@ -72,3 +72,9 @@ func TooManyRequests(c *gin.Context, msg string) {
 func InternalServerError(c *gin.Context, msg string) {
 	exception.Send(c, http.StatusInternalServerError, msg)
 }
+
+// ServiceUnavailable sends a 503 response for system overload or request shedding.
+func ServiceUnavailable(c *gin.Context, msg string) {
+	exception.Send(c, http.StatusServiceUnavailable, msg)
+}
+

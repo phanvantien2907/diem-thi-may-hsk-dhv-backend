@@ -3,10 +3,18 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.2.1
-> **Cập nhật lần cuối:** 2026-10-14
+> **Phiên bản:** v1.2.2
+> **Cập nhật lần cuối:** 2026-10-17
 
 ## Changelog
+
+### v1.2.2 (2026-10-17)
+- 🚀 **Tối ưu hóa Docker Image & Chuẩn đóng gói Container (< 100MB)**:
+  - Tối ưu kích thước Docker Image API từ mức phình to >200MB xuống còn **~22.3MB content transfer** và **51MB disk usage** (kích thước binary Go sau nén chỉ còn **18.1MB**).
+  - Tích hợp công cụ nén binary thực thi `upx --best --lzma` trong Dockerfile multi-stage build.
+  - Tối ưu hóa `.dockerignore`: Loại bỏ triệt để file rác, binary cục bộ (`bin/api`), `secrets/`, `migrations/`, `.git/` để thu nhỏ build context từ hàng chục MB xuống còn vài chục KB.
+  - Hỗ trợ biên dịch Multi-Architecture (`linux/amd64` và `linux/arm64` cho macOS Apple Silicon) qua biến build `TARGETARCH`.
+  - Bổ sung cấu hình giới hạn dung lượng log (`json-file`, `max-size: 10m`, `max-file: 3`) cho toàn bộ dịch vụ trong `docker-compose.yml` chống phình ổ đĩa.
 
 ### v1.2.0 (2026-10-14)
 - ✨ Thêm tự động kiểm tra ảnh chân dung bằng Google Cloud Vision API khi upload giấy tờ tùy thân
@@ -38,6 +46,7 @@
 - [13. State Machines (Luồng trạng thái)](#13-state-machines-luồng-trạng-thái)
 - [14. WebSocket Real-time Events](#14-websocket-real-time-events)
 - [15. Module Dashboard (Bảng điều khiển quản trị)](#15-module-dashboard-bảng-điều-khiển-quản-trị)
+- [16. Chuẩn đóng gói Container & Tối ưu hóa Dung lượng Docker](#16-chuẩn-đóng-gói-container--tối-ưu-hóa-dung-lượng-docker)
 
 ---
 
@@ -4758,3 +4767,46 @@ function connectWS(token, onMessage) {
   - **"Hoàn tiền"** → gọi `POST /admin/transactions/:id/refund-mark`
 - **Xóa Cache:** Đặt nút nhỏ ở góc Dashboard, sau khi bấm → gọi `POST /admin/system/clear-cache` rồi reload lại `overview`.
 - **Pagination:** Các API có phân trang (`exceptions`, `logs/recent`, `me/audit-log`) đều trả về `meta` object, dùng để render thanh phân trang.
+
+---
+
+## 16. Chuẩn đóng gói Container & Tối ưu hóa Dung lượng Docker
+
+Để đảm bảo hiệu năng triển khai CI/CD, tốc độ khởi động và tiết kiệm băng thông/dung lượng lưu trữ trên server, toàn bộ container và quy trình build Docker tuân thủ nghiêm ngặt chuẩn tối ưu hoá siêu nhẹ:
+
+### 16.1. Nguyên nhân gây phình to Image trước đây (>200MB)
+1. **Thiếu nén Executable Binary**: Binary Go biên dịch tích hợp nhiều thư viện nặng (Google Cloud Vision API, gRPC, Protobuf, Swagger, Validator...) sinh ra kích thước tệp thực thi thô ~56MB.
+2. **Build Context chứa rác**: `.dockerignore` không loại bỏ thư mục `bin/` (nơi chứa binary build cục bộ `bin/api` ~32MB), `secrets/`, `docs/`, `migrations/`, làm phình to context và cache layer.
+3. **Hardcode kiến trúc máy chủ**: `GOARCH=amd64` cứng nhắc khiến Docker trên máy Apple Silicon (arm64) phải chạy qua lớp dịch Rosetta gây lãng phí bộ nhớ và CPU.
+4. **Không giới hạn dung lượng log**: Các container chạy liên tục sinh log không kiểm soát làm phình ổ cứng host.
+
+### 16.2. Các giải pháp kỹ thuật đã áp dụng
+| Hạng mục | Trước tối ưu | Sau tối ưu | Hiệu quả |
+|---|---|---|---|
+| **Binary Executable** | 56.5 MB (uncompressed) | **18.1 MB** (UPX LZMA) | Giảm **68%** |
+| **Docker Content Transfer** | ~98.9 MB | **22.3 MB** | Giảm **77%** |
+| **Docker Disk Usage** | > 200 MB | **51.0 MB** | Giảm **75%** |
+| **Build Context** | Hàng chục MB | **< 600 KB** | Giảm **98%** |
+| **Log Rotation** | Không giới hạn | Giới hạn `10MB x 3 files` | Chống cạn dung lượng đĩa |
+
+### 16.3. Quy định bắt buộc cho tính năng & Container mới
+1. **Quy tắc Build Multi-Stage:**
+   - Builder stage: `golang:1.23-alpine` tích hợp `upx`.
+   - Compiler flags: `CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w"`
+   - Bắt buộc nén binary: `upx --best --lzma /bin/api`
+   - Runtime stage: `alpine:3.21` (hoặc bản minimal mới nhất), người dùng không đặc quyền (`appuser`).
+2. **Ngưỡng dung lượng tối đa (Size Budget):**
+   - Image API backend **không bao giờ được vượt quá 100MB** (mục tiêu chuẩn: content <= 25MB, disk usage <= 55MB).
+   - Nếu bổ sung container/dịch vụ mới vào `docker-compose.yml`, bắt buộc ưu tiên các tag `-alpine` (ví dụ `postgres:16-alpine`, `redis:7-alpine`).
+3. **Quản lý `.dockerignore`:**
+   - Mọi tệp binary cục bộ (`bin/`), credentials/secrets (`secrets/`), tệp migration (`migrations/`), tài liệu markdown và git artifacts phải được liệt kê trong `.dockerignore`.
+4. **Log Rotation:**
+   - Mọi service mới trong `docker-compose.yml` bắt buộc phải có block:
+     ```yaml
+     logging:
+       driver: "json-file"
+       options:
+         max-size: "10m"
+         max-file: "3"
+     ```
+

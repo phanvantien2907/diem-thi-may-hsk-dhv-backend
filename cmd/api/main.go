@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/audit"
 	"github.com/hskvinh/backend/internal/auth"
+	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/candidate"
 	"github.com/hskvinh/backend/internal/certificate"
 	"github.com/hskvinh/backend/internal/config"
@@ -59,6 +60,14 @@ func main() {
 	}
 	defer database.Close(db)
 
+	// ── Redis Cache (shared dependency) ───────────────────────────────────
+	cacheSvc := cache.NewService(cache.Options{
+		Addr:     cfg.RedisAddr,
+		Password: cfg.RedisPassword,
+		DB:       cfg.RedisDB,
+	})
+	defer cacheSvc.Close()
+
 	// ── Audit Service (shared dependency) ─────────────────────────────────
 	auditSvc := audit.NewService(db)
 
@@ -98,12 +107,19 @@ func main() {
 	notifSvc := notification.NewService(db)
 	locSvc := location.NewService(db, auditSvc)
 
+	// Attach Redis cache to approved read-heavy services
+	locSvc.SetCache(cacheSvc)
+	examSvc.SetCache(cacheSvc)
+	resSvc.SetCache(cacheSvc)
+	candSvc.SetCache(cacheSvc)
+
 	// ── WebSocket Hub ────────────────────────────────────────────────────
 	hub := ws.NewHub()
 	go hub.Run()
 
 	// ── Dashboard Service ────────────────────────────────────────────────
 	dashSvc := dashboard.NewService(db, auditSvc, hub)
+	dashSvc.SetCache(cacheSvc)
 
 	// Attach hub to services that need real-time broadcasting
 	regSvc.SetHub(hub)

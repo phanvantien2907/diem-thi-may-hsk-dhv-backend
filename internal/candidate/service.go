@@ -17,11 +17,17 @@ import (
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/entities"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 	"github.com/hskvinh/backend/internal/utils"
+)
+
+const (
+	cachePrefixCandidateProfile = "hsk:cand:prof:acc:"
+	cachePrefixCandidateDocs    = "hsk:cand:docs:acc:"
 )
 
 type adminCandidateExportRow struct {
@@ -107,6 +113,54 @@ type Service struct {
 	auditSvc  audit.Service
 	mediaSvc  MediaService
 	visionSvc VisionService
+	cacheSvc  *cache.Service
+}
+
+// SetCache injects the Redis cache service.
+func (s *Service) SetCache(cacheSvc *cache.Service) {
+	s.cacheSvc = cacheSvc
+}
+
+// InvalidateCandidateCache clears candidate profile and document caches by candidate ID.
+// Ensures all code paths (candidate upload, admin review, admin reject) share a single invalidation logic.
+func (s *Service) InvalidateCandidateCache(ctx context.Context, candidateID int64) {
+	if s.cacheSvc == nil || candidateID <= 0 {
+		return
+	}
+	var accID int64
+	_ = s.db.QueryRowContext(ctx, `SELECT candidate_account_id FROM candidates WHERE candidate_id = $1`, candidateID).Scan(&accID)
+	if accID > 0 {
+		s.InvalidateCandidateCacheByAccountID(ctx, accID)
+	}
+}
+
+// InvalidateCandidateCacheByAccountID clears candidate profile and document caches by account ID.
+func (s *Service) InvalidateCandidateCacheByAccountID(ctx context.Context, accountID int64) {
+	if s.cacheSvc == nil || accountID <= 0 {
+		return
+	}
+	_ = s.cacheSvc.Delete(ctx,
+		fmt.Sprintf("%s%d", cachePrefixCandidateProfile, accountID),
+		fmt.Sprintf("%s%d", cachePrefixCandidateDocs, accountID),
+	)
+}
+
+func (s *Service) invalidateCandidateDocs(ctx context.Context, candidateID int64) {
+	s.InvalidateCandidateCache(ctx, candidateID)
+}
+
+// ClearMyCache clears Redis cache for the calling candidate (for manual FE refresh).
+func (s *Service) ClearMyCache(ctx context.Context, accountID int64) error {
+	s.InvalidateCandidateCacheByAccountID(ctx, accountID)
+	return nil
+}
+
+// AdminClearCache clears all candidate caches across the system (for FE/Admin manual refresh).
+func (s *Service) AdminClearCache(ctx context.Context) error {
+	if s.cacheSvc == nil {
+		return nil
+	}
+	return s.cacheSvc.DeletePrefix(ctx, "hsk:cand:")
 }
 
 // ErrActiveRegistration is returned when a candidate has an active registration
@@ -232,11 +286,20 @@ func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRe
 	if err := tx.Commit(); err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
 	}
+	s.InvalidateCandidateCacheByAccountID(ctx, accountID)
 	return ToCandidateResponseDTO(e), nil
 }
 
 // GetMyProfile returns the candidate profile for the authenticated account.
 func (s *Service) GetMyProfile(ctx context.Context, accountID int64) (response.CandidateResponseDTO, error) {
+	cacheKey := fmt.Sprintf("%s%d", cachePrefixCandidateProfile, accountID)
+	if s.cacheSvc != nil {
+		var cached response.CandidateResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	var e entities.CandidateEntity
 	err := scanCandidate(s.db.QueryRowContext(ctx, `
 		SELECT `+candidateSelectCols+`
@@ -244,16 +307,29 @@ func (s *Service) GetMyProfile(ctx context.Context, accountID int64) (response.C
 		WHERE candidate_account_id = $1 AND candidate_is_deleted = FALSE`, accountID,
 	), &e)
 	if errors.Is(err, sql.ErrNoRows) {
+		// Do NOT negative-cache /me/* endpoints to prevent race conditions right after profile creation
 		return response.CandidateResponseDTO{}, errors.New("chưa có hồ sơ thí sinh")
 	}
 	if err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: get profile: %w", err)
 	}
-	return ToCandidateResponseDTO(e), nil
+	dto := ToCandidateResponseDTO(e)
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, dto, 30*time.Minute)
+	}
+	return dto, nil
 }
 
 // GetMyDocuments returns all non-deleted identity documents for the authenticated account.
 func (s *Service) GetMyDocuments(ctx context.Context, accountID int64) ([]entities.CandidateDocumentEntity, error) {
+	cacheKey := fmt.Sprintf("%s%d", cachePrefixCandidateDocs, accountID)
+	if s.cacheSvc != nil {
+		var cached []entities.CandidateDocumentEntity
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	// Resolve candidate_id from accountID (ownership check)
 	var candidateID int64
 	if err := s.db.QueryRowContext(ctx,
@@ -299,6 +375,9 @@ func (s *Service) GetMyDocuments(ctx context.Context, accountID int64) ([]entiti
 	}
 	if docs == nil {
 		docs = []entities.CandidateDocumentEntity{}
+	}
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, docs, 30*time.Minute)
 	}
 	return docs, nil
 }
@@ -389,6 +468,7 @@ func (s *Service) PatchMyProfile(ctx context.Context, accountID int64, req reque
 	if err := tx.Commit(); err != nil {
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
 	}
+	s.InvalidateCandidateCacheByAccountID(ctx, accountID)
 	return ToCandidateResponseDTO(e), nil
 }
 
@@ -476,6 +556,7 @@ func (s *Service) UploadDocument(ctx context.Context, accountID int64, req reque
 	if err := tx.Commit(); err != nil {
 		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: commit: %w", err)
 	}
+	s.InvalidateCandidateCacheByAccountID(ctx, accountID)
 	return ToDocumentResponseDTO(e), nil
 }
 
@@ -962,7 +1043,11 @@ func (s *Service) AdminApproveDocument(ctx context.Context, adminID, candidateID
 		EntityID:       candidateID,
 	})
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateCandidateDocs(ctx, candidateID)
+	return nil
 }
 
 // AdminRejectDocument sets the latest pending document status to 'rejected' with a reason.
@@ -1005,7 +1090,11 @@ func (s *Service) AdminRejectDocument(ctx context.Context, adminID, candidateID 
 		NewValue:       newVal,
 	})
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateCandidateDocs(ctx, candidateID)
+	return nil
 }
 
 // AdminListDuplicates returns groups of candidates sharing the same active document number.

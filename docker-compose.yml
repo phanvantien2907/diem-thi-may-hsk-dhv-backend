@@ -19,6 +19,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks:
       - hsk_net
 
@@ -40,19 +45,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: diem-thi-hsk-dhv-backend-api:latest
     container_name: hsk_vinh_api
     restart: unless-stopped
     env_file: .env
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hsk_vinh}?sslmode=disable
       - GOOGLE_CLOUD_CREDENTIALS_PATH=/app/secrets/google-cloud-key.json
+      - REDIS_ADDR=redis:6379
     ports:
       - "${APP_PORT:-8080}:8080"
     volumes:
       - ./secrets:/app/secrets:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_started
     networks:
       - hsk_net
 
@@ -63,6 +77,11 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,29 +96,39 @@ services:
     command: http http://api:8080 --url=${NGROK_DOMAIN}
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - api
     networks:
       - hsk_net
 
-  # ── Redis (commented out – uncomment when caching / queue is needed) ─────
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: hsk_vinh_redis
-  #   restart: unless-stopped
-  #   command: redis-server --appendonly yes
-  #   ports:
-  #     - "6379:6379"
-  #   volumes:
-  #     - redis_data:/data
-  #   networks:
-  #     - hsk_net
+  # ── Redis (Caching) ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hsk_vinh_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - hsk_net
 
 volumes:
   postgres_data:
     driver: local
-  # redis_data:
-  #   driver: local
+  redis_data:
+    driver: local
 
 networks:
   hsk_net:

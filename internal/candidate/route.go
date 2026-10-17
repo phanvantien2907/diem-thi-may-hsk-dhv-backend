@@ -21,17 +21,19 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		me.GET("/documents", h.GetMyDocuments)
 		me.GET("/upload-signature", h.GetUploadSignature)
 		me.POST("/validate-portrait", h.ValidatePortrait)
+		me.POST("/clear-cache", h.ClearMyCache)
 	}
 
 	// ── Admin (JWT + admin role required) ─────────────────────────────────
 	adminG := r.Group("/admin")
 	adminG.Use(auth, admin)
 	{
-		// /admin/candidates/duplicates must be registered before /admin/candidates/:id
-		// to prevent Gin from treating "duplicates" as an :id param.
+		// /admin/candidates/duplicates and clear-cache must be registered before /admin/candidates/:id
+		// to prevent Gin from treating "duplicates" or "clear-cache" as an :id param.
 		adminG.GET("/candidates/duplicates", h.AdminListDuplicates)
 		adminG.GET("/candidates/metrics", h.AdminCandidateMetrics)
 		adminG.GET("/candidates/export", h.AdminExportCandidates)
+		adminG.POST("/candidates/clear-cache", h.AdminClearCache)
 		adminG.GET("/candidates", h.AdminListCandidates)
 		adminG.GET("/candidates/:id", h.AdminGetCandidate)
 		adminG.POST("/candidates/:id/approve", h.AdminApproveDocument)

@@ -883,6 +883,23 @@ paths:
       summary: Duyệt giấy tờ
       tags:
       - Candidate
+  /admin/candidates/clear-cache:
+    post:
+      description: Xoá toàn bộ cache hồ sơ và giấy tờ thí sinh trên Redis để phục
+        vụ FE/Admin làm mới dữ liệu
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xoá toàn bộ bộ nhớ đệm thí sinh (Admin)
+      tags:
+      - Candidate
   /admin/candidates/duplicates:
     get:
       consumes:
@@ -2900,6 +2917,21 @@ paths:
       summary: Sơ đồ ghế ngồi
       tags:
       - Exam
+  /exam-sessions/clear-cache:
+    post:
+      description: Xoá cache danh sách loại thi và ca thi trên Redis để phục vụ FE/Admin
+        làm mới dữ liệu
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Xoá bộ nhớ đệm Ca thi
+      tags:
+      - Exam Sessions
   /exam-types:
     get:
       consumes:
@@ -2938,6 +2970,21 @@ paths:
       summary: Danh sách loại kỳ thi
       tags:
       - Exam
+  /locations/clear-cache:
+    post:
+      description: Xoá cache danh sách tỉnh/thành và phường/xã trên Redis để phục
+        vụ FE/Admin làm mới dữ liệu
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Xoá bộ nhớ đệm Địa điểm
+      tags:
+      - Locations
   /locations/provinces:
     get:
       consumes:
@@ -3216,6 +3263,23 @@ paths:
       security:
       - BearerAuth: []
       summary: Tạo hồ sơ thí sinh
+      tags:
+      - Candidate
+  /me/candidate-profile/clear-cache:
+    post:
+      description: Xoá cache hồ sơ và giấy tờ của thí sinh hiện tại trên Redis để
+        phục vụ FE làm mới dữ liệu
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xoá bộ nhớ đệm hồ sơ cá nhân
       tags:
       - Candidate
   /me/candidate-profile/documents:
@@ -4157,6 +4221,21 @@ paths:
       summary: Xem điểm thi
       tags:
       - Result
+  /results/clear-cache:
+    post:
+      description: Xoá cache tra cứu kết quả thi trên Redis để phục vụ FE/Admin làm
+        mới dữ liệu
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Xoá bộ nhớ đệm Kết quả thi
+      tags:
+      - Results
   /webhooks/shipping/:courier:
     post:
       consumes:

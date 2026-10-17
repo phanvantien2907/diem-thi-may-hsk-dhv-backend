@@ -246,3 +246,19 @@ func (h *Handler) BatchCreateExamSessions(c *gin.Context) {
 	}
 	utils.Created(c, list)
 }
+
+// ClearCache godoc
+// @Summary      Xoá bộ nhớ đệm Ca thi
+// @Description  Xoá cache danh sách loại thi và ca thi trên Redis để phục vụ FE/Admin làm mới dữ liệu
+// @Tags         Exam Sessions
+// @Produce      json
+// @Success      200  {object}  map[string]interface{} "Thành công"
+// @Router       /exam-sessions/clear-cache [post]
+func (h *Handler) ClearCache(c *gin.Context) {
+	if err := h.svc.ClearCache(c.Request.Context()); err != nil {
+		utils.InternalServerError(c, "Xóa bộ nhớ đệm ca thi thất bại")
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm ca thi"})
+}
+

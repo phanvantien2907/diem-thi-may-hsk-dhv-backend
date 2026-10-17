@@ -23,6 +23,11 @@ type Config struct {
 	DBMaxIdleConns    int
 	DBConnMaxLifetime time.Duration
 
+	// Redis
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
 	// JWT
 	JWTSecret     string
 	JWTAccessTTL  time.Duration
@@ -70,9 +75,13 @@ func Load() (*Config, error) {
 		PayOSChecksumKey:         getEnv("PAY_OS_CHECKSUM_KEY", ""),
 		CORSAllowedOrigins:       strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 		GoogleCloudCredentialsPath: getEnv("GOOGLE_CLOUD_CREDENTIALS_PATH", ""),
+		RedisAddr:                  getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:              getEnv("REDIS_PASSWORD", ""),
 	}
 
 	var err error
+
+	cfg.RedisDB, _ = strconv.Atoi(getEnv("REDIS_DB", "0"))
 
 	cfg.DBMaxOpenConns, err = strconv.Atoi(getEnv("DB_MAX_OPEN_CONNS", "25"))
 	if err != nil {

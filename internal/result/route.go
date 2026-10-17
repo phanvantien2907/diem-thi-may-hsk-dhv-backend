@@ -18,10 +18,14 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		protected.POST("/rechecks", h.CreateRecheck)
 	}
 
-	// Admin-only result creation
+	// Public clear-cache (useful for FE dev/testing)
+	r.POST("/results/clear-cache", h.ClearCache)
+
+	// Admin-only result creation & cache flush
 	adminG := r.Group("/admin")
 	adminG.Use(auth, admin)
 	{
 		adminG.POST("/results", h.CreateResult)
+		adminG.POST("/results/clear-cache", h.ClearCache)
 	}
 }

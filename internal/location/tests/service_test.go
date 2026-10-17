@@ -171,3 +171,14 @@ func TestService_MergeWard(t *testing.T) {
 		})
 	}
 }
+
+func TestService_ClearCache(t *testing.T) {
+	svc, _, _ := setupServiceTest(t)
+
+	// ClearCache with nil cache service should not panic or fail
+	err := svc.ClearCache(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error with nil cache: %v", err)
+	}
+}
+

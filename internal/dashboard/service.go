@@ -12,6 +12,7 @@ import (
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/dashboard/dto/response"
 	"github.com/hskvinh/backend/internal/utils"
 	"github.com/hskvinh/backend/internal/ws"
@@ -22,6 +23,7 @@ type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
 	hub      *ws.Hub
+	cacheSvc *cache.Service
 }
 
 // NewService creates a dashboard Service.
@@ -31,6 +33,11 @@ func NewService(db *sql.DB, auditSvc audit.Service, hub *ws.Hub) *Service {
 		auditSvc: auditSvc,
 		hub:      hub,
 	}
+}
+
+// SetCache injects the Redis cache service.
+func (s *Service) SetCache(cacheSvc *cache.Service) {
+	s.cacheSvc = cacheSvc
 }
 
 // GetMetricsOverview returns real-time top-level KPIs.
@@ -522,6 +529,14 @@ func (s *Service) ClearCache(ctx context.Context, adminID int64) (response.Clear
 		EntityID:       adminID,
 		NewValue:       []byte(`{"action":"clear_cache"}`),
 	})
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.DeletePrefix(ctx, "hsk:")
+		log.Printf("[dashboard] Redis master cache flushed (prefix=hsk:) by admin_id=%d", adminID)
+		return response.ClearCacheResponseDTO{
+			Message: "Toàn bộ bộ nhớ đệm (Redis Cache) hệ thống đã được làm mới thành công",
+		}, nil
+	}
 
 	log.Printf("[dashboard] clear cache requested by admin_id=%d (system running in real-time mode)", adminID)
 	return response.ClearCacheResponseDTO{

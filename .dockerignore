@@ -1,7 +1,10 @@
 .env
 .env.*
+bin/
 tmp/
 vendor/
+secrets/
+migrations/
 .git/
 .gitignore
 *.md
@@ -9,3 +12,8 @@ vendor/
 docker-compose*.yml
 .idea/
 .vscode/
+.claude/
+.DS_Store
+*.test
+scratch.go
+

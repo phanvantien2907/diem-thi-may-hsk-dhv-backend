@@ -2,12 +2,14 @@ package candidate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"image/color"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 )
@@ -417,3 +419,82 @@ func TestService_ValidatePortrait(t *testing.T) {
 	})
 }
 
+func TestCandidate_NoSentinelOnProfileMiss(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock database: %v", err)
+	}
+	defer db.Close()
+
+	// Query for candidate profile returns ErrNoRows
+	mock.ExpectQuery(`SELECT .+ FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
+		WithArgs(int64(99)).
+		WillReturnError(sql.ErrNoRows)
+
+	svc := NewService(db, nil, nil, nil)
+
+	// Attach real or mock cache service
+	cacheSvc := cache.NewService(cache.Options{Addr: "localhost:6379", DB: 15})
+	if cacheSvc.Enabled() {
+		defer cacheSvc.Close()
+		svc.SetCache(cacheSvc)
+		_ = cacheSvc.Delete(context.Background(), "hsk:cand:prof:acc:99")
+	}
+
+	ctx := context.Background()
+	_, err = svc.GetMyProfile(ctx, int64(99))
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+
+	// Verify that NO negative-cache sentinel was set for /me/* profile
+	if cacheSvc.Enabled() {
+		var dummy any
+		hit, err := cacheSvc.Get(ctx, "hsk:cand:prof:acc:99", &dummy)
+		if hit || errors.Is(err, cache.ErrSentinelNotFound) {
+			t.Errorf("negative-cache sentinel MUST NOT be set for /me/* endpoints!")
+		}
+	}
+}
+
+func TestCandidate_ClearCacheMethods(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock database: %v", err)
+	}
+	defer db.Close()
+
+	svc := NewService(db, nil, nil, nil)
+	cacheSvc := cache.NewService(cache.Options{Addr: "localhost:6379", DB: 15})
+	if cacheSvc.Enabled() {
+		defer cacheSvc.Close()
+		svc.SetCache(cacheSvc)
+
+		ctx := context.Background()
+		_ = cacheSvc.Set(ctx, "hsk:cand:prof:acc:123", "profile-data", 5*time.Minute)
+		_ = cacheSvc.Set(ctx, "hsk:cand:docs:acc:123", "docs-data", 5*time.Minute)
+
+		// Test ClearMyCache
+		err := svc.ClearMyCache(ctx, 123)
+		if err != nil {
+			t.Fatalf("ClearMyCache failed: %v", err)
+		}
+
+		var dest string
+		hit, _ := cacheSvc.Get(ctx, "hsk:cand:prof:acc:123", &dest)
+		if hit {
+			t.Errorf("expected prof:acc:123 to be cleared")
+		}
+
+		// Test AdminClearCache
+		_ = cacheSvc.Set(ctx, "hsk:cand:prof:acc:456", "data", 5*time.Minute)
+		err = svc.AdminClearCache(ctx)
+		if err != nil {
+			t.Fatalf("AdminClearCache failed: %v", err)
+		}
+		hit, _ = cacheSvc.Get(ctx, "hsk:cand:prof:acc:456", &dest)
+		if hit {
+			t.Errorf("expected all cand keys to be cleared")
+		}
+	}
+}

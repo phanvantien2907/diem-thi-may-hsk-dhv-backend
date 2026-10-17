@@ -126,3 +126,19 @@ func (h *Handler) MergeWard(c *gin.Context) {
 	}
 	utils.OK(c, gin.H{"message": "xã/phường đã được gộp thành công"})
 }
+
+// ClearCache godoc
+// @Summary      Xoá bộ nhớ đệm Địa điểm
+// @Description  Xoá cache danh sách tỉnh/thành và phường/xã trên Redis để phục vụ FE/Admin làm mới dữ liệu
+// @Tags         Locations
+// @Produce      json
+// @Success      200  {object}  map[string]interface{} "Thành công"
+// @Router       /locations/clear-cache [post]
+func (h *Handler) ClearCache(c *gin.Context) {
+	if err := h.svc.ClearCache(c.Request.Context()); err != nil {
+		utils.InternalServerError(c, "Xóa bộ nhớ đệm địa điểm thất bại")
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm địa điểm"})
+}
+

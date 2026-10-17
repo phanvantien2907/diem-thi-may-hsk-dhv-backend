@@ -435,3 +435,37 @@ func (h *Handler) AdminGetRoster(c *gin.Context) {
 	}
 	utils.OK(c, items)
 }
+
+// ClearMyCache godoc
+// @Summary      Xoá bộ nhớ đệm hồ sơ cá nhân
+// @Description  Xoá cache hồ sơ và giấy tờ của thí sinh hiện tại trên Redis để phục vụ FE làm mới dữ liệu
+// @Tags         Candidate
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{} "Thành công"
+// @Router       /me/candidate-profile/clear-cache [post]
+func (h *Handler) ClearMyCache(c *gin.Context) {
+	accountID := utils.MustAccountID(c)
+	if err := h.svc.ClearMyCache(c.Request.Context(), accountID); err != nil {
+		utils.InternalServerError(c, "Xóa bộ nhớ đệm hồ sơ thất bại")
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm hồ sơ cá nhân"})
+}
+
+// AdminClearCache godoc
+// @Summary      Xoá toàn bộ bộ nhớ đệm thí sinh (Admin)
+// @Description  Xoá toàn bộ cache hồ sơ và giấy tờ thí sinh trên Redis để phục vụ FE/Admin làm mới dữ liệu
+// @Tags         Candidate
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{} "Thành công"
+// @Router       /admin/candidates/clear-cache [post]
+func (h *Handler) AdminClearCache(c *gin.Context) {
+	if err := h.svc.AdminClearCache(c.Request.Context()); err != nil {
+		utils.InternalServerError(c, "Xóa toàn bộ bộ nhớ đệm thí sinh thất bại")
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã làm mới toàn bộ bộ nhớ đệm thí sinh"})
+}
+

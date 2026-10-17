@@ -25,13 +25,15 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	r.GET("/exam-sessions", h.ListExamSessions)
 	r.GET("/exam-sessions/:id", h.GetExamSession)
 	r.GET("/exam-sessions/:id/seats", h.ListExamSeats)
+	r.POST("/exam-sessions/clear-cache", h.ClearCache)
 
 	// Admin-only
 	admin := r.Group("/admin")
 	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 	{
-		// batch-create must be registered BEFORE /:id routes to avoid conflict
+		// batch-create and clear-cache must be registered BEFORE /:id routes to avoid conflict
 		admin.GET("/exam-sessions", h.ListAdminExamSessions)
+		admin.POST("/exam-sessions/clear-cache", h.ClearCache)
 		admin.POST("/exam-sessions/batch-create", h.BatchCreateExamSessions)
 		admin.POST("/exam-sessions/:id/seats/generate", h.GenerateSeats)
 		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)

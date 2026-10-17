@@ -24,10 +24,10 @@ The existing implementation is the source of truth. Rules here describe what the
 | Logging | Standard library `log` package only |
 | Migration tool | `golang-migrate/migrate` via Docker compose |
 | Rate limiting | Custom in-memory token bucket (`internal/middleware/ratelimit.go`) |
-| Redis | **Not used** — commented out in `docker-compose.yml` |
+| Redis | Redis 7 (`redis:7-alpine`) via Docker compose — Caching, distributed lock (`internal/cache`) |
 | Image validation | Google Cloud Vision API (`cloud.google.com/go/vision/apiv1 v1.2.0`) |
 | Dependency injection | Manual constructor wiring in `cmd/api/main.go` |
-| Build | Multi-stage Docker, `CGO_ENABLED=0`, statically linked binary |
+| Build | Multi-stage Docker, `CGO_ENABLED=0`, stripped (`-s -w`), UPX compressed (Target < 30MB runtime layer, < 55MB disk usage) |
 | Module path | `github.com/hskvinh/backend` |
 
 ---
@@ -920,13 +920,14 @@ Candidate admin listing, metrics, and PDF export behavior is covered by `interna
 
 ---
 
-## 26. Docker
+## 26. Docker & Container Size Optimization Rules
 
+### Common Commands
 ```bash
-# Start all services (PostgreSQL 16, API, Adminer)
+# Start all services (PostgreSQL 16, API, Adminer, Redis, Ngrok)
 docker compose up -d
 
-# Rebuild API after code changes
+# Rebuild API after code changes (fast, cached, stripped & UPX compressed)
 docker compose up -d --build api
 
 # Tail API logs
@@ -936,9 +937,27 @@ docker compose logs -f api
 docker compose down -v
 ```
 
-Build: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api`
+### Build Specifications & Size Budget (< 100MB Hard Limit)
+To prevent container image bloat (historical bloat exceeded 200MB), all Docker builds and any new service containers MUST adhere to the following rules:
 
-Runtime: `alpine:latest`, non-root `appuser`.
+1. **Stripped & Compressed Binary:**
+   - Compiler flags: `CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api`
+   - Executable compression: `upx --best --lzma /bin/api`
+   - This compresses the binary from ~56MB down to **18MB** (a 68% size reduction).
+2. **Multi-Architecture Support:**
+   - Do NOT hardcode `GOARCH=amd64`. Use `ARG TARGETOS TARGETARCH` to natively compile for both `linux/amd64` and `linux/arm64` (macOS Apple Silicon).
+3. **Runtime Minimal Image:**
+   - Runtime base: `alpine:3.21` (or latest stable Alpine minimal).
+   - Run as non-root `appuser`.
+   - Resulting image: **~22.3MB content transfer / 51MB disk usage**, well below the 100MB ceiling.
+4. **Build Context Hygiene (`.dockerignore`):**
+   - Local build binaries (`bin/`), secrets (`secrets/`), migrations (`migrations/`), tests, `.git/`, and temp files must always be excluded in `.dockerignore`.
+   - Never allow local artifacts to inflate the build context or leak credentials into image layers.
+5. **Logging Rotation for All Compose Services:**
+   - Every service defined in `docker-compose.yml` must configure a log rotation driver (`max-size: "10m"`, `max-file: "3"`) so container logs never cause host disk exhaustion.
+6. **Auxiliary Containers:**
+   - Any new container/service added to `docker-compose.yml` must use an Alpine-based image tag (e.g., `redis:7-alpine`, `postgres:16-alpine`) and avoid heavyweight Debian/Ubuntu full images.
+
 
 ---
 

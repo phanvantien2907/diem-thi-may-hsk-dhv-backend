@@ -1,8 +1,8 @@
 # ── Build Stage ────────────────────────────────────────────────────────────────
 FROM golang:1.23-alpine AS builder
 
-# Install git (needed for go modules with private repos if any)
-RUN apk add --no-cache git ca-certificates tzdata
+# Install build tools: git, certs, tzdata, and UPX executable compressor
+RUN apk add --no-cache git ca-certificates tzdata upx
 
 WORKDIR /app
 
@@ -10,13 +10,15 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source and build a statically linked binary
+# Copy source and build a statically linked, stripped binary with UPX compression
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /bin/api ./cmd/api && \
+    upx --best --lzma /bin/api
 
 # ── Runtime Stage ──────────────────────────────────────────────────────────────
-FROM alpine:latest
+FROM alpine:3.21
 
 # Security: run as non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -25,7 +27,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Copy compiled binary
+# Copy compiled and compressed binary
 COPY --from=builder /bin/api /usr/local/bin/api
 
 USER appuser
@@ -33,3 +35,4 @@ USER appuser
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/api"]
+

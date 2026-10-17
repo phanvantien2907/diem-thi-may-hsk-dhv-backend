@@ -6,24 +6,44 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/result/dto/request"
 	"github.com/hskvinh/backend/internal/result/dto/response"
 	"github.com/hskvinh/backend/internal/result/enum"
+)
+
+const (
+	cachePrefixResultScore = "hsk:res:score:reg:"
 )
 
 // Service handles exam results and recheck requests.
 type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
+	cacheSvc *cache.Service
 }
 
 // NewService creates a result Service.
 func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
+}
+
+// SetCache injects the Redis cache service.
+func (s *Service) SetCache(cacheSvc *cache.Service) {
+	s.cacheSvc = cacheSvc
+}
+
+// ClearCache clears all exam result caches (score lookups and candidate results).
+func (s *Service) ClearCache(ctx context.Context) error {
+	if s.cacheSvc == nil {
+		return nil
+	}
+	return s.cacheSvc.DeletePrefix(ctx, "hsk:result:")
 }
 
 // CreateResult inserts an exam result and returns its public DTO.
@@ -78,11 +98,22 @@ func (s *Service) CreateResult(ctx context.Context, req request.CreateResultRequ
 	if err := tx.Commit(); err != nil {
 		return response.ExamResultResponseDTO{}, fmt.Errorf("result: commit: %w", err)
 	}
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Delete(ctx, fmt.Sprintf("%s%d", cachePrefixResultScore, req.ExamRegistrationID))
+	}
 	return ToExamResultResponseDTO(e), nil
 }
 
 // GetResultByRegistration returns the result DTO for a given registration ID.
 func (s *Service) GetResultByRegistration(ctx context.Context, registrationID int64) (response.ExamResultResponseDTO, error) {
+	cacheKey := fmt.Sprintf("%s%d", cachePrefixResultScore, registrationID)
+	if s.cacheSvc != nil {
+		var cached response.ExamResultResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	var e ExamResultEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT exam_result_id, exam_result_exam_registration_id,
@@ -103,12 +134,19 @@ func (s *Service) GetResultByRegistration(ctx context.Context, registrationID in
 		&e.ExamResultCreatedAt, &e.ExamResultUpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
+		if s.cacheSvc != nil {
+			s.cacheSvc.SetSentinel(ctx, cacheKey, 1*time.Minute)
+		}
 		return response.ExamResultResponseDTO{}, errors.New("Không tìm thấy kết quả thi")
 	}
 	if err != nil {
 		return response.ExamResultResponseDTO{}, fmt.Errorf("result: get: %w", err)
 	}
-	return ToExamResultResponseDTO(e), nil
+	dto := ToExamResultResponseDTO(e)
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, dto, 12*time.Hour)
+	}
+	return dto, nil
 }
 
 // CreateRecheckRequest submits a recheck and returns its public DTO.
@@ -213,5 +251,14 @@ func (s *Service) ReviewRecheckRequest(ctx context.Context, in ReviewRecheckInpu
 	if err := tx.Commit(); err != nil {
 		return response.RecheckResponseDTO{}, fmt.Errorf("result: commit: %w", err)
 	}
+
+	if s.cacheSvc != nil {
+		var regID int64
+		_ = s.db.QueryRowContext(ctx, `SELECT exam_result_exam_registration_id FROM exam_results WHERE exam_result_id = $1`, e.ExamRecheckExamResultID).Scan(&regID)
+		if regID > 0 {
+			_ = s.cacheSvc.Delete(ctx, fmt.Sprintf("%s%d", cachePrefixResultScore, regID))
+		}
+	}
+
 	return ToRecheckResponseDTO(e), nil
 }

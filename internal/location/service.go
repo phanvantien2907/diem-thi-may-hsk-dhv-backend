@@ -10,15 +10,22 @@ import (
 	"github.com/hskvinh/backend/internal/audit"
 	auditdto "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	locreq "github.com/hskvinh/backend/internal/location/dto/request"
 	"github.com/hskvinh/backend/internal/location/dto/response"
 	"github.com/hskvinh/backend/internal/location/entities"
+)
+
+const (
+	cacheKeyProvinces = "hsk:loc:provinces"
+	cachePrefixWards  = "hsk:loc:wards:"
 )
 
 // Service handles province and ward lookups.
 type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
+	cacheSvc *cache.Service
 }
 
 // NewService creates a location Service.
@@ -26,9 +33,30 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 	return &Service{db: db, auditSvc: auditSvc}
 }
 
+// SetCache injects the Redis cache service.
+func (s *Service) SetCache(cacheSvc *cache.Service) {
+	s.cacheSvc = cacheSvc
+}
+
+// ClearCache clears all location caches (provinces and all ward lists).
+func (s *Service) ClearCache(ctx context.Context) error {
+	if s.cacheSvc == nil {
+		return nil
+	}
+	_ = s.cacheSvc.Delete(ctx, cacheKeyProvinces)
+	return s.cacheSvc.DeletePrefix(ctx, cachePrefixWards)
+}
+
 // ListProvinces returns all non-deleted provinces ordered alphabetically.
 // Only selects essential columns — no soft-delete metadata.
 func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceResponseDTO, error) {
+	if s.cacheSvc != nil {
+		var cached []response.ProvinceResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKeyProvinces, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT province_id, province_code, province_name
 		FROM provinces
@@ -47,12 +75,27 @@ func (s *Service) ListProvinces(ctx context.Context) ([]response.ProvinceRespons
 		}
 		list = append(list, ToProvinceResponseDTO(e))
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKeyProvinces, list, 24*time.Hour)
+	}
+	return list, nil
 }
 
 // ListWards returns all non-deleted wards for a given province.
 // Only selects essential columns — no soft-delete metadata.
 func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.WardResponseDTO, error) {
+	cacheKey := fmt.Sprintf("%sp:%d", cachePrefixWards, provinceID)
+	if s.cacheSvc != nil {
+		var cached []response.WardResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type
 		FROM wards
@@ -73,12 +116,27 @@ func (s *Service) ListWards(ctx context.Context, provinceID int64) ([]response.W
 		}
 		list = append(list, ToWardResponseDTO(e))
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, list, 24*time.Hour)
+	}
+	return list, nil
 }
 
 // GetWardDeliveryCoverage returns delivery coverage flags for a ward.
 // The courier query param filters to a specific courier (optional).
 func (s *Service) GetWardDeliveryCoverage(ctx context.Context, wardID int64) (entities.WardCoverageEntity, error) {
+	cacheKey := fmt.Sprintf("hsk:loc:coverage:w:%d", wardID)
+	if s.cacheSvc != nil {
+		var cached entities.WardCoverageEntity
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	var e entities.WardCoverageEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT ward_id, ward_province_id, ward_code, ward_name, ward_type,
@@ -89,10 +147,17 @@ func (s *Service) GetWardDeliveryCoverage(ctx context.Context, wardID int64) (en
 		&e.GHNCoverage, &e.GHTKCoverage,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
+		if s.cacheSvc != nil {
+			s.cacheSvc.SetSentinel(ctx, cacheKey, 1*time.Minute)
+		}
 		return entities.WardCoverageEntity{}, errors.New("xã/phường không tồn tại")
 	}
 	if err != nil {
 		return entities.WardCoverageEntity{}, fmt.Errorf("location: lấy thông tin giao hàng: %w", err)
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, e, 24*time.Hour)
 	}
 	return e, nil
 }
@@ -218,5 +283,14 @@ func (s *Service) MergeWard(ctx context.Context, actorAccountID, sourceWardID in
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("location: commit transaction thất bại: %w", err)
 	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.DeletePrefix(ctx, cachePrefixWards)
+		_ = s.cacheSvc.Delete(ctx,
+			fmt.Sprintf("hsk:loc:coverage:w:%d", sourceWardID),
+			fmt.Sprintf("hsk:loc:coverage:w:%d", req.TargetWardID),
+		)
+	}
+
 	return nil
 }

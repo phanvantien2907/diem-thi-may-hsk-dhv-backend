@@ -34,8 +34,8 @@ This skill **implements changes to CI/CD files only** — it never modifies appl
 | Item | Actual state |
 |---|---|
 | CI pipeline | **ABSENT** — no `.github/` directory exists |
-| Dockerfile | Multi-stage: `golang:1.23-alpine` builder → `alpine:latest` runtime; non-root `appuser`; `CGO_ENABLED=0` static binary |
-| Docker Compose | PostgreSQL 16 + API + Adminer; Redis commented out; API `depends_on: postgres: condition: service_healthy` |
+| Dockerfile | Multi-stage: `golang:1.23-alpine` builder → `alpine:3.21` runtime; non-root `appuser`; `CGO_ENABLED=0` static binary; UPX compressed (< 30MB layer content, ~51MB disk usage) |
+| Docker Compose | PostgreSQL 16 + API + Adminer + Redis 7 + Ngrok; API `depends_on: migrate (completed), redis (started)`; JSON log rotation enabled |
 | Migration mechanism | Plain `.sql` files mounted to `docker-entrypoint-initdb.d/` — **only runs on a fresh volume** |
 | Current migrations | `001_schema.sql`, `002_seed_data.sql` |
 | Config mechanism | `godotenv` + `os.LookupEnv`; `mustGetEnv` for required vars; `.env` file for local dev |
@@ -147,10 +147,12 @@ Add an optional Docker build job to the CI pipeline — only runs on push to `ma
 Push to a registry (Docker Hub, GHCR) only if explicitly configured — do not assume a registry is available.
 
 **Key Dockerfile properties to preserve:**
-- `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` static binary.
-- `-trimpath -ldflags="-s -w"` for minimal binary size.
-- Non-root `appuser`.
+- Multi-arch support: `CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH}` static binary.
+- `-trimpath -ldflags="-s -w"` for stripped binary.
+- `upx --best --lzma /bin/api` for executable compression (< 20MB binary size).
+- Non-root `appuser` on minimal `alpine:3.21` runtime.
 - `ca-certificates` and `tzdata` copied from builder.
+- Strict size budget: API image must remain under 100MB (target <= 30MB layer content, <= 55MB disk usage).
 
 ---
 

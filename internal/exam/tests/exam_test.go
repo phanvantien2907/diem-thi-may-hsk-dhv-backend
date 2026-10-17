@@ -233,3 +233,19 @@ func (fakeAuditService) Log(_ context.Context, _ *sql.Tx, _ auditreq.CreateAudit
 func (fakeAuditService) List(_ context.Context, _ auditreq.ListAuditLogRequestDTO) (auditresp.AuditLogListResponseDTO, error) {
 	return auditresp.AuditLogListResponseDTO{}, nil
 }
+
+func TestExamService_ClearCache(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := exam.NewService(db, fakeAuditService{})
+	// ClearCache with nil cache should not fail
+	err = svc.ClearCache(context.Background())
+	if err != nil {
+		t.Fatalf("ClearCache() error = %v", err)
+	}
+}
+

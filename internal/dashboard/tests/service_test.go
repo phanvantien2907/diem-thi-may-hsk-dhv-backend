@@ -134,3 +134,17 @@ func TestService_SyncPayOSPendingPayments(t *testing.T) {
 		assert.Equal(t, int64(0), count)
 	})
 }
+
+func TestService_ClearCache(t *testing.T) {
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	svc := dashboard.NewService(db, &fakeAudit{}, nil)
+
+	// ClearCache without cacheSvc returns real-time mode message
+	res, err := svc.ClearCache(context.Background(), int64(1))
+	require.NoError(t, err)
+	assert.Contains(t, res.Message, "Real-time")
+}
+

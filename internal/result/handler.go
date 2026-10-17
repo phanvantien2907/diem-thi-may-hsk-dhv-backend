@@ -91,3 +91,19 @@ func (h *Handler) CreateRecheck(c *gin.Context) {
 	}
 	utils.Created(c, r)
 }
+
+// ClearCache godoc
+// @Summary      Xoá bộ nhớ đệm Kết quả thi
+// @Description  Xoá cache tra cứu kết quả thi trên Redis để phục vụ FE/Admin làm mới dữ liệu
+// @Tags         Results
+// @Produce      json
+// @Success      200  {object}  map[string]interface{} "Thành công"
+// @Router       /results/clear-cache [post]
+func (h *Handler) ClearCache(c *gin.Context) {
+	if err := h.svc.ClearCache(c.Request.Context()); err != nil {
+		utils.InternalServerError(c, "Xóa bộ nhớ đệm kết quả thi thất bại")
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm kết quả thi"})
+}
+
