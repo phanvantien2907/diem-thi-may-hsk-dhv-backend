@@ -48,6 +48,7 @@ func (s *Service) ClearCache(ctx context.Context) error {
 		return nil
 	}
 	_ = s.cacheSvc.Delete(ctx, cacheKeyExamTypes, cacheKeyExamSessionsPub)
+	_ = s.cacheSvc.DeletePrefix(ctx, "hsk:exam:sessions:filt:")
 	return s.cacheSvc.DeletePrefix(ctx, cachePrefixExamSession)
 }
 
@@ -60,6 +61,7 @@ func (s *Service) invalidateSessionCache(ctx context.Context, sessionIDs ...int6
 		keys = append(keys, fmt.Sprintf("%s%d", cachePrefixExamSession, id))
 	}
 	_ = s.cacheSvc.Delete(ctx, keys...)
+	_ = s.cacheSvc.DeletePrefix(ctx, "hsk:exam:sessions:filt:")
 }
 
 // ListExamTypes returns all non-deleted exam types as DTOs.
@@ -278,6 +280,19 @@ func (s *Service) ListAdminExamSessionsFiltered(ctx context.Context, f examreq.L
 }
 
 func (s *Service) listExamSessionsFiltered(ctx context.Context, f examreq.ListExamSessionsFilterDTO, publicOnly bool) ([]response.ExamSessionResponseDTO, error) {
+	cacheKey := fmt.Sprintf("hsk:exam:sessions:filt:%t:%d:%s:%s",
+		publicOnly,
+		f.ExamTypeID,
+		f.From.Format("2006-01-02"),
+		f.To.Format("2006-01-02"),
+	)
+	if s.cacheSvc != nil {
+		var cached []response.ExamSessionResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	// Build dynamic WHERE clause — avoid string interpolation, use $N args
 	args := []any{}
 	where := "WHERE es.exam_session_is_deleted = FALSE"
@@ -331,7 +346,14 @@ func (s *Service) listExamSessionsFiltered(ctx context.Context, f examreq.ListEx
 		}
 		list = append(list, ToExamSessionResponseDTO(e))
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.SetWithJitter(ctx, cacheKey, list, 10*time.Minute, 0.35)
+	}
+	return list, nil
 }
 
 // CancelExamSession marks a session as cancelled (admin only).

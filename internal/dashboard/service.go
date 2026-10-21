@@ -40,9 +40,8 @@ func (s *Service) SetCache(cacheSvc *cache.Service) {
 	s.cacheSvc = cacheSvc
 }
 
-// GetMetricsOverview returns real-time top-level KPIs.
+// GetMetricsOverview returns real-time top-level KPIs directly from PostgreSQL (real-time 100%).
 func (s *Service) GetMetricsOverview(ctx context.Context) (response.MetricsOverviewResponseDTO, error) {
-
 	var result response.MetricsOverviewResponseDTO
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
@@ -300,6 +299,7 @@ func (s *Service) GetTransactionExceptions(ctx context.Context, page, limit int)
 		TotalItems: total,
 		TotalPages: totalPages,
 	}
+
 	return items, meta, nil
 }
 
@@ -518,6 +518,7 @@ func (s *Service) GetRecentLogs(ctx context.Context, page, limit int) ([]respons
 		TotalItems: total,
 		TotalPages: totalPages,
 	}
+
 	return items, meta, nil
 }
 

@@ -134,7 +134,7 @@ func TestService_AdminConfirmPaymentAs_IdempotentOnDoubleClick(t *testing.T) {
 			AddRow(5, 500000, "success"))
 	mock.ExpectRollback()
 
-	mock.ExpectQuery(`^SELECT p\.payment_id,.* FROM payments p WHERE p\.payment_id = \$1 AND p\.payment_is_deleted = FALSE$`).
+	mock.ExpectQuery(`^SELECT p\.payment_id,.* FROM payments p.* WHERE p\.payment_id = \$1 AND p\.payment_is_deleted = FALSE$`).
 		WithArgs(int64(10)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"payment_id", "payment_exam_registration_id", "payment_amount", "payment_amount_received",
@@ -145,6 +145,7 @@ func TestService_AdminConfirmPaymentAs_IdempotentOnDoubleClick(t *testing.T) {
 			"payment_is_top_up", "payment_parent_payment_id",
 			"payment_expires_at", "payment_paid_at", "payment_is_deleted", "payment_deleted_at", "payment_created_at",
 			"payment_updated_at",
+			"candidate_full_name", "account_email", "exam_type_name",
 		}).AddRow(
 			10, 5, 500000, 500000,
 			"cash", "payos", "10", "trans123",
@@ -153,6 +154,7 @@ func TestService_AdminConfirmPaymentAs_IdempotentOnDoubleClick(t *testing.T) {
 			"[]", nil, nil,
 			false, nil,
 			nil, now, false, nil, now, now,
+			"Nguyen Van A", "a@example.com", "HSK 3",
 		))
 
 	resp, err := svc.AdminConfirmPaymentAs(ctx, 10, 1, payreq.AdminConfirmPaymentRequestDTO{

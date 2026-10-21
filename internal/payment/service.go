@@ -77,7 +77,15 @@ const adminPaymentCols = `p.payment_id, p.payment_exam_registration_id, p.paymen
 	COALESCE(p.payment_refund_evidence_urls, '[]'::jsonb), p.payment_refunded_at, p.payment_refund_bank_ref,
 	p.payment_is_top_up, p.payment_parent_payment_id,
 	p.payment_expires_at, p.payment_paid_at, p.payment_is_deleted, p.payment_deleted_at, p.payment_created_at,
-	p.payment_updated_at`
+	p.payment_updated_at,
+	COALESCE(c.candidate_full_name, ''), COALESCE(a.account_email, ''), COALESCE(et.exam_type_name, '')`
+
+const adminPaymentFrom = `payments p
+	LEFT JOIN exam_registrations er ON er.exam_registration_id = p.payment_exam_registration_id
+	LEFT JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
+	LEFT JOIN accounts a ON a.account_id = c.candidate_account_id
+	LEFT JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+	LEFT JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id`
 
 const suspenseCols = `s.suspense_id, s.suspense_order_code, s.suspense_amount, s.suspense_bank_ref,
 	s.suspense_transfer_content, s.suspense_transfer_time, COALESCE(s.suspense_evidence_urls, '[]'::jsonb),
@@ -106,6 +114,7 @@ func scanAdminPayment(row interface{ Scan(dest ...any) error }, e *PaymentEntity
 		&e.PaymentIsTopUp, &e.PaymentParentPaymentID,
 		&e.PaymentExpiresAt, &e.PaymentPaidAt,
 		&e.PaymentIsDeleted, &e.PaymentDeletedAt, &e.PaymentCreatedAt, &e.PaymentUpdatedAt,
+		&e.CandidateName, &e.CandidateEmail, &e.ExamTypeName,
 	)
 	if err != nil {
 		return err
@@ -163,7 +172,7 @@ func (s *Service) fetchPaymentByID(ctx context.Context, id int64) (PaymentEntity
 func (s *Service) fetchAdminPaymentByID(ctx context.Context, id int64) (PaymentEntity, error) {
 	var e PaymentEntity
 	err := scanAdminPayment(s.db.QueryRowContext(ctx,
-		`SELECT `+adminPaymentCols+` FROM payments p WHERE p.payment_id = $1 AND p.payment_is_deleted = FALSE`, id,
+		`SELECT `+adminPaymentCols+` FROM `+adminPaymentFrom+` WHERE p.payment_id = $1 AND p.payment_is_deleted = FALSE`, id,
 	), &e)
 	return e, err
 }
@@ -459,8 +468,8 @@ func (s *Service) AdminListPayments(ctx context.Context, req request.AdminListPa
 	}
 
 	// Fetch page.
-	selectQuery := fmt.Sprintf(`SELECT %s FROM payments p WHERE %s ORDER BY p.payment_created_at DESC LIMIT $%d OFFSET $%d`,
-		adminPaymentCols, where, argIdx, argIdx+1)
+	selectQuery := fmt.Sprintf(`SELECT %s FROM %s WHERE %s ORDER BY p.payment_created_at DESC LIMIT $%d OFFSET $%d`,
+		adminPaymentCols, adminPaymentFrom, where, argIdx, argIdx+1)
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, selectQuery, args...)
@@ -764,7 +773,7 @@ func (s *Service) AdminMarkRefund(ctx context.Context, paymentID, actorID int64,
 
 	// If payment was success, ensure registration is cancelled and seat is released before exam date
 	if status == "success" {
-		var seatID int64
+		var seatID sql.NullInt64
 		var examDate time.Time
 		var examPassed bool
 		if err := tx.QueryRowContext(ctx, `
@@ -776,14 +785,20 @@ func (s *Service) AdminMarkRefund(ctx context.Context, paymentID, actorID int64,
 			if examPassed {
 				return response.AdminPaymentResponseDTO{}, errors.New("Không thể hoàn tiền sau hoặc trong ngày thi: " + examDate.Format("2006-01-02"))
 			}
-			_, _ = tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				UPDATE exam_registrations
-				SET exam_registration_status = 'cancelled', exam_registration_cancelled_at = NOW(), exam_registration_updated_at = NOW()
-				WHERE exam_registration_id = $1`, regID)
-			_, _ = tx.ExecContext(ctx, `
-				UPDATE exam_seats
-				SET exam_seat_status = 'available', exam_seat_held_until = NULL, exam_seat_updated_at = NOW()
-				WHERE exam_seat_id = $1 AND exam_seat_status IN ('held', 'booked')`, seatID)
+				SET exam_registration_status = 'cancelled', exam_registration_updated_at = NOW()
+				WHERE exam_registration_id = $1`, regID); err != nil {
+				return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel registration: %w", err)
+			}
+			if seatID.Valid && seatID.Int64 > 0 {
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE exam_seats
+					SET exam_seat_status = 'available', exam_seat_held_until = NULL, exam_seat_updated_at = NOW()
+					WHERE exam_seat_id = $1 AND exam_seat_status IN ('held', 'booked')`, seatID.Int64); err != nil {
+					return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: release seat: %w", err)
+				}
+			}
 		}
 	}
 

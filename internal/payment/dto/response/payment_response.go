@@ -19,6 +19,9 @@ type PaymentResponseDTO struct {
 type AdminPaymentResponseDTO struct {
 	ID             int64      `json:"id"`
 	RegistrationID int64      `json:"exam_registration_id"`
+	CandidateName  string     `json:"candidate_name"`
+	CandidateEmail string     `json:"candidate_email"`
+	ExamTypeName   string     `json:"exam_type_name"`
 	Amount         int64      `json:"amount"`
 	AmountReceived *int64     `json:"amount_received,omitempty"`
 	Method         string     `json:"method"`

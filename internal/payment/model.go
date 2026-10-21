@@ -33,6 +33,9 @@ type PaymentEntity struct {
 	PaymentDeletedAt          *time.Time
 	PaymentCreatedAt          time.Time
 	PaymentUpdatedAt          time.Time
+	CandidateName             string
+	CandidateEmail            string
+	ExamTypeName              string
 }
 
 // SuspenseTransactionEntity mirrors payment_suspense_transactions table 1:1.

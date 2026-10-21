@@ -143,6 +143,7 @@ func (s *Service) InvalidateCandidateCacheByAccountID(ctx context.Context, accou
 		fmt.Sprintf("%s%d", cachePrefixCandidateProfile, accountID),
 		fmt.Sprintf("%s%d", cachePrefixCandidateDocs, accountID),
 	)
+	_ = s.cacheSvc.DeletePrefix(ctx, "hsk:cand:admin:")
 }
 
 func (s *Service) invalidateCandidateDocs(ctx context.Context, candidateID int64) {
@@ -622,6 +623,18 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 	if req.Limit < 1 || req.Limit > 100 {
 		req.Limit = 20
 	}
+	cacheKey := fmt.Sprintf("hsk:cand:admin:list:%d:%d:%s:%s:%s:%s",
+		req.Page, req.Limit, req.Status, req.Level, req.ExamDate, req.Search)
+	if s.cacheSvc != nil {
+		var cached struct {
+			Items []response.AdminCandidateResponseDTO `json:"items"`
+			Meta  utils.Meta                          `json:"meta"`
+		}
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached.Items, cached.Meta, nil
+		}
+	}
+
 	where, filterArgs := adminCandidateWhere(req, 1)
 	const latestDocumentCTE = `
 			WITH latest_documents AS (
@@ -764,11 +777,26 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 	if total > 0 {
 		totalPages = int((total + int64(req.Limit) - 1) / int64(req.Limit))
 	}
-	return items, utils.Meta{Page: req.Page, PerPage: req.Limit, TotalItems: total, TotalPages: totalPages}, nil
+	meta := utils.Meta{Page: req.Page, PerPage: req.Limit, TotalItems: total, TotalPages: totalPages}
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, struct {
+			Items []response.AdminCandidateResponseDTO `json:"items"`
+			Meta  utils.Meta                          `json:"meta"`
+		}{Items: items, Meta: meta}, 5*time.Minute)
+	}
+	return items, meta, nil
 }
 
 // AdminCandidateMetrics returns the total and latest-document status counts.
 func (s *Service) AdminCandidateMetrics(ctx context.Context) (response.AdminCandidateMetricsResponseDTO, error) {
+	const cacheKey = "hsk:cand:admin:metrics"
+	if s.cacheSvc != nil {
+		var cached response.AdminCandidateMetricsResponseDTO
+		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
+			return cached, nil
+		}
+	}
+
 	query := `
 			WITH latest_documents AS (
 				SELECT DISTINCT ON (candidate_document_candidate_id)
@@ -788,6 +816,10 @@ func (s *Service) AdminCandidateMetrics(ctx context.Context) (response.AdminCand
 	var metrics response.AdminCandidateMetricsResponseDTO
 	if err := s.db.QueryRowContext(ctx, query).Scan(&metrics.Total, &metrics.Pending, &metrics.Verified, &metrics.Rejected); err != nil {
 		return response.AdminCandidateMetricsResponseDTO{}, fmt.Errorf("candidate: admin metrics: %w", err)
+	}
+
+	if s.cacheSvc != nil {
+		_ = s.cacheSvc.Set(ctx, cacheKey, metrics, 5*time.Minute)
 	}
 	return metrics, nil
 }

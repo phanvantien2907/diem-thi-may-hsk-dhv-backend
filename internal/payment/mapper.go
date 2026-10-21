@@ -25,6 +25,9 @@ func ToAdminPaymentResponseDTO(e PaymentEntity) response.AdminPaymentResponseDTO
 	return response.AdminPaymentResponseDTO{
 		ID:              e.PaymentID,
 		RegistrationID:  e.PaymentExamRegistrationID,
+		CandidateName:   e.CandidateName,
+		CandidateEmail:  e.CandidateEmail,
+		ExamTypeName:    e.ExamTypeName,
 		Amount:          e.PaymentAmount,
 		AmountReceived:  e.PaymentAmountReceived,
 		Method:          string(e.PaymentMethod),

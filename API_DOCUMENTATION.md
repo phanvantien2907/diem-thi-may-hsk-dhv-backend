@@ -15,6 +15,14 @@
   - Tối ưu hóa `.dockerignore`: Loại bỏ triệt để file rác, binary cục bộ (`bin/api`), `secrets/`, `migrations/`, `.git/` để thu nhỏ build context từ hàng chục MB xuống còn vài chục KB.
   - Hỗ trợ biên dịch Multi-Architecture (`linux/amd64` và `linux/arm64` cho macOS Apple Silicon) qua biến build `TARGETARCH`.
   - Bổ sung cấu hình giới hạn dung lượng log (`json-file`, `max-size: 10m`, `max-file: 3`) cho toàn bộ dịch vụ trong `docker-compose.yml` chống phình ổ đĩa.
+- ⚡ **Tích hợp Dịch vụ Bộ nhớ đệm Redis với Cơ chế Phòng thủ (Defensive Redis Cache Architecture)**:
+  - Triển khai mô hình **Cache-Aside** cho các module cốt lõi: Ca thi (`exam`), Hồ sơ thí sinh (`candidate`), Địa điểm (`location`), và Kết quả thi (`result`).
+  - **Chống Cache Breakdown (Stampede)**: Sử dụng kỹ thuật `singleflight.Group` triệt tiêu trùng lặp tính toán đồng thời trên cùng một tiến trình Go.
+  - **Khởi động nguội đa phiên bản (Multi-Instance Cold Start)**: Triển khai khóa phân tán Redis Distributed Lock (`SET NX PX` kết hợp giải phóng an toàn bằng mã Lua atomics).
+  - **Chống Cache Avalanche**: Bổ sung độ trễ ngẫu nhiên Dynamic TTL Jitter (±10% mặc định, ±35% cho ca thi được phát hành đồng loạt).
+  - **Chống Cache Penetration**: Caching bản ghi rỗng Sentinel (`__HSK_NOT_FOUND__`) TTL 1 phút cho các truy vấn tra cứu công khai không tồn tại ID.
+  - **Graceful Fallback Mode**: Thiết lập timeout ngắn (`DialTimeout: 1s`, `Read/WriteTimeout: 200ms`). Khi Redis gián đoạn, hệ thống tự động fallback trực tiếp xuống cơ sở dữ liệu PostgreSQL mà không gây lỗi HTTP 500 cho ứng dụng.
+  - **Bộ API Xóa & Làm mới Cache linh hoạt**: Cung cấp các endpoint chuyên biệt cho Admin và Thí sinh để xóa cache tức thì theo từng phân hệ hoặc xóa toàn bộ hệ thống (`hsk:*`).
 
 ### v1.2.0 (2026-10-14)
 - ✨ Thêm tự động kiểm tra ảnh chân dung bằng Google Cloud Vision API khi upload giấy tờ tùy thân
@@ -47,6 +55,7 @@
 - [14. WebSocket Real-time Events](#14-websocket-real-time-events)
 - [15. Module Dashboard (Bảng điều khiển quản trị)](#15-module-dashboard-bảng-điều-khiển-quản-trị)
 - [16. Chuẩn đóng gói Container & Tối ưu hóa Dung lượng Docker](#16-chuẩn-đóng-gói-container--tối-ưu-hóa-dung-lượng-docker)
+- [17. Kiến trúc Bộ nhớ đệm Redis & Cơ chế Phòng thủ (Redis Defensive Caching)](#17-kiến-trúc-bộ-nhớ-đệm-redis--cơ-chế-phòng-thủ-redis-defensive-caching)
 
 ---
 
@@ -1425,6 +1434,56 @@ thí sinh và trả về `null` nếu chưa được cập nhật.
 
 ---
 
+### 3.13. [Admin] Xoá toàn bộ bộ nhớ đệm thí sinh (Clear Candidates Cache)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/candidates/clear-cache` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Xoá toàn bộ cache hồ sơ (`hsk:cand:profile:*`) và giấy tờ (`hsk:cand:docs:*`) của tất cả thí sinh trên Redis để phục vụ FE/Admin làm mới dữ liệu tức thì sau khi có can thiệp dữ liệu ngoài hệ thống |
+
+**Request Body:** Không cần body.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Đã làm mới toàn bộ bộ nhớ đệm thí sinh"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 3.14. Xoá bộ nhớ đệm hồ sơ cá nhân (Clear My Profile Cache)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/me/candidate-profile/clear-cache` |
+| **Auth** | 🔐 JWT (Candidate / Authenticated User) |
+| **Use-case** | Xoá cache hồ sơ và giấy tờ của chính thí sinh đang đăng nhập trên Redis để làm mới giao diện |
+
+**Request Body:** Không cần body.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Đã làm mới bộ nhớ đệm hồ sơ cá nhân"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
 ## 4. Module Exam (Kỳ thi)
 
 ### 4.1. Danh sách loại kỳ thi
@@ -1741,6 +1800,31 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
     "message": "Cập nhật trạng thái phát hành thành công",
     "exam_session_publication_status": "scheduled",
     "exam_session_publish_at": "2026-10-20T10:00:00Z"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
+### 4.9. [Admin] Xoá bộ nhớ đệm Ca thi (Clear Exam Sessions Cache)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/exam-sessions/clear-cache` (Admin)<br>`POST /api/v1/exam-sessions/clear-cache` (Công khai / Development) |
+| **Auth** | 🔐 JWT + Admin (với route admin) / 🔓 Public (route dev) |
+| **Use-case** | Xoá toàn bộ cache danh sách loại thi (`hsk:exam:types`), danh sách ca thi công khai (`hsk:exam:sessions:published`), và chi tiết từng ca thi (`hsk:exam:session:*`) trên Redis. Giúp làm mới danh sách ca thi ngay lập tức khi Admin cập nhật lịch hoặc số lượng chỗ thi |
+
+**Request Body:** Không cần body.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Đã làm mới bộ nhớ đệm ca thi"
   },
   "error": null,
   "meta": null
@@ -2240,7 +2324,29 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 ```json
 {
   "success": true,
-  "data": [ /* mảng AdminPaymentResponseDTO */ ],
+  "data": [
+    {
+      "id": 101,
+      "exam_registration_id": 42,
+      "candidate_name": "Nguyễn Văn A",
+      "candidate_email": "nguyenvana@email.com",
+      "exam_type_name": "HSK 3 (Cấp độ 3 + HSKK sơ cấp)",
+      "amount": 500000,
+      "amount_received": 500000,
+      "method": "payos",
+      "gateway": "payos",
+      "transaction_ref": "101",
+      "gateway_trans_id": "FT26274494820346",
+      "content": "HSK-42",
+      "status": "success",
+      "evidence_urls": [],
+      "admin_note": null,
+      "is_top_up": false,
+      "paid_at": "2026-09-27T09:05:00+07:00",
+      "created_at": "2026-09-27T09:00:00+07:00",
+      "updated_at": "2026-09-27T09:05:00+07:00"
+    }
+  ],
   "error": null,
   "meta": {
     "page": 1,
@@ -3051,6 +3157,31 @@ transaction PostgreSQL. Không sử dụng Redis.
 
 ---
 
+### 7.4. [Admin] Xoá bộ nhớ đệm Kết quả thi (Clear Results Cache)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/results/clear-cache` (Admin)<br>`POST /api/v1/results/clear-cache` (Công khai / Development) |
+| **Auth** | 🔐 JWT + Admin (với route admin) / 🔓 Public (route dev) |
+| **Use-case** | Xoá toàn bộ cache điểm thi và tra cứu kết quả thi trên Redis (prefix `hsk:res:score:*` và `hsk:result:*`). Dùng khi Admin cập nhật điểm thi hàng loạt hoặc giải quyết đơn phúc khảo |
+
+**Request Body:** Không cần body.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Đã làm mới bộ nhớ đệm kết quả thi"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+---
+
 ## 8. Module Certificate (Chứng chỉ)
 
 ### 8.1. Danh sách chứng chỉ (của tôi)
@@ -3659,6 +3790,31 @@ transaction PostgreSQL. Không sử dụng Redis.
 |---|---|---|---|---|
 | `target_ward_id` | `integer` | ✅ | Min 1 | ID xã/phường đích (được giữ lại) |
 | `reason` | `string` | ✅ | Min 5, max 500 ký tự | Lý do gộp |
+
+---
+
+### 10.6. [Admin] Xoá bộ nhớ đệm Địa điểm (Clear Locations Cache)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/locations/clear-cache` (Admin)<br>`POST /api/v1/locations/clear-cache` (Công khai / Development) |
+| **Auth** | 🔐 JWT + Admin (với route admin) / 🔓 Public (route dev) |
+| **Use-case** | Xoá toàn bộ cache danh sách tỉnh/thành (`hsk:loc:provinces`), danh sách xã/phường (`hsk:loc:wards:*`), và thông tin giao hàng (`hsk:loc:coverage:*`) trên Redis. Dùng khi cập nhật danh mục địa giới hành chính |
+
+**Request Body:** Không cần body.
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Đã làm mới bộ nhớ đệm địa điểm"
+  },
+  "error": null,
+  "meta": null
+}
+```
 
 ---
 
@@ -4643,17 +4799,30 @@ function connectWS(token, onMessage) {
 
 ---
 
-### 15.10. Xóa bộ nhớ đệm (Clear Cache)
+### 15.10. Xóa bộ nhớ đệm hệ thống (Master Clear Cache)
 
 | | |
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/system/clear-cache` |
 | **Auth** | 🔐 JWT + Admin |
-| **Use-case** | Xác nhận trạng thái Real-time và ghi nhận audit log hệ thống |
+| **Use-case** | Xóa toàn bộ dữ liệu bộ nhớ đệm Redis của toàn bộ hệ thống (quét và xóa tất cả key có tiền tố `hsk:*`) bao gồm ca thi, loại thi, địa điểm, hồ sơ thí sinh và kết quả thi. Đồng thời tự động ghi nhận audit log hệ thống |
 
 **Request Body:** Không cần body.
 
-**Response (200 OK):**
+**Response (200 OK) — Khi Redis đang hoạt động:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Toàn bộ bộ nhớ đệm (Redis Cache) hệ thống đã được làm mới thành công"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+**Response (200 OK) — Khi hệ thống chạy ở chế độ dự phòng (Graceful Degradation / No Redis):**
 
 ```json
 {
@@ -4666,7 +4835,9 @@ function connectWS(token, onMessage) {
 }
 ```
 
-> **Lưu ý:** Hệ thống Dashboard hiện query trực tiếp theo thời gian thực (Real-time) và tự động nhận tín hiệu WebSocket khi có thay đổi. API này được giữ để tương thích giao diện và ghi nhận audit log.
+> **Lưu ý nghiệp vụ:**
+> - Hệ thống Dashboard quản trị và module Thanh toán query trực tiếp theo thời gian thực (Real-time từ PostgreSQL) và tự động nhận tín hiệu WebSocket khi có biến động.
+> - Các module hiển thị dữ liệu tĩnh/bán tĩnh (Ca thi, Loại thi, Địa điểm, Hồ sơ thí sinh, Điểm thi) được lưu trên Redis và sẽ được làm mới ngay lập tức khi gọi API này.
 
 ---
 
@@ -4809,4 +4980,55 @@ function connectWS(token, onMessage) {
          max-size: "10m"
          max-file: "3"
      ```
+
+---
+
+## 17. Kiến trúc Bộ nhớ đệm Redis & Cơ chế Phòng thủ (Redis Defensive Caching)
+
+Hệ thống HSK Vinh University triển khai tầng lưu trữ đệm phân tán Redis (chạy container `redis:7-alpine`) nhằm tăng tốc độ truy vấn cho hàng ngàn thí sinh truy cập đồng thời vào các thời điểm mở cổng đăng ký thi, đồng thời giảm tải 80-90% truy vấn đọc xuống PostgreSQL.
+
+### 17.1. Nguyên lý Thiết kế Phòng thủ (Defensive Caching Patterns)
+
+Hệ thống áp dụng đầy đủ 5 cơ chế phòng thủ chuyên sâu cho hệ thống phân tán:
+
+| Cơ chế | Vấn đề giải quyết | Giải pháp kỹ thuật triển khai |
+|---|---|---|
+| **Cache-Aside Pattern** | Tách biệt logic ứng dụng & cache | Ứng dụng đọc từ Redis trước, nếu Cache Miss thì truy vấn PostgreSQL, sau đó ghi ngược vào Redis kèm TTL và trả về cho client. |
+| **Chống Cache Breakdown (Stampede)** | 1 key bị hết hạn đột ngột, hàng ngàn request cùng lúc đổ dồn vào database | Sử dụng `golang.org/x/sync/singleflight`: đảm bảo trong cùng một tiến trình chỉ có **duy nhất 1 goroutine** được phép truy vấn database để tính toán dữ liệu cho key đó. Các request khác cùng key sẽ đợi kết quả từ goroutine này. |
+| **Khóa phân tán (Distributed Lock)** | Khởi động nguội trên môi trường Multi-Instance (N container replica) | Sử dụng `SET NX PX` với TTL 5 giây để khóa key trên Redis. Chỉ 1 container duy nhất thực hiện query database và ghi đè cache. Khi hoàn tất, giải phóng khóa bằng script Lua nguyên tử (atomic Lua release). |
+| **Chống Cache Avalanche** | Hàng loạt key cùng hết hạn tại một thời điểm khiến DB bị sập | Bổ sung độ lệch ngẫu nhiên **Dynamic TTL Jitter** (±10% cho hầu hết dữ liệu, ±35% cho danh sách ca thi). Nhờ đó thời điểm hết hạn của các key được phân tán đều theo thời gian. |
+| **Chống Cache Penetration** | Hacker/Client spam query các ID không tồn tại | Với các endpoint công khai (như tra cứu ca thi theo ID, tra cứu điểm thi), khi database trả về `sql.ErrNoRows`, hệ thống ghi nhận giá trị Sentinel `__HSK_NOT_FOUND__` vào Redis với TTL ngắn (1 phút) để chặn các request tiếp theo truy vấn database. |
+| **Graceful Degradation (Chế độ dự phòng)** | Redis server bị sập hoặc mất kết nối mạng | Client Redis được thiết lập timeout siêu ngắn (`DialTimeout: 1s`, `Read/WriteTimeout: 200ms`). Mọi lỗi thao tác cache đều được log cảnh báo và tự động fallback xuống truy vấn trực tiếp PostgreSQL. Ứng dụng **không bao giờ trả về lỗi 500** chỉ vì Redis gặp sự cố. |
+
+### 17.2. Bảng Ma trận Key & TTL Caching
+
+| Phân hệ / Module | Key Pattern | TTL Cơ bản | Jitter | Invalidation Trigger (Tự động xóa) |
+|---|---|---|---|---|
+| **Exam Types** | `hsk:exam:types` | 24 giờ | ±10% | Admin tạo / sửa / xóa loại thi |
+| **Exam Sessions (Public)** | `hsk:exam:sessions:published` | 10 phút | ±35% | Tạo ca thi mới, hủy ca thi, thay đổi trạng thái phát hành, worker chuyển ca thi sang published |
+| **Exam Sessions (Admin/Filt)** | `hsk:exam:sessions:filt:*` | 10 phút | ±35% | Tạo ca thi mới, hủy ca thi, đổi trạng thái, phát hành ca thi, xoá cache ca thi |
+| **Exam Session Detail** | `hsk:exam:session:<id>` | 10 phút | ±35% | Hủy ca thi, cập nhật thông tin ca thi |
+| **Candidate Profile** | `hsk:cand:profile:acc:<account_id>` | 6 giờ | ±10% | Thí sinh cập nhật hồ sơ cá nhân |
+| **Candidate Documents** | `hsk:cand:docs:cand:<candidate_id>` | 6 giờ | ±10% | Thí sinh upload giấy tờ, Admin duyệt / từ chối giấy tờ |
+| **Admin Candidates List** | `hsk:cand:admin:list:*` | 5 phút | — | Duyệt hồ sơ, từ chối hồ sơ, xoá cache thí sinh |
+| **Admin Candidate Metrics** | `hsk:cand:admin:metrics` | 5 phút | — | Duyệt hồ sơ, từ chối hồ sơ, xoá cache thí sinh |
+| **Provinces** | `hsk:loc:provinces` | 24 giờ | ±10% | Cập nhật danh mục Tỉnh/Thành phố |
+| **Wards by Province** | `hsk:loc:wards:p:<province_id>` | 24 giờ | ±10% | Gộp xã/phường (`MergeWard`) |
+| **Delivery Coverage** | `hsk:loc:coverage:w:<ward_id>` | 24 giờ | ±10% | Gộp xã/phường (`MergeWard`) |
+| **Exam Score** | `hsk:res:score:reg:<registration_id>` | 12 giờ | ±10% | Admin nhập điểm thi, cập nhật kết quả phúc khảo |
+| **Payment Transactions** | *(Không Cache)* | — | — | **Real-time 100% từ PostgreSQL** để bảo đảm toàn vẹn tài chính |
+| **Dashboard Metrics** | *(Không Cache)* | — | — | **Real-time 100% từ PostgreSQL** & đồng bộ tức thì qua WebSocket |
+
+### 17.3. Tổng hợp API Quản lý & Làm mới Cache cho Admin
+
+Admin có thể chủ động kích hoạt làm mới cache trên giao diện quản trị thông qua các endpoint sau:
+
+| Thao tác | Endpoint | Quyền hạn | Phạm vi làm sạch |
+|---|---|---|---|
+| **Làm mới toàn bộ hệ thống** | `POST /api/v1/admin/system/clear-cache` | 🔐 Admin | Quét và xóa toàn bộ key có tiền tố `hsk:*` |
+| **Làm mới cache Thí sinh** | `POST /api/v1/admin/candidates/clear-cache` | 🔐 Admin | Xóa `hsk:cand:profile:*` và `hsk:cand:docs:*` |
+| **Làm mới cache Ca thi** | `POST /api/v1/admin/exam-sessions/clear-cache` | 🔐 Admin | Xóa `hsk:exam:types`, `hsk:exam:sessions:published`, `hsk:exam:session:*` |
+| **Làm mới cache Địa điểm** | `POST /api/v1/admin/locations/clear-cache` | 🔐 Admin | Xóa `hsk:loc:provinces`, `hsk:loc:wards:*`, `hsk:loc:coverage:*` |
+| **Làm mới cache Điểm thi** | `POST /api/v1/admin/results/clear-cache` | 🔐 Admin | Xóa `hsk:res:score:*` và `hsk:result:*` |
+
 
