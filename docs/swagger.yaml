@@ -251,6 +251,11 @@ definitions:
     - new_password
     - old_password
     type: object
+  request.CloseRegistrationRequestDTO:
+    properties:
+      reason:
+        type: string
+    type: object
   request.CreateDeliveryRequestDTO:
     properties:
       address_detail:
@@ -264,6 +269,32 @@ definitions:
         type: integer
     required:
     - address_detail
+    type: object
+  request.CreateExamPeriodRequestDTO:
+    properties:
+      code:
+        maxLength: 50
+        minLength: 3
+        type: string
+      description:
+        type: string
+      end_date:
+        type: string
+      instructions:
+        type: string
+      name:
+        maxLength: 150
+        minLength: 3
+        type: string
+      registration_deadline:
+        type: string
+      registration_start:
+        type: string
+      start_date:
+        type: string
+    required:
+    - code
+    - name
     type: object
   request.CreatePaymentRequestDTO:
     properties:
@@ -362,6 +393,15 @@ definitions:
     - email
     - full_name
     - role_code
+    type: object
+  request.DuplicateExamPeriodRequestDTO:
+    properties:
+      code:
+        maxLength: 50
+        type: string
+      name:
+        maxLength: 150
+        type: string
     type: object
   request.ForceChangePasswordRequestDTO:
     properties:
@@ -576,6 +616,24 @@ definitions:
     - password
     - phone
     type: object
+  request.RescheduleExamPeriodRequestDTO:
+    properties:
+      days_offset:
+        type: integer
+      new_end_date:
+        type: string
+      new_registration_deadline:
+        type: string
+      new_start_date:
+        type: string
+      reason:
+        maxLength: 500
+        minLength: 5
+        type: string
+    required:
+    - new_start_date
+    - reason
+    type: object
   request.ReserveSeatRequestDTO:
     properties:
       exam_session_id:
@@ -610,6 +668,47 @@ definitions:
         type: string
       phone:
         maxLength: 20
+        type: string
+    type: object
+  request.UpdateExamPeriodRequestDTO:
+    properties:
+      description:
+        type: string
+      end_date:
+        type: string
+      instructions:
+        type: string
+      name:
+        type: string
+      registration_deadline:
+        type: string
+      registration_start:
+        type: string
+      start_date:
+        type: string
+    type: object
+  request.UpdateExamSessionRequestDTO:
+    properties:
+      capacity:
+        minimum: 1
+        type: integer
+      date:
+        description: YYYY-MM-DD
+        type: string
+      exam_session_check_in_at:
+        description: RFC3339
+        type: string
+      fee:
+        minimum: 0
+        type: integer
+      registration_deadline:
+        description: RFC3339
+        type: string
+      shift:
+        enum:
+        - morning
+        - afternoon
+        - evening
         type: string
     type: object
   request.UpdatePublicationStatusRequestDTO:
@@ -709,6 +808,75 @@ definitions:
       ward_id:
         type: integer
     type: object
+  response.DuplicateExamPeriodResponseDTO:
+    properties:
+      duplicated_sessions:
+        type: integer
+      new_period_id:
+        type: integer
+      period:
+        $ref: '#/definitions/response.ExamPeriodResponseDTO'
+    type: object
+  response.ExamPeriodResponseDTO:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      end_date:
+        type: string
+      id:
+        type: integer
+      instructions:
+        type: string
+      name:
+        type: string
+      registration_deadline:
+        type: string
+      registration_start:
+        type: string
+      session_count:
+        type: integer
+      sessions:
+        items:
+          $ref: '#/definitions/response.ExamSessionResponseDTO'
+        type: array
+      start_date:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  response.ExamSessionResponseDTO:
+    properties:
+      capacity:
+        type: integer
+      date:
+        type: string
+      exam_session_check_in_at:
+        type: string
+      exam_session_publication_status:
+        type: string
+      exam_session_publish_at:
+        type: string
+      exam_type_id:
+        type: integer
+      fee:
+        type: integer
+      id:
+        type: integer
+      period_id:
+        type: integer
+      registration_deadline:
+        type: string
+      shift:
+        type: string
+      status:
+        type: string
+    type: object
   response.PortraitValidationResponseDTO:
     properties:
       brightness:
@@ -731,6 +899,19 @@ definitions:
         type: string
       valid:
         type: boolean
+    type: object
+  response.RescheduleExamPeriodResponseDTO:
+    properties:
+      candidates_alerted:
+        type: integer
+      period:
+        $ref: '#/definitions/response.ExamPeriodResponseDTO'
+      period_id:
+        type: integer
+      reason:
+        type: string
+      updated_sessions:
+        type: integer
     type: object
   response.UpdatePublicationStatusResponseDTO:
     properties:
@@ -1326,6 +1507,374 @@ paths:
       summary: Cập nhật vận đơn (Admin)
       tags:
       - Certificate
+  /admin/exam-periods:
+    get:
+      consumes:
+      - application/json
+      description: Lấy danh sách các đợt thi (exam periods) với bộ lọc trạng thái
+        và phân trang.
+      parameters:
+      - description: Trạng thái (draft, published, scheduled, closed, cancelled)
+        in: query
+        name: status
+        type: string
+      - description: Số lượng bản ghi mỗi trang (mặc định 20, tối đa 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Vị trí bắt đầu
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            items:
+              $ref: '#/definitions/response.ExamPeriodResponseDTO'
+            type: array
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách đợt thi (Admin)
+      tags:
+      - Exam Periods
+    post:
+      consumes:
+      - application/json
+      description: Tạo một đợt thi mới (ở trạng thái draft).
+      parameters:
+      - description: Dữ liệu đợt thi
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.CreateExamPeriodRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Tạo thành công
+          schema:
+            $ref: '#/definitions/response.ExamPeriodResponseDTO'
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tạo đợt thi mới (Admin)
+      tags:
+      - Exam Periods
+  /admin/exam-periods/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Lấy thông tin chi tiết một đợt thi kèm danh sách các ca thi trực
+        thuộc.
+      parameters:
+      - description: ID đợt thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            $ref: '#/definitions/response.ExamPeriodResponseDTO'
+        "400":
+          description: ID không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Chi tiết đợt thi (Admin)
+      tags:
+      - Exam Periods
+    put:
+      consumes:
+      - application/json
+      description: Cập nhật thông tin đợt thi. Khi ở draft, cập nhật exam_date/registration_deadline
+        sẽ tự động áp dụng cho các ca thi con chưa có lịch.
+      parameters:
+      - description: ID đợt thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu cập nhật
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.UpdateExamPeriodRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cập nhật thành công
+          schema:
+            $ref: '#/definitions/response.ExamPeriodResponseDTO'
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Không thể sửa ngày khi đợt thi không ở trạng thái draft
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật đợt thi (Admin)
+      tags:
+      - Exam Periods
+  /admin/exam-periods/{id}/close-registration:
+    post:
+      consumes:
+      - application/json
+      description: Chủ động đóng cổng đăng ký cho toàn bộ các ca thi thuộc đợt thi
+        trước hạn chót.
+      parameters:
+      - description: ID đợt thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lý do đóng đăng ký
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/request.CloseRegistrationRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Đóng đăng ký thành công
+          schema:
+            $ref: '#/definitions/response.ExamPeriodResponseDTO'
+        "400":
+          description: ID không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đóng đăng ký đợt thi sớm (Admin)
+      tags:
+      - Exam Periods
+  /admin/exam-periods/{id}/duplicate:
+    post:
+      consumes:
+      - application/json
+      description: Tạo đợt thi mới từ một đợt thi cũ, sao chép cấu hình các ca thi
+        nhưng reset trạng thái sang draft và đặt ngày thi/hạn đăng ký về NULL. Không
+        sao chép thí sinh hay đăng ký.
+      parameters:
+      - description: ID đợt thi nguồn
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Tên và mã tùy chọn cho đợt thi mới
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/request.DuplicateExamPeriodRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Nhân bản thành công
+          schema:
+            $ref: '#/definitions/response.DuplicateExamPeriodResponseDTO'
+        "400":
+          description: ID hoặc dữ liệu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi nguồn
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Mã đợt thi đã tồn tại
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Nhân bản đợt thi (Admin)
+      tags:
+      - Exam Periods
+  /admin/exam-periods/{id}/reschedule:
+    post:
+      consumes:
+      - application/json
+      description: Đổi lịch ngày thi và hạn chót cho toàn bộ đợt thi và các ca thi
+        con thuộc đợt.
+      parameters:
+      - description: ID đợt thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Thông tin đổi lịch
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.RescheduleExamPeriodRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Đổi lịch thành công
+          schema:
+            $ref: '#/definitions/response.RescheduleExamPeriodResponseDTO'
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đổi lịch đợt thi (Admin)
+      tags:
+      - Exam Periods
   /admin/exam-sessions:
     get:
       consumes:
@@ -1545,6 +2094,121 @@ paths:
       summary: Danh sách phòng thi
       tags:
       - Candidate
+  /admin/exam-sessions/{id}:
+    put:
+      consumes:
+      - application/json
+      description: Chỉnh sửa thông tin lịch thi, ca thi, lệ phí, số lượng chỗ ngồi
+        hoặc hạn chót đăng ký cho một ca thi. Chỉ cho phép sửa lịch/lệ phí khi ca
+        thi ở draft hoặc chưa có thí sinh đăng ký.
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Dữ liệu ca thi cập nhật
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.UpdateExamSessionRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cập nhật thành công
+          schema:
+            $ref: '#/definitions/response.ExamSessionResponseDTO'
+        "400":
+          description: Dữ liệu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy ca thi
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Không thể chỉnh sửa ca thi đã phát hành hoặc đã có thí sinh
+            đăng ký
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cập nhật ca thi (Admin)
+      tags:
+      - Exam
+  /admin/exam-sessions/{id}/close-registration:
+    post:
+      consumes:
+      - application/json
+      description: Chủ động đóng cổng đăng ký cho một ca thi đơn lẻ trước hạn chót.
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lý do đóng đăng ký
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/request.CloseRegistrationRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Đóng đăng ký ca thi thành công
+          schema:
+            $ref: '#/definitions/response.ExamSessionResponseDTO'
+        "400":
+          description: ID không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy ca thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đóng đăng ký ca thi sớm (Admin)
+      tags:
+      - Exam
   /admin/locations/stats/candidates-by-province:
     get:
       consumes:

@@ -207,7 +207,7 @@ func (h *Handler) UpdatePublicationStatus(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, errExamSessionNotFound) {
 			utils.NotFound(c, err.Error())
-		} else if isPublicationValidationError(err) {
+		} else if errors.Is(err, ErrSessionScheduleIncomplete) || isPublicationValidationError(err) {
 			utils.BadRequest(c, err.Error())
 		} else {
 			utils.InternalServerError(c, "Cập nhật trạng thái phát hành thất bại")
@@ -262,3 +262,356 @@ func (h *Handler) ClearCache(c *gin.Context) {
 	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm ca thi"})
 }
 
+// AdminListExamPeriods GET /admin/exam-periods
+// @Summary Danh sách đợt thi (Admin)
+// @Description Lấy danh sách các đợt thi (exam periods) với bộ lọc trạng thái và phân trang.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "Trạng thái (draft, published, scheduled, closed, cancelled)"
+// @Param limit query int false "Số lượng bản ghi mỗi trang (mặc định 20, tối đa 100)"
+// @Param offset query int false "Vị trí bắt đầu"
+// @Success 200 {array} response.ExamPeriodResponseDTO "Thành công"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods [get]
+func (h *Handler) AdminListExamPeriods(c *gin.Context) {
+	var f examreq.ListExamPeriodsFilterDTO
+	_ = c.ShouldBindQuery(&f)
+	list, err := h.svc.AdminListExamPeriods(c.Request.Context(), f)
+	if err != nil {
+		utils.InternalServerError(c, "Lấy danh sách kỳ thi thất bại")
+		return
+	}
+	utils.OK(c, list)
+}
+
+// AdminGetExamPeriod GET /admin/exam-periods/:id
+// @Summary Chi tiết đợt thi (Admin)
+// @Description Lấy thông tin chi tiết một đợt thi kèm danh sách các ca thi trực thuộc.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID đợt thi"
+// @Success 200 {object} response.ExamPeriodResponseDTO "Thành công"
+// @Failure 400 {object} map[string]interface{} "ID không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy đợt thi"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods/{id} [get]
+func (h *Handler) AdminGetExamPeriod(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID kỳ thi không hợp lệ")
+		return
+	}
+	period, err := h.svc.AdminGetExamPeriod(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrExamPeriodNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, "Lấy chi tiết kỳ thi thất bại")
+		return
+	}
+	utils.OK(c, period)
+}
+
+// AdminCreateExamPeriod POST /admin/exam-periods
+// @Summary Tạo đợt thi mới (Admin)
+// @Description Tạo một đợt thi mới (ở trạng thái draft).
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body examreq.CreateExamPeriodRequestDTO true "Dữ liệu đợt thi"
+// @Success 201 {object} response.ExamPeriodResponseDTO "Tạo thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods [post]
+func (h *Handler) AdminCreateExamPeriod(c *gin.Context) {
+	var req examreq.CreateExamPeriodRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminCreateExamPeriod(c.Request.Context(), req, actorID)
+	if err != nil {
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.Created(c, res)
+}
+
+// AdminDuplicateExamPeriod POST /admin/exam-periods/:id/duplicate
+// @Summary Nhân bản đợt thi (Admin)
+// @Description Tạo đợt thi mới từ một đợt thi cũ, sao chép cấu hình các ca thi nhưng reset trạng thái sang draft và đặt ngày thi/hạn đăng ký về NULL. Không sao chép thí sinh hay đăng ký.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID đợt thi nguồn"
+// @Param request body examreq.DuplicateExamPeriodRequestDTO false "Tên và mã tùy chọn cho đợt thi mới"
+// @Success 201 {object} response.DuplicateExamPeriodResponseDTO "Nhân bản thành công"
+// @Failure 400 {object} map[string]interface{} "ID hoặc dữ liệu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy đợt thi nguồn"
+// @Failure 409 {object} map[string]interface{} "Mã đợt thi đã tồn tại"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods/{id}/duplicate [post]
+func (h *Handler) AdminDuplicateExamPeriod(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID kỳ thi không hợp lệ")
+		return
+	}
+	var req examreq.DuplicateExamPeriodRequestDTO
+	_ = c.ShouldBindJSON(&req)
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminDuplicateExamPeriod(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamPeriodNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		if errors.Is(err, ErrExamPeriodCodeExists) {
+			utils.Conflict(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.Created(c, res)
+}
+
+// AdminUpdateExamPeriod PUT /admin/exam-periods/:id
+// @Summary Cập nhật đợt thi (Admin)
+// @Description Cập nhật thông tin đợt thi. Khi ở draft, cập nhật exam_date/registration_deadline sẽ tự động áp dụng cho các ca thi con chưa có lịch.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID đợt thi"
+// @Param request body examreq.UpdateExamPeriodRequestDTO true "Dữ liệu cập nhật"
+// @Success 200 {object} response.ExamPeriodResponseDTO "Cập nhật thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy đợt thi"
+// @Failure 409 {object} map[string]interface{} "Không thể sửa ngày khi đợt thi không ở trạng thái draft"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods/{id} [put]
+func (h *Handler) AdminUpdateExamPeriod(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID kỳ thi không hợp lệ")
+		return
+	}
+	var req examreq.UpdateExamPeriodRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminUpdateExamPeriod(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamPeriodNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		if errors.Is(err, ErrNonDraftDateModification) {
+			utils.Conflict(c, err.Error())
+			return
+		}
+		if IsValidationError(err) {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.OK(c, res)
+}
+
+// AdminRescheduleExamPeriod POST /admin/exam-periods/:id/reschedule
+// @Summary Đổi lịch đợt thi (Admin)
+// @Description Đổi lịch ngày thi và hạn chót cho toàn bộ đợt thi và các ca thi con thuộc đợt.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID đợt thi"
+// @Param request body examreq.RescheduleExamPeriodRequestDTO true "Thông tin đổi lịch"
+// @Success 200 {object} response.RescheduleExamPeriodResponseDTO "Đổi lịch thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy đợt thi"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods/{id}/reschedule [post]
+func (h *Handler) AdminRescheduleExamPeriod(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID kỳ thi không hợp lệ")
+		return
+	}
+	var req examreq.RescheduleExamPeriodRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminRescheduleExamPeriod(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamPeriodNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	utils.OK(c, res)
+}
+
+// AdminClosePeriodRegistration POST /admin/exam-periods/:id/close-registration
+// @Summary Đóng đăng ký đợt thi sớm (Admin)
+// @Description Chủ động đóng cổng đăng ký cho toàn bộ các ca thi thuộc đợt thi trước hạn chót.
+// @Tags Exam Periods
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID đợt thi"
+// @Param request body examreq.CloseRegistrationRequestDTO false "Lý do đóng đăng ký"
+// @Success 200 {object} response.ExamPeriodResponseDTO "Đóng đăng ký thành công"
+// @Failure 400 {object} map[string]interface{} "ID không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy đợt thi"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-periods/{id}/close-registration [post]
+func (h *Handler) AdminClosePeriodRegistration(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID kỳ thi không hợp lệ")
+		return
+	}
+	var req examreq.CloseRegistrationRequestDTO
+	_ = c.ShouldBindJSON(&req)
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminCloseRegistration(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamPeriodNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.OK(c, res)
+}
+
+// AdminCloseSessionRegistration POST /admin/exam-sessions/:id/close-registration
+// @Summary Đóng đăng ký ca thi sớm (Admin)
+// @Description Chủ động đóng cổng đăng ký cho một ca thi đơn lẻ trước hạn chót.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID ca thi"
+// @Param request body examreq.CloseRegistrationRequestDTO false "Lý do đóng đăng ký"
+// @Success 200 {object} response.ExamSessionResponseDTO "Đóng đăng ký ca thi thành công"
+// @Failure 400 {object} map[string]interface{} "ID không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy ca thi"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/{id}/close-registration [post]
+func (h *Handler) AdminCloseSessionRegistration(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
+		return
+	}
+	var req examreq.CloseRegistrationRequestDTO
+	_ = c.ShouldBindJSON(&req)
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminCloseSessionRegistration(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamSessionNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.OK(c, res)
+}
+
+// AdminUpdateExamSession PUT /admin/exam-sessions/:id
+// @Summary Cập nhật ca thi (Admin)
+// @Description Chỉnh sửa thông tin lịch thi, ca thi, lệ phí, số lượng chỗ ngồi hoặc hạn chót đăng ký cho một ca thi. Chỉ cho phép sửa lịch/lệ phí khi ca thi ở draft hoặc chưa có thí sinh đăng ký.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID ca thi"
+// @Param request body examreq.UpdateExamSessionRequestDTO true "Dữ liệu ca thi cập nhật"
+// @Success 200 {object} response.ExamSessionResponseDTO "Cập nhật thành công"
+// @Failure 400 {object} map[string]interface{} "Dữ liệu không hợp lệ"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy ca thi"
+// @Failure 409 {object} map[string]interface{} "Không thể chỉnh sửa ca thi đã phát hành hoặc đã có thí sinh đăng ký"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/{id} [put]
+func (h *Handler) AdminUpdateExamSession(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
+		return
+	}
+	var req examreq.UpdateExamSessionRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminUpdateExamSession(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamSessionNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		if errors.Is(err, ErrSessionNotEditable) {
+			utils.Conflict(c, err.Error())
+			return
+		}
+		if errors.Is(err, ErrExamSessionCancelled) || IsValidationError(err) {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.OK(c, res)
+}

@@ -885,6 +885,549 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/exam-periods": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy danh sách các đợt thi (exam periods) với bộ lọc trạng thái và phân trang.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Danh sách đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Trạng thái (draft, published, scheduled, closed, cancelled)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng bản ghi mỗi trang (mặc định 20, tối đa 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Vị trí bắt đầu",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tạo một đợt thi mới (ở trạng thái draft).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Tạo đợt thi mới (Admin)",
+                "parameters": [
+                    {
+                        "description": "Dữ liệu đợt thi",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.CreateExamPeriodRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Tạo thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lấy thông tin chi tiết một đợt thi kèm danh sách các ca thi trực thuộc.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Chi tiết đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "ID không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cập nhật thông tin đợt thi. Khi ở draft, cập nhật exam_date/registration_deadline sẽ tự động áp dụng cho các ca thi con chưa có lịch.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Cập nhật đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu cập nhật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UpdateExamPeriodRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cập nhật thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Không thể sửa ngày khi đợt thi không ở trạng thái draft",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/close-registration": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chủ động đóng cổng đăng ký cho toàn bộ các ca thi thuộc đợt thi trước hạn chót.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Đóng đăng ký đợt thi sớm (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lý do đóng đăng ký",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.CloseRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Đóng đăng ký thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "ID không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/duplicate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tạo đợt thi mới từ một đợt thi cũ, sao chép cấu hình các ca thi nhưng reset trạng thái sang draft và đặt ngày thi/hạn đăng ký về NULL. Không sao chép thí sinh hay đăng ký.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Nhân bản đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi nguồn",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tên và mã tùy chọn cho đợt thi mới",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.DuplicateExamPeriodRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Nhân bản thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.DuplicateExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "ID hoặc dữ liệu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi nguồn",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Mã đợt thi đã tồn tại",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/reschedule": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Đổi lịch ngày thi và hạn chót cho toàn bộ đợt thi và các ca thi con thuộc đợt.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Periods"
+                ],
+                "summary": "Đổi lịch đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thông tin đổi lịch",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.RescheduleExamPeriodRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Đổi lịch thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.RescheduleExamPeriodResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/exam-sessions": {
             "get": {
                 "security": [
@@ -1199,6 +1742,174 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉnh sửa thông tin lịch thi, ca thi, lệ phí, số lượng chỗ ngồi hoặc hạn chót đăng ký cho một ca thi. Chỉ cho phép sửa lịch/lệ phí khi ca thi ở draft hoặc chưa có thí sinh đăng ký.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Cập nhật ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dữ liệu ca thi cập nhật",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UpdateExamSessionRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cập nhật thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Không thể chỉnh sửa ca thi đã phát hành hoặc đã có thí sinh đăng ký",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/close-registration": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chủ động đóng cổng đăng ký cho một ca thi đơn lẻ trước hạn chót.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Đóng đăng ký ca thi sớm (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lý do đóng đăng ký",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.CloseRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Đóng đăng ký ca thi thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "ID không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5653,6 +6364,14 @@ const docTemplate = `{
                 }
             }
         },
+        "request.CloseRegistrationRequestDTO": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
         "request.CreateDeliveryRequestDTO": {
             "type": "object",
             "required": [
@@ -5670,6 +6389,43 @@ const docTemplate = `{
                 "ward_id": {
                     "type": "integer",
                     "minimum": 1
+                }
+            }
+        },
+        "request.CreateExamPeriodRequestDTO": {
+            "type": "object",
+            "required": [
+                "code",
+                "name"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 3
+                },
+                "description": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 150,
+                    "minLength": 3
+                },
+                "registration_deadline": {
+                    "type": "string"
+                },
+                "registration_start": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
                 }
             }
         },
@@ -5804,6 +6560,19 @@ const docTemplate = `{
                 },
                 "role_code": {
                     "type": "string"
+                }
+            }
+        },
+        "request.DuplicateExamPeriodRequestDTO": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 50
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 150
                 }
             }
         },
@@ -6111,6 +6880,32 @@ const docTemplate = `{
                 }
             }
         },
+        "request.RescheduleExamPeriodRequestDTO": {
+            "type": "object",
+            "required": [
+                "new_start_date",
+                "reason"
+            ],
+            "properties": {
+                "days_offset": {
+                    "type": "integer"
+                },
+                "new_end_date": {
+                    "type": "string"
+                },
+                "new_registration_deadline": {
+                    "type": "string"
+                },
+                "new_start_date": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 5
+                }
+            }
+        },
         "request.ReserveSeatRequestDTO": {
             "type": "object",
             "required": [
@@ -6161,6 +6956,65 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "maxLength": 20
+                }
+            }
+        },
+        "request.UpdateExamPeriodRequestDTO": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "registration_deadline": {
+                    "type": "string"
+                },
+                "registration_start": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.UpdateExamSessionRequestDTO": {
+            "type": "object",
+            "properties": {
+                "capacity": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "exam_session_check_in_at": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
+                "fee": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "registration_deadline": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
+                "shift": {
+                    "type": "string",
+                    "enum": [
+                        "morning",
+                        "afternoon",
+                        "evening"
+                    ]
                 }
             }
         },
@@ -6305,6 +7159,111 @@ const docTemplate = `{
                 }
             }
         },
+        "response.DuplicateExamPeriodResponseDTO": {
+            "type": "object",
+            "properties": {
+                "duplicated_sessions": {
+                    "type": "integer"
+                },
+                "new_period_id": {
+                    "type": "integer"
+                },
+                "period": {
+                    "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                }
+            }
+        },
+        "response.ExamPeriodResponseDTO": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "instructions": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "registration_deadline": {
+                    "type": "string"
+                },
+                "registration_start": {
+                    "type": "string"
+                },
+                "session_count": {
+                    "type": "integer"
+                },
+                "sessions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                    }
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.ExamSessionResponseDTO": {
+            "type": "object",
+            "properties": {
+                "capacity": {
+                    "type": "integer"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "exam_session_check_in_at": {
+                    "type": "string"
+                },
+                "exam_session_publication_status": {
+                    "type": "string"
+                },
+                "exam_session_publish_at": {
+                    "type": "string"
+                },
+                "exam_type_id": {
+                    "type": "integer"
+                },
+                "fee": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "period_id": {
+                    "type": "integer"
+                },
+                "registration_deadline": {
+                    "type": "string"
+                },
+                "shift": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "response.PortraitValidationResponseDTO": {
             "type": "object",
             "properties": {
@@ -6337,6 +7296,26 @@ const docTemplate = `{
                 },
                 "valid": {
                     "type": "boolean"
+                }
+            }
+        },
+        "response.RescheduleExamPeriodResponseDTO": {
+            "type": "object",
+            "properties": {
+                "candidates_alerted": {
+                    "type": "integer"
+                },
+                "period": {
+                    "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                },
+                "period_id": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "updated_sessions": {
+                    "type": "integer"
                 }
             }
         },

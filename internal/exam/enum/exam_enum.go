@@ -83,3 +83,30 @@ func (s ExamSeatStatus) Valid() bool {
 
 // String returns the string representation.
 func (s ExamSeatStatus) String() string { return string(s) }
+
+// ExamPeriodStatus enumerates period lifecycle states.
+type ExamPeriodStatus string
+
+const (
+	PeriodStatusDraft              ExamPeriodStatus = "draft"
+	PeriodStatusPublished          ExamPeriodStatus = "published"
+	PeriodStatusRegistrationOpen   ExamPeriodStatus = "registration_open"
+	PeriodStatusRegistrationClosed ExamPeriodStatus = "registration_closed"
+	PeriodStatusRescheduled        ExamPeriodStatus = "rescheduled"
+	PeriodStatusCancelled          ExamPeriodStatus = "cancelled"
+	PeriodStatusCompleted          ExamPeriodStatus = "completed"
+)
+
+// Valid reports whether s is a recognised ExamPeriodStatus.
+func (s ExamPeriodStatus) Valid() bool {
+	switch s {
+	case PeriodStatusDraft, PeriodStatusPublished, PeriodStatusRegistrationOpen,
+		PeriodStatusRegistrationClosed, PeriodStatusRescheduled,
+		PeriodStatusCancelled, PeriodStatusCompleted:
+		return true
+	}
+	return false
+}
+
+// String returns the string representation.
+func (s ExamPeriodStatus) String() string { return string(s) }

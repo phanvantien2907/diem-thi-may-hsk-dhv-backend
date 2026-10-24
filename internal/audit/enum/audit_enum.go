@@ -54,6 +54,7 @@ const (
 	AuditEntityExamRecheck         AuditEntity = "exam_recheck_requests"
 	AuditEntityCertificate         AuditEntity = "certificates"
 	AuditEntityCertificateDelivery AuditEntity = "certificate_deliveries"
+	AuditEntityExamPeriod          AuditEntity = "exam_periods"
 )
 
 // Valid reports whether e is a recognised AuditEntity.
@@ -63,7 +64,8 @@ func (e AuditEntity) Valid() bool {
 		AuditEntityExamRoom, AuditEntityExamSession, AuditEntityExamSeat,
 		AuditEntityExamRegistration, AuditEntityPayment,
 		AuditEntityExamResult, AuditEntityExamRecheck,
-		AuditEntityCertificate, AuditEntityCertificateDelivery:
+		AuditEntityCertificate, AuditEntityCertificateDelivery,
+		AuditEntityExamPeriod:
 		return true
 	}
 	return false

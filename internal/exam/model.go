@@ -6,6 +6,24 @@ import (
 	"github.com/hskvinh/backend/internal/exam/enum"
 )
 
+// ExamPeriodEntity mirrors the exam_periods table 1:1.
+type ExamPeriodEntity struct {
+	ExamPeriodID                   int64
+	ExamPeriodName                 string
+	ExamPeriodCode                 string
+	ExamPeriodDescription          *string
+	ExamPeriodInstructions         *string
+	ExamPeriodStartDate            *time.Time
+	ExamPeriodEndDate              *time.Time
+	ExamPeriodRegistrationStart    *time.Time
+	ExamPeriodRegistrationDeadline *time.Time
+	ExamPeriodStatus               enum.ExamPeriodStatus
+	ExamPeriodIsDeleted            bool
+	ExamPeriodDeletedAt            *time.Time
+	ExamPeriodCreatedAt            time.Time
+	ExamPeriodUpdatedAt            time.Time
+}
+
 // ExamTypeEntity mirrors the exam_types table 1:1.
 type ExamTypeEntity struct {
 	ExamTypeID          int64
@@ -20,12 +38,13 @@ type ExamTypeEntity struct {
 // ExamSessionEntity mirrors the exam_sessions table 1:1.
 type ExamSessionEntity struct {
 	ExamSessionID                   int64
+	ExamSessionExamPeriodID         *int64
 	ExamSessionExamTypeID           int64
-	ExamSessionDate                 time.Time
+	ExamSessionDate                 *time.Time
 	ExamSessionShift                enum.ExamShift
 	ExamSessionCapacity             int
 	ExamSessionFee                  int64
-	ExamSessionRegistrationDeadline time.Time
+	ExamSessionRegistrationDeadline *time.Time
 	ExamSessionStatus               enum.ExamSessionStatus
 	ExamSessionPublicationStatus    enum.ExamSessionPublicationStatus
 	ExamSessionPublishAt            *time.Time

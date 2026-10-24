@@ -31,12 +31,23 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	admin := r.Group("/admin")
 	admin.Use(middleware.JWTAuth(jwtSecret), middleware.RequireRole("admin"))
 	{
+		// Exam periods management
+		admin.GET("/exam-periods", h.AdminListExamPeriods)
+		admin.POST("/exam-periods", h.AdminCreateExamPeriod)
+		admin.GET("/exam-periods/:id", h.AdminGetExamPeriod)
+		admin.PUT("/exam-periods/:id", h.AdminUpdateExamPeriod)
+		admin.POST("/exam-periods/:id/duplicate", h.AdminDuplicateExamPeriod)
+		admin.POST("/exam-periods/:id/reschedule", h.AdminRescheduleExamPeriod)
+		admin.POST("/exam-periods/:id/close-registration", h.AdminClosePeriodRegistration)
+
 		// batch-create and clear-cache must be registered BEFORE /:id routes to avoid conflict
 		admin.GET("/exam-sessions", h.ListAdminExamSessions)
 		admin.POST("/exam-sessions/clear-cache", h.ClearCache)
 		admin.POST("/exam-sessions/batch-create", h.BatchCreateExamSessions)
 		admin.POST("/exam-sessions/:id/seats/generate", h.GenerateSeats)
 		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)
+		admin.POST("/exam-sessions/:id/close-registration", h.AdminCloseSessionRegistration)
 		admin.PATCH("/exam-sessions/:id/publication-status", h.UpdatePublicationStatus)
+		admin.PUT("/exam-sessions/:id", h.AdminUpdateExamSession)
 	}
 }

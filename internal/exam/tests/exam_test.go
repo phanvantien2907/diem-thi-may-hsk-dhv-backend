@@ -70,14 +70,15 @@ func TestBatchCreateExamSessionsRejectsInvalidRequest(t *testing.T) {
 func TestToExamSessionResponseDTODoesNotExposeExamRoom(t *testing.T) {
 	publishAt := time.Date(2026, 10, 1, 8, 0, 0, 0, time.FixedZone("ICT", 7*60*60))
 	checkInAt := publishAt.Add(30 * time.Minute)
+	sessDate := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	got := exam.ToExamSessionResponseDTO(exam.ExamSessionEntity{
 		ExamSessionID:                   7,
 		ExamSessionExamTypeID:           2,
-		ExamSessionDate:                 time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC),
+		ExamSessionDate:                 &sessDate,
 		ExamSessionShift:                enum.ShiftMorning,
 		ExamSessionCapacity:             40,
 		ExamSessionFee:                  500000,
-		ExamSessionRegistrationDeadline: publishAt,
+		ExamSessionRegistrationDeadline: &publishAt,
 		ExamSessionStatus:               enum.SessionStatusOpen,
 		ExamSessionPublicationStatus:    enum.PublicationStatusScheduled,
 		ExamSessionPublishAt:            &publishAt,
@@ -159,10 +160,15 @@ func TestUpdatePublicationStatus(t *testing.T) {
 	}
 	defer db.Close()
 
+	sessDate := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	deadline := time.Date(2026, 11, 20, 23, 59, 59, 0, time.UTC)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT exam_session_publication_status, exam_session_status`).
 		WithArgs(int64(7)).
-		WillReturnRows(sqlmock.NewRows([]string{"exam_session_publication_status", "exam_session_status"}).AddRow("draft", "open"))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"exam_session_publication_status", "exam_session_status",
+			"exam_session_date", "exam_session_registration_deadline",
+		}).AddRow("draft", "open", &sessDate, &deadline))
 	mock.ExpectExec(`UPDATE exam_sessions`).
 		WithArgs("published", nil, int64(7)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -248,4 +254,3 @@ func TestExamService_ClearCache(t *testing.T) {
 		t.Fatalf("ClearCache() error = %v", err)
 	}
 }
-
