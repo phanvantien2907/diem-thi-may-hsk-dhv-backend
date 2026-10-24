@@ -175,6 +175,8 @@ func (h *Handler) UploadDocument(c *gin.Context) {
 			utils.BadRequest(c, err.Error())
 		case errors.Is(err, ErrCandidateProfileNotFound):
 			utils.NotFound(c, err.Error())
+		case errors.Is(err, ErrDuplicateDocumentNumber):
+			utils.Conflict(c, err.Error())
 		default:
 			log.Printf("[candidate] upload document: %v", err)
 			utils.InternalServerError(c, "Không thể lưu giấy tờ tùy thân")
@@ -213,7 +215,6 @@ func (h *Handler) ValidatePortrait(c *gin.Context) {
 	}
 	utils.OK(c, res)
 }
-
 
 // AdminListCandidates GET /admin/candidates
 // @Summary Danh sách thí sinh (Admin)
@@ -468,4 +469,3 @@ func (h *Handler) AdminClearCache(c *gin.Context) {
 	}
 	utils.OK(c, gin.H{"message": "Đã làm mới toàn bộ bộ nhớ đệm thí sinh"})
 }
-

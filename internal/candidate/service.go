@@ -23,6 +23,7 @@ import (
 	"github.com/hskvinh/backend/internal/candidate/entities"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 	"github.com/hskvinh/backend/internal/utils"
+	"github.com/lib/pq"
 )
 
 const (
@@ -174,6 +175,12 @@ var ErrCandidateProfileNotFound = errors.New("chưa có hồ sơ thí sinh")
 // ErrInvalidIssueDate is returned when a document issue date is not YYYY-MM-DD.
 var ErrInvalidIssueDate = errors.New("ngày cấp không hợp lệ (định dạng YYYY-MM-DD)")
 
+// ErrDuplicateDocumentNumber is returned when a document number is already registered by another candidate.
+var ErrDuplicateDocumentNumber = errors.New("Số giấy tờ này (CCCD/Hộ chiếu) đã được đăng ký bởi một thí sinh khác trên hệ thống")
+
+// ErrCandidateProfileAlreadyExists is returned when attempting to create a profile for an account that already has one.
+var ErrCandidateProfileAlreadyExists = errors.New("Hồ sơ thí sinh cho tài khoản này đã tồn tại")
+
 // PortraitRejectedError is returned when the portrait image violates the photo
 // rules. The upload is blocked and nothing is persisted.
 type PortraitRejectedError struct {
@@ -272,6 +279,9 @@ func (s *Service) CreateProfile(ctx context.Context, req request.CreateProfileRe
 		req.Nationality, req.ChineseStudyYears,
 	), &e)
 	if err != nil {
+		if strings.Contains(err.Error(), "uq_candidates_account") {
+			return response.CandidateResponseDTO{}, ErrCandidateProfileAlreadyExists
+		}
 		return response.CandidateResponseDTO{}, fmt.Errorf("candidate: create profile: %w", err)
 	}
 
@@ -512,6 +522,42 @@ func (s *Service) UploadDocument(ctx context.Context, accountID int64, req reque
 		return response.DocumentResponseDTO{}, ErrInvalidIssueDate
 	}
 
+	// Prevent duplicate document numbers: check if another candidate already registered with this document number
+	var existingDocCandidateID int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT candidate_document_candidate_id
+		FROM candidate_documents
+		WHERE candidate_document_number = $1
+		  AND candidate_document_candidate_id != $2
+		  AND candidate_document_is_deleted = FALSE
+		LIMIT 1`,
+		req.DocNumber, candidateID,
+	).Scan(&existingDocCandidateID)
+	if err == nil {
+		return response.DocumentResponseDTO{}, ErrDuplicateDocumentNumber
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: check duplicate doc: %w", err)
+	}
+
+	// Check if this document number is already registered as another candidate account's CCCD username
+	var conflictingAccountID int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT a.account_id
+		FROM accounts a
+		JOIN candidates c ON c.candidate_account_id = a.account_id
+		WHERE a.account_username = $1
+		  AND c.candidate_id != $2
+		  AND a.account_is_deleted = FALSE
+		  AND c.candidate_is_deleted = FALSE
+		LIMIT 1`,
+		req.DocNumber, candidateID,
+	).Scan(&conflictingAccountID)
+	if err == nil {
+		return response.DocumentResponseDTO{}, ErrDuplicateDocumentNumber
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return response.DocumentResponseDTO{}, fmt.Errorf("candidate: check duplicate account username: %w", err)
+	}
+
 	// Validate the portrait outside the transaction (network call) and fail fast.
 	verificationStatus, err := s.validatePortrait(ctx, candidateID, req.PortraitImageURL)
 	if err != nil {
@@ -609,7 +655,6 @@ func (s *Service) ValidatePortrait(ctx context.Context, req request.ValidatePort
 	return ToPortraitValidationResponseDTO(result), nil
 }
 
-
 // AdminListCandidates returns a paginated list of candidates filtered by document verification status.
 func (s *Service) AdminListCandidates(ctx context.Context, req request.AdminListCandidatesRequestDTO) ([]response.AdminCandidateResponseDTO, utils.Meta, error) {
 	return s.AdminListCandidatesFiltered(ctx, req)
@@ -628,7 +673,7 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 	if s.cacheSvc != nil {
 		var cached struct {
 			Items []response.AdminCandidateResponseDTO `json:"items"`
-			Meta  utils.Meta                          `json:"meta"`
+			Meta  utils.Meta                           `json:"meta"`
 		}
 		if hit, _ := s.cacheSvc.Get(ctx, cacheKey, &cached); hit {
 			return cached.Items, cached.Meta, nil
@@ -781,7 +826,7 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 	if s.cacheSvc != nil {
 		_ = s.cacheSvc.Set(ctx, cacheKey, struct {
 			Items []response.AdminCandidateResponseDTO `json:"items"`
-			Meta  utils.Meta                          `json:"meta"`
+			Meta  utils.Meta                           `json:"meta"`
 		}{Items: items, Meta: meta}, 5*time.Minute)
 	}
 	return items, meta, nil
@@ -1154,7 +1199,7 @@ func (s *Service) AdminListDuplicates(ctx context.Context) ([]response.Duplicate
 			candidateIDs       []int64
 			cnt                int
 		)
-		if err := rows.Scan(&docType, &docNumber, &candidateIDs, &cnt); err != nil {
+		if err := rows.Scan(&docType, &docNumber, pq.Array(&candidateIDs), &cnt); err != nil {
 			return nil, fmt.Errorf("candidate: duplicates scan: %w", err)
 		}
 		result = append(result, response.DuplicateDocResponseDTO{

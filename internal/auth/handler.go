@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/utils"
@@ -36,7 +38,7 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 	acc, err := h.svc.Register(c.Request.Context(), req)
 	if err != nil {
-		if err.Error() == "tài khoản đã tồn tại" {
+		if errors.Is(err, ErrDuplicateCCCD) || errors.Is(err, ErrDuplicateEmail) || err.Error() == "tài khoản đã tồn tại" {
 			utils.Conflict(c, err.Error())
 			return
 		}
@@ -312,6 +314,10 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 	}
 	acc, err := h.svc.UpdateAccount(c.Request.Context(), utils.MustAccountID(c), req)
 	if err != nil {
+		if errors.Is(err, ErrDuplicateEmail) {
+			utils.Conflict(c, err.Error())
+			return
+		}
 		utils.BadRequest(c, err.Error())
 		return
 	}
@@ -380,7 +386,7 @@ func (h *Handler) CreateStaffAccount(c *gin.Context) {
 	}
 	acc, tempPass, err := h.svc.CreateStaffAccount(c.Request.Context(), req, utils.MustAccountID(c))
 	if err != nil {
-		if err.Error() == "tài khoản đã tồn tại" {
+		if errors.Is(err, ErrDuplicateCCCD) || errors.Is(err, ErrDuplicateEmail) || err.Error() == "tài khoản đã tồn tại" {
 			utils.Conflict(c, err.Error())
 			return
 		}

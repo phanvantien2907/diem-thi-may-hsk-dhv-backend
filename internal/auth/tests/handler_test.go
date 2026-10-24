@@ -26,13 +26,18 @@ func TestHandlerRegister(t *testing.T) {
 			name: "happy path - valid registration",
 			body: `{"cccd":"012345678912", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
 			setupMock: func(mock sqlmock.Sqlmock) {
+				// Mock the duplicate account pre-flight check
+				mock.ExpectQuery(`SELECT account_username, account_email FROM accounts`).
+					WithArgs("012345678912", "test@example.com").
+					WillReturnRows(sqlmock.NewRows([]string{"account_username", "account_email"}))
+
 				// Mock the role resolution query
 				mock.ExpectQuery(`SELECT role_id FROM roles WHERE role_code = 'candidate'`).
 					WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow(1))
 
 				// Mock the transaction
 				mock.ExpectBegin()
-				
+
 				// Mock the insert account query
 				mock.ExpectQuery(`INSERT INTO accounts`).
 					WithArgs(1, "012345678912", "Test User", sqlmock.AnyArg(), "test@example.com", "0987654321").
@@ -46,6 +51,26 @@ func TestHandlerRegister(t *testing.T) {
 				mock.ExpectCommit()
 			},
 			wantStatus: http.StatusCreated,
+		},
+		{
+			name: "conflict - duplicate CCCD",
+			body: `{"cccd":"012345678912", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT account_username, account_email FROM accounts`).
+					WithArgs("012345678912", "test@example.com").
+					WillReturnRows(sqlmock.NewRows([]string{"account_username", "account_email"}).AddRow("012345678912", "other@example.com"))
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name: "conflict - duplicate email",
+			body: `{"cccd":"012345678912", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT account_username, account_email FROM accounts`).
+					WithArgs("012345678912", "test@example.com").
+					WillReturnRows(sqlmock.NewRows([]string{"account_username", "account_email"}).AddRow("987654321098", "test@example.com"))
+			},
+			wantStatus: http.StatusConflict,
 		},
 		{
 			name:       "invalid CCCD length",
@@ -114,8 +139,8 @@ func TestHandlerLogin(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "valid struct - mocked failure (wrong password)",
-			body:       `{"identifier":"012345678912", "password":"WrongPassword123!"}`,
+			name: "valid struct - mocked failure (wrong password)",
+			body: `{"identifier":"012345678912", "password":"WrongPassword123!"}`,
 			setupMock: func(mock sqlmock.Sqlmock) {
 				// The Login query expects to find the user by CCCD or Email
 				mock.ExpectQuery(`SELECT account_id`).
@@ -124,7 +149,7 @@ func TestHandlerLogin(t *testing.T) {
 						"account_id", "account_password_hash", "account_status",
 						"account_failed_login_count", "account_locked_until", "account_must_change_password",
 					}).AddRow(1, "$2a$10$invalidhash", "active", 0, nil, false))
-					
+
 				mock.ExpectExec(`UPDATE accounts SET account_failed_login_count = \$1 WHERE account_id = \$2`).
 					WithArgs(1, 1).
 					WillReturnResult(sqlmock.NewResult(1, 1))
@@ -168,4 +193,3 @@ func TestHandlerLogin(t *testing.T) {
 		})
 	}
 }
-

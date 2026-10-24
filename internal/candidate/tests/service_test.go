@@ -162,6 +162,13 @@ func TestService_UploadDocument_Success(t *testing.T) {
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(10)))
 
+	mock.ExpectQuery(`SELECT candidate_document_candidate_id FROM candidate_documents`).
+		WithArgs("123456789", int64(10)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT a.account_id FROM accounts a`).
+		WithArgs("123456789", int64(10)).
+		WillReturnError(sql.ErrNoRows)
+
 	mock.ExpectBegin()
 	mock.ExpectQuery(`INSERT INTO candidate_documents`).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_document_id", "candidate_document_candidate_id", "candidate_document_type", "candidate_document_number", "candidate_document_issue_date", "candidate_document_issue_place", "candidate_document_front_image_url", "candidate_document_back_image_url", "candidate_document_portrait_image_url", "candidate_document_verification_status", "candidate_document_rejection_reason", "candidate_document_ward_id", "candidate_document_province_id", "candidate_document_address_detail"}).

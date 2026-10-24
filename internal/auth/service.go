@@ -31,6 +31,12 @@ const (
 	lockDuration      = 15 * time.Minute
 )
 
+// ErrDuplicateCCCD is returned when the CCCD is already registered to an account.
+var ErrDuplicateCCCD = errors.New("Số CMND/CCCD này đã được đăng ký tài khoản")
+
+// ErrDuplicateEmail is returned when the email is already registered to an account.
+var ErrDuplicateEmail = errors.New("Địa chỉ email này đã được sử dụng bởi một tài khoản khác")
+
 // Service handles account management and JWT issuance.
 type Service struct {
 	db         *sql.DB
@@ -84,6 +90,32 @@ func scanAccount(row *sql.Row, e *entities.AccountEntity) error {
 // Register creates a pending account and sends an OTP to the phone number.
 // The account is activated only after VerifyOTP succeeds.
 func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) (response.AccountResponseDTO, error) {
+	// Username = CCCD for candidates
+	username := req.Cccd
+	email := req.Email
+	if email == "" {
+		email = req.Phone + "@placeholder.hsk.vn" // placeholder nếu không có email
+	}
+
+	// Pre-flight duplicate check: fail fast with specific message before expensive hashing
+	var existingUsername, existingEmail string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT account_username, account_email
+		FROM accounts
+		WHERE (account_username = $1 OR account_email = $2)
+		  AND account_is_deleted = FALSE
+		LIMIT 1`,
+		username, email,
+	).Scan(&existingUsername, &existingEmail)
+	if err == nil {
+		if strings.EqualFold(existingUsername, username) {
+			return response.AccountResponseDTO{}, ErrDuplicateCCCD
+		}
+		return response.AccountResponseDTO{}, ErrDuplicateEmail
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return response.AccountResponseDTO{}, fmt.Errorf("auth: check duplicate account: %w", err)
+	}
+
 	hash, err := utils.HashPassword(req.Password)
 	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: hash password: %w", err)
@@ -97,13 +129,6 @@ func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) 
 		return response.AccountResponseDTO{}, errors.New("cấu hình hệ thống lỗi: không tìm thấy quyền dự thi")
 	} else if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: resolve role: %w", err)
-	}
-
-	// Username = CCCD for candidates
-	username := req.Cccd
-	email := req.Email
-	if email == "" {
-		email = req.Phone + "@placeholder.hsk.vn" // placeholder nếu không có email
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -124,6 +149,12 @@ func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) 
 		roleID, username, req.FullName, hash, email, req.Phone,
 	), &e)
 	if err != nil {
+		if strings.Contains(err.Error(), "uq_accounts_username") {
+			return response.AccountResponseDTO{}, ErrDuplicateCCCD
+		}
+		if strings.Contains(err.Error(), "uq_accounts_email") {
+			return response.AccountResponseDTO{}, ErrDuplicateEmail
+		}
 		if strings.Contains(err.Error(), "uq_accounts") {
 			return response.AccountResponseDTO{}, errors.New("tài khoản đã tồn tại")
 		}
@@ -240,8 +271,6 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 	if err != nil {
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: issue access token: %w", err)
 	}
-
-
 
 	// Audit login
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
@@ -515,6 +544,12 @@ func (s *Service) CreateStaffAccount(ctx context.Context, req request.CreateStaf
 		roleID, req.Cccd, req.FullName, hash, req.Email, req.Phone,
 	), &e)
 	if err != nil {
+		if strings.Contains(err.Error(), "uq_accounts_username") {
+			return response.AccountResponseDTO{}, "", ErrDuplicateCCCD
+		}
+		if strings.Contains(err.Error(), "uq_accounts_email") {
+			return response.AccountResponseDTO{}, "", ErrDuplicateEmail
+		}
 		if strings.Contains(err.Error(), "uq_accounts") {
 			return response.AccountResponseDTO{}, "", errors.New("tài khoản đã tồn tại")
 		}
@@ -580,6 +615,9 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 		return response.AccountResponseDTO{}, errors.New("không tìm thấy tài khoản")
 	}
 	if err != nil {
+		if strings.Contains(err.Error(), "uq_accounts_email") {
+			return response.AccountResponseDTO{}, ErrDuplicateEmail
+		}
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: update account: %w", err)
 	}
 

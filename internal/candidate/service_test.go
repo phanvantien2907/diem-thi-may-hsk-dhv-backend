@@ -27,6 +27,13 @@ func TestUploadDocument_WithValidVision(t *testing.T) {
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(100)))
 
+	mock.ExpectQuery(`SELECT candidate_document_candidate_id FROM candidate_documents`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT a.account_id FROM accounts a`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+
 	// Set up expectations for transaction begin
 	mock.ExpectBegin()
 
@@ -131,6 +138,13 @@ func TestUploadDocument_WithInvalidVision(t *testing.T) {
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(100)))
 
+	mock.ExpectQuery(`SELECT candidate_document_candidate_id FROM candidate_documents`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT a.account_id FROM accounts a`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+
 	// Notice: NO ExpectBegin, NO ExpectQuery INSERT, NO ExpectCommit
 	// because the invalid portrait fails fast before any database modification.
 
@@ -202,6 +216,13 @@ func TestUploadDocument_WithoutVisionService(t *testing.T) {
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(100)))
+
+	mock.ExpectQuery(`SELECT candidate_document_candidate_id FROM candidate_documents`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT a.account_id FROM accounts a`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
 
 	// Set up expectations for transaction begin
 	mock.ExpectBegin()
@@ -280,6 +301,13 @@ func TestUploadDocument_VisionError(t *testing.T) {
 	mock.ExpectQuery(`SELECT candidate_id FROM candidates WHERE candidate_account_id = \$1 AND candidate_is_deleted = FALSE`).
 		WithArgs(int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"candidate_id"}).AddRow(int64(100)))
+
+	mock.ExpectQuery(`SELECT candidate_document_candidate_id FROM candidate_documents`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`SELECT a.account_id FROM accounts a`).
+		WithArgs("123456789", int64(100)).
+		WillReturnError(sql.ErrNoRows)
 
 	// Set up expectations for transaction begin
 	mock.ExpectBegin()
