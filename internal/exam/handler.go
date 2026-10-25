@@ -615,3 +615,50 @@ func (h *Handler) AdminUpdateExamSession(c *gin.Context) {
 	}
 	utils.OK(c, res)
 }
+
+// AdminDuplicateExamSession POST /admin/exam-sessions/:id/duplicate
+// @Summary Nhân bản ca thi (Admin)
+// @Description Nhân bản một ca thi thuộc cùng đợt thi. Sao chép loại thi, mô tả, phòng thi, lệ phí và phụ phí; đặt ngày thi, số lượng chỗ và hạn chót về NULL; trạng thái về draft; tên thêm hậu tố (Copy); ghi nhận lineage trong duplicated_from_id. Không sao chép thí sinh, đơn đăng ký hay ghế ngồi.
+// @Tags Exam
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID ca thi nguồn"
+// @Param request body examreq.DuplicateExamSessionRequestDTO false "Tùy chọn tên cho ca thi mới"
+// @Success 201 {object} response.ExamSessionResponseDTO "Nhân bản ca thi thành công"
+// @Failure 400 {object} map[string]interface{} "ID không hợp lệ hoặc dữ liệu sai"
+// @Failure 401 {object} map[string]interface{} "Chưa xác thực"
+// @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 404 {object} map[string]interface{} "Không tìm thấy ca thi nguồn"
+// @Failure 409 {object} map[string]interface{} "Đợt thi cha đã đóng hoặc đã hủy"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Router /admin/exam-sessions/{id}/duplicate [post]
+func (h *Handler) AdminDuplicateExamSession(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID ca thi không hợp lệ")
+		return
+	}
+	var req examreq.DuplicateExamSessionRequestDTO
+	_ = c.ShouldBindJSON(&req)
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	actorID := utils.MustAccountID(c)
+	res, err := h.svc.AdminDuplicateExamSession(c.Request.Context(), id, actorID, req)
+	if err != nil {
+		if errors.Is(err, ErrExamSessionNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		if errors.Is(err, ErrParentPeriodClosed) {
+			utils.Conflict(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.Created(c, res)
+}
+

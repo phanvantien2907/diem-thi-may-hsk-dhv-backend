@@ -2217,6 +2217,65 @@ xóa `exam_session_publish_at`. Không thể cập nhật trạng thái phát h�
 
 ---
 
+### 4.19. [Admin] Nhân bản Ca thi (Duplicate Exam Session)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/admin/exam-sessions/:id/duplicate` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Admin tạo thêm một ca thi mới sao chép toàn bộ cấu hình từ một ca thi đã có trong **cùng Đợt thi (`exam_period`)**. Thường dùng khi nhu cầu thí sinh tăng cao hoặc trung tâm muốn mở thêm ca thi cùng loại hình, địa điểm và mức phí mà không cần nhập lại từ đầu. |
+
+> **⚠️ Ràng buộc bảo vệ tính toàn vẹn (Safety Invariants):**
+> - **Cùng đợt thi (Same Parent Period)**: Ca thi mới nhân bản bắt buộc thuộc cùng đợt thi (`exam_period_id`) với ca thi nguồn.
+> - **Kiểm tra trạng thái đợt thi cha**: Nếu đợt thi cha đã đóng đăng ký (`registration_closed`), đã hủy (`cancelled`) hoặc đã hoàn thành (`completed`), hệ thống chặn nhân bản và trả về **HTTP 409 Conflict** với thông báo lỗi: *"Đợt thi đã đóng, đã hủy hoặc đã hoàn thành; không thể nhân bản thêm ca thi vào đợt này"*.
+> - **Dữ liệu được sao chép**: Loại chứng chỉ (`exam_type_id`), địa điểm phòng thi (`exam_room_id`), ca thi (`shift`), và lệ phí (`fee`).
+> - **Dữ liệu được làm trống (NULL)**: Ngày thi (`date`), sức chứa/số slots (`capacity`), hạn đăng ký (`registration_deadline`), giờ check-in (`check_in_at`), và giờ công khai tự động (`publish_at`) đều được gán `NULL`.
+> - **Trạng thái & Định danh**: Ca thi mới luôn bắt đầu ở trạng thái phát hành `draft`, trạng thái hoạt động `open`. Tên tự động bổ sung hậu tố `(Copy)` (hệ thống tự động chuẩn hóa bằng regex để ngăn chặn việc lặp hậu tố `(Copy) (Copy)` khi nhân bản chuỗi). Cột `exam_duplicated_from_id` lưu trữ ID ca thi gốc để truy vết.
+> - **Zero Data Bleed**: Tuyệt đối không sao chép danh sách thí sinh đã đăng ký, thanh toán hay số báo danh/ghế ngồi.
+> - **Ràng buộc khóa phát hành (`ck_exam_publish_needs_date_slots`)**: Ràng buộc DB ngăn chặn ca thi nhân bản được phát hành (`published`/`scheduled`) chừng nào Admin chưa cập nhật đầy đủ ngày thi (`date`), hạn nộp (`registration_deadline`) và sức chứa (`capacity > 0`).
+> - **Giao dịch nguyên tử (Atomic Transaction)**: Quá trình nhân bản diễn ra trong 1 transaction duy nhất kèm ghi nhận nhật ký kiểm toán (`audit_logs`) với action `DUPLICATE` và entity `exam_sessions`.
+
+**Path Params:** `id` — ID ca thi nguồn (`integer`)
+
+**Request Body (Tùy chọn):**
+
+```json
+{
+  "name": "HSK 3 - Ca sáng Đặc Biệt (Tùy chọn ghi đè tên)"
+}
+```
+
+| Field | Kiểu | Bắt buộc | Mô tả |
+|---|---|---|---|
+| `name` | `string` | ❌ | Tên ca thi mới (Nếu để trống, hệ thống tự động sinh: `{Tên ca thi gốc} (Copy)`) |
+
+**Response (201 Created):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 105,
+    "period_id": 12,
+    "exam_type_id": 3,
+    "name": "HSK 3 - Ca sáng (Copy)",
+    "description": "Phòng thi chuẩn hóa",
+    "date": null,
+    "shift": "morning",
+    "capacity": null,
+    "fee": 1200000,
+    "registration_deadline": null,
+    "status": "open",
+    "exam_session_publication_status": "draft",
+    "exam_session_publish_at": null,
+    "exam_session_check_in_at": null,
+    "duplicated_from_id": 45
+  }
+}
+```
+
+---
+
 ## 5. Module Registration (Đăng ký thi)
 
 ### 5.1. Giữ chỗ / Đăng ký thi
@@ -4579,7 +4638,8 @@ transaction PostgreSQL. Không sử dụng Redis.
 | 41 | `POST` | `/admin/exam-periods/:id/close-registration` | 🔐👑 | Exam |
 | 42 | `POST` | `/admin/exam-sessions/:id/close-registration` | 🔐👑 | Exam |
 | 43 | `PUT` | `/admin/exam-sessions/:id` | 🔐👑 | Exam |
-| 43 | `POST` | `/me/registrations` | 🔐 | Registration |
+| 44 | `POST` | `/admin/exam-sessions/:id/duplicate` | 🔐👑 | Exam |
+| 45 | `POST` | `/me/registrations` | 🔐 | Registration |
 | 35 | `GET` | `/me/registrations` | 🔐 | Registration |
 | 36 | `POST` | `/me/registrations/:id/payment-confirm` | 🔐 | Registration |
 | 37 | `POST` | `/me/registrations/:id/transfer` | 🔐 | Registration |

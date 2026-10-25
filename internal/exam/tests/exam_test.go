@@ -71,12 +71,13 @@ func TestToExamSessionResponseDTODoesNotExposeExamRoom(t *testing.T) {
 	publishAt := time.Date(2026, 10, 1, 8, 0, 0, 0, time.FixedZone("ICT", 7*60*60))
 	checkInAt := publishAt.Add(30 * time.Minute)
 	sessDate := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	sessCapacity := 40
 	got := exam.ToExamSessionResponseDTO(exam.ExamSessionEntity{
 		ExamSessionID:                   7,
 		ExamSessionExamTypeID:           2,
 		ExamSessionDate:                 &sessDate,
 		ExamSessionShift:                enum.ShiftMorning,
-		ExamSessionCapacity:             40,
+		ExamSessionCapacity:             &sessCapacity,
 		ExamSessionFee:                  500000,
 		ExamSessionRegistrationDeadline: &publishAt,
 		ExamSessionStatus:               enum.SessionStatusOpen,
@@ -103,12 +104,14 @@ func TestListExamSessionsReturnsPublicationAndCheckInFields(t *testing.T) {
 	publishAt := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	checkInAt := publishAt.Add(30 * time.Minute)
 	rows := sqlmock.NewRows([]string{
-		"exam_session_id", "exam_session_exam_type_id", "exam_session_date",
-		"exam_session_shift", "exam_session_capacity", "exam_session_fee",
+		"exam_session_id", "exam_session_exam_type_id",
+		"exam_session_name", "exam_session_description",
+		"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 		"exam_session_registration_deadline", "exam_session_status",
 		"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
-	}).AddRow(7, 2, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), "morning", 40, 500000,
-		publishAt, "open", "published", publishAt, checkInAt)
+		"exam_session_duplicated_from_id",
+	}).AddRow(7, 2, "HSK 2", "Exam Session", time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), "morning", 40, 500000,
+		publishAt, "open", "published", publishAt, checkInAt, nil)
 	mock.ExpectQuery(`(?s)SELECT exam_session_id, exam_session_exam_type_id,.*FROM exam_sessions`).
 		WillReturnRows(rows)
 
@@ -134,11 +137,13 @@ func TestListAdminExamSessionsIncludesUnpublishedSessions(t *testing.T) {
 
 	mock.ExpectQuery(`WHERE es.exam_session_is_deleted = FALSE`).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"exam_session_id", "exam_session_exam_type_id", "exam_session_date",
-			"exam_session_shift", "exam_session_capacity", "exam_session_fee",
+			"exam_session_id", "exam_session_exam_type_id",
+			"exam_session_name", "exam_session_description",
+			"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 			"exam_session_registration_deadline", "exam_session_status",
 			"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
-		}).AddRow(13, 1, time.Now(), "morning", 40, 500000.0, time.Now(), "open", "draft", nil, nil))
+			"exam_session_duplicated_from_id",
+		}).AddRow(13, 1, "HSK 1", "Session 1", time.Now(), "morning", 40, 500000.0, time.Now(), "open", "draft", nil, nil, nil))
 
 	svc := exam.NewService(db, fakeAuditService{})
 	got, err := svc.ListAdminExamSessionsFiltered(context.Background(), request.ListExamSessionsFilterDTO{})
@@ -162,13 +167,14 @@ func TestUpdatePublicationStatus(t *testing.T) {
 
 	sessDate := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
 	deadline := time.Date(2026, 11, 20, 23, 59, 59, 0, time.UTC)
+	capVal := 40
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT exam_session_publication_status, exam_session_status`).
 		WithArgs(int64(7)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"exam_session_publication_status", "exam_session_status",
-			"exam_session_date", "exam_session_registration_deadline",
-		}).AddRow("draft", "open", &sessDate, &deadline))
+			"exam_session_date", "exam_session_capacity", "exam_session_registration_deadline",
+		}).AddRow("draft", "open", &sessDate, &capVal, &deadline))
 	mock.ExpectExec(`UPDATE exam_sessions`).
 		WithArgs("published", nil, int64(7)).
 		WillReturnResult(sqlmock.NewResult(0, 1))

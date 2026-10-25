@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +27,13 @@ const (
 	duplicateNameSuffix     = " (Bản sao)"
 )
 
+var sessionCopySuffixRegex = regexp.MustCompile(`(?i)\s*\(copy\)+$`)
+
+func formatDuplicateSessionName(name string) string {
+	cleaned := sessionCopySuffixRegex.ReplaceAllString(strings.TrimSpace(name), "")
+	return cleaned + " (Copy)"
+}
+
 // Service handles exam types, rooms, sessions, and seat generation.
 type Service struct {
 	db       *sql.DB
@@ -39,14 +47,16 @@ var (
 	ErrNonDraftDateModification = errors.New("Kỳ thi đã mở đăng ký hoặc đã công khai. Không thể thay đổi trực tiếp ngày thi hoặc hạn đăng ký. Vui lòng sử dụng quy trình dời lịch (Reschedule) để cảnh báo và gửi thông báo tới thí sinh.")
 	// ErrExamPeriodCodeExists is returned when the requested period code collides with an existing one.
 	ErrExamPeriodCodeExists = errors.New("Mã kỳ thi đã tồn tại. Vui lòng chọn mã khác.")
-	// ErrSessionScheduleIncomplete blocks publishing a session whose date/deadline is still NULL
-	// (typical right after duplicating a period).
-	ErrSessionScheduleIncomplete = errors.New("Ca thi chưa có ngày thi hoặc hạn đăng ký. Vui lòng cập nhật lịch thi trước khi công khai.")
+	// ErrSessionScheduleIncomplete blocks publishing a session whose date/deadline/capacity is still NULL
+	// (typical right after duplicating a period or an exam session).
+	ErrSessionScheduleIncomplete = errors.New("Ca thi chưa có ngày thi, số lượng chỗ hoặc hạn đăng ký. Vui lòng cập nhật lịch thi trước khi công khai.")
 	// ErrSessionNotEditable blocks direct schedule/fee edits once a session left draft or has registrations.
 	ErrSessionNotEditable = errors.New("Ca thi đã công khai hoặc đã có thí sinh đăng ký. Không thể sửa trực tiếp ngày thi, lệ phí hoặc sức chứa; vui lòng sử dụng quy trình dời lịch (Reschedule).")
 	// ErrExamSessionCancelled blocks edits on cancelled sessions.
 	ErrExamSessionCancelled = errors.New("Không thể chỉnh sửa ca thi đã hủy")
-	errExamSessionNotFound  = ErrExamSessionNotFound
+	// ErrParentPeriodClosed blocks duplicating an exam session into a closed/cancelled/completed period.
+	ErrParentPeriodClosed  = errors.New("Đợt thi đã đóng, đã hủy hoặc đã hoàn thành; không thể nhân bản thêm ca thi vào đợt này")
+	errExamSessionNotFound = ErrExamSessionNotFound
 )
 
 // ValidationError carries a user-facing (Vietnamese) input validation message.
@@ -144,9 +154,11 @@ func (s *Service) ListExamSessions(ctx context.Context) ([]response.ExamSessionR
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id,
+		       exam_session_name, exam_session_description,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		       exam_session_registration_deadline, exam_session_status,
-		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at
+		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		       exam_session_duplicated_from_id
 		FROM exam_sessions
 		WHERE exam_session_is_deleted = FALSE
 		  AND exam_session_status != 'cancelled'
@@ -162,9 +174,11 @@ func (s *Service) ListExamSessions(ctx context.Context) ([]response.ExamSessionR
 		var e ExamSessionEntity
 		if err := rows.Scan(
 			&e.ExamSessionID, &e.ExamSessionExamTypeID,
+			&e.ExamSessionName, &e.ExamSessionDescription,
 			&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 			&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 			&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+			&e.ExamSessionDuplicatedFromID,
 		); err != nil {
 			return nil, fmt.Errorf("exam: scan session: %w", err)
 		}
@@ -194,9 +208,11 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSe
 	var e ExamSessionEntity
 	err := s.db.QueryRowContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id,
+		       exam_session_name, exam_session_description,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		       exam_session_registration_deadline, exam_session_status,
-		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at
+		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		       exam_session_duplicated_from_id
 		FROM exam_sessions
 		WHERE exam_session_id = $1
 		  AND exam_session_is_deleted = FALSE
@@ -205,9 +221,11 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSe
 		  AND (exam_session_publish_at IS NULL OR exam_session_publish_at <= NOW())`, id,
 	).Scan(
 		&e.ExamSessionID, &e.ExamSessionExamTypeID,
+		&e.ExamSessionName, &e.ExamSessionDescription,
 		&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 		&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 		&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+		&e.ExamSessionDuplicatedFromID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		if s.cacheSvc != nil {
@@ -355,9 +373,11 @@ func (s *Service) listExamSessionsFiltered(ctx context.Context, f examreq.ListEx
 
 	query := `
 		SELECT es.exam_session_id, es.exam_session_exam_type_id,
+		       es.exam_session_name, es.exam_session_description,
 		       es.exam_session_date, es.exam_session_shift, es.exam_session_capacity, es.exam_session_fee,
 		       es.exam_session_registration_deadline, es.exam_session_status,
-		       es.exam_session_publication_status, es.exam_session_publish_at, es.exam_session_check_in_at
+		       es.exam_session_publication_status, es.exam_session_publish_at, es.exam_session_check_in_at,
+		       es.exam_session_duplicated_from_id
 		FROM exam_sessions es
 		` + where + `
 		ORDER BY es.exam_session_date ASC`
@@ -373,9 +393,11 @@ func (s *Service) listExamSessionsFiltered(ctx context.Context, f examreq.ListEx
 		var e ExamSessionEntity
 		if err := rows.Scan(
 			&e.ExamSessionID, &e.ExamSessionExamTypeID,
+			&e.ExamSessionName, &e.ExamSessionDescription,
 			&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 			&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 			&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+			&e.ExamSessionDuplicatedFromID,
 		); err != nil {
 			return nil, fmt.Errorf("exam: scan session filtered: %w", err)
 		}
@@ -463,12 +485,13 @@ func (s *Service) UpdatePublicationStatus(ctx context.Context, sessionID, actorI
 
 	var oldStatus, operationalStatus string
 	var sessionDate, registrationDeadline *time.Time
+	var capacity *int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT exam_session_publication_status, exam_session_status,
-		       exam_session_date, exam_session_registration_deadline
+		       exam_session_date, exam_session_capacity, exam_session_registration_deadline
 		FROM exam_sessions
 		WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE
-		FOR UPDATE`, sessionID).Scan(&oldStatus, &operationalStatus, &sessionDate, &registrationDeadline); errors.Is(err, sql.ErrNoRows) {
+		FOR UPDATE`, sessionID).Scan(&oldStatus, &operationalStatus, &sessionDate, &capacity, &registrationDeadline); errors.Is(err, sql.ErrNoRows) {
 		return response.UpdatePublicationStatusResponseDTO{}, errExamSessionNotFound
 	} else if err != nil {
 		return response.UpdatePublicationStatusResponseDTO{}, fmt.Errorf("exam: lock publication session: %w", err)
@@ -476,9 +499,9 @@ func (s *Service) UpdatePublicationStatus(ctx context.Context, sessionID, actorI
 	if operationalStatus == enum.SessionStatusCancelled.String() {
 		return response.UpdatePublicationStatusResponseDTO{}, errors.New("Không thể cập nhật trạng thái phát hành của ca thi đã hủy")
 	}
-	// A duplicated session starts with NULL date/deadline. It must never become visible
-	// (published or scheduled) until the admin re-enters the schedule.
-	if publicationStatus != enum.PublicationStatusDraft && (sessionDate == nil || registrationDeadline == nil) {
+	// A duplicated session starts with NULL date/deadline/capacity. It must never become visible
+	// (published or scheduled) until the admin re-enters the schedule and slots.
+	if publicationStatus != enum.PublicationStatusDraft && (sessionDate == nil || capacity == nil || *capacity <= 0 || registrationDeadline == nil) {
 		return response.UpdatePublicationStatusResponseDTO{}, ErrSessionScheduleIncomplete
 	}
 
@@ -537,6 +560,7 @@ func (s *Service) PublishScheduledSessions(ctx context.Context) (int64, error) {
 		  AND exam_session_is_deleted = FALSE
 		  AND exam_session_status != 'cancelled'
 		  AND exam_session_date IS NOT NULL
+		  AND exam_session_capacity IS NOT NULL
 		  AND exam_session_registration_deadline IS NOT NULL
 		RETURNING exam_session_id`)
 	if err != nil {
@@ -633,21 +657,30 @@ func (s *Service) BatchCreateExamSessions(ctx context.Context, reqs []examreq.Cr
 		err = tx.QueryRowContext(ctx, `
 			INSERT INTO exam_sessions (
 				exam_session_exam_type_id,
+				exam_session_name,
 				exam_session_date, exam_session_shift, exam_session_capacity,
 				exam_session_fee, exam_session_registration_deadline, exam_session_status,
 				exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at
-			) VALUES ($1,$2::DATE,$3,$4,$5,$6,'open',$7,$8,$9)
+			) VALUES (
+				$1,
+				(SELECT exam_type_name FROM exam_types WHERE exam_type_id = $1) || ' - ' || INITCAP($3),
+				$2::DATE,$3,$4,$5,$6,'open',$7,$8,$9
+			)
 			RETURNING exam_session_id, exam_session_exam_type_id,
+			          exam_session_name, exam_session_description,
 			          exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 			          exam_session_registration_deadline, exam_session_status,
-			          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at`,
+			          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+			          exam_session_duplicated_from_id`,
 			r.ExamTypeID, r.Date, r.Shift, r.Capacity, r.Fee, deadline, publicationStatus,
 			publishAt, checkInAt,
 		).Scan(
 			&e.ExamSessionID, &e.ExamSessionExamTypeID,
+			&e.ExamSessionName, &e.ExamSessionDescription,
 			&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 			&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 			&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+			&e.ExamSessionDuplicatedFromID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("exam: batch create session: %w", err)
@@ -774,9 +807,11 @@ func (s *Service) AdminGetExamPeriod(ctx context.Context, periodID int64) (respo
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_type_id,
+		       exam_session_name, exam_session_description,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		       exam_session_registration_deadline, exam_session_status,
-		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at
+		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		       exam_session_duplicated_from_id
 		FROM exam_sessions
 		WHERE exam_session_exam_period_id = $1 AND exam_session_is_deleted = FALSE
 		ORDER BY exam_session_date ASC NULLS LAST, exam_session_id ASC`,
@@ -793,9 +828,11 @@ func (s *Service) AdminGetExamPeriod(ctx context.Context, periodID int64) (respo
 		se.ExamSessionExamPeriodID = &periodID
 		if err := rows.Scan(
 			&se.ExamSessionID, &se.ExamSessionExamTypeID,
+			&se.ExamSessionName, &se.ExamSessionDescription,
 			&se.ExamSessionDate, &se.ExamSessionShift, &se.ExamSessionCapacity, &se.ExamSessionFee,
 			&se.ExamSessionRegistrationDeadline, &se.ExamSessionStatus,
 			&se.ExamSessionPublicationStatus, &se.ExamSessionPublishAt, &se.ExamSessionCheckInAt,
+			&se.ExamSessionDuplicatedFromID,
 		); err != nil {
 			return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: scan period session: %w", err)
 		}
@@ -949,6 +986,8 @@ func (s *Service) AdminDuplicateExamPeriod(ctx context.Context, periodID, actorI
 			exam_session_exam_period_id,
 			exam_session_exam_type_id,
 			exam_session_exam_room_id,
+			exam_session_name,
+			exam_session_description,
 			exam_session_shift,
 			exam_session_capacity,
 			exam_session_fee,
@@ -962,6 +1001,8 @@ func (s *Service) AdminDuplicateExamPeriod(ctx context.Context, periodID, actorI
 		SELECT $1,
 		       exam_session_exam_type_id,
 		       exam_session_exam_room_id,
+		       exam_session_name,
+		       exam_session_description,
 		       exam_session_shift,
 		       exam_session_capacity,
 		       exam_session_fee,
@@ -1401,19 +1442,23 @@ func (s *Service) AdminCloseSessionRegistration(ctx context.Context, sessionID, 
 	err = tx.QueryRowContext(ctx, `
 		UPDATE exam_sessions
 		SET exam_session_status = 'closed',
-		    exam_session_registration_deadline = LEAST(exam_session_registration_deadline, NOW()),
+		    exam_session_registration_deadline = LEAST(COALESCE(exam_session_registration_deadline, NOW()), NOW()),
 		    exam_session_updated_at = NOW()
 		WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE
 		RETURNING exam_session_id, exam_session_exam_period_id, exam_session_exam_type_id,
+		          exam_session_name, exam_session_description,
 		          exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		          exam_session_registration_deadline, exam_session_status,
-		          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at`,
+		          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		          exam_session_duplicated_from_id`,
 		sessionID,
 	).Scan(
 		&e.ExamSessionID, &e.ExamSessionExamPeriodID, &e.ExamSessionExamTypeID,
+		&e.ExamSessionName, &e.ExamSessionDescription,
 		&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 		&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 		&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+		&e.ExamSessionDuplicatedFromID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return response.ExamSessionResponseDTO{}, ErrExamSessionNotFound
@@ -1453,18 +1498,22 @@ func (s *Service) AdminUpdateExamSession(ctx context.Context, sessionID, actorID
 	var e ExamSessionEntity
 	err = tx.QueryRowContext(ctx, `
 		SELECT exam_session_id, exam_session_exam_period_id, exam_session_exam_type_id,
+		       exam_session_name, exam_session_description,
 		       exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		       exam_session_registration_deadline, exam_session_status,
-		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at
+		       exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		       exam_session_duplicated_from_id
 		FROM exam_sessions
 		WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE
 		FOR UPDATE`,
 		sessionID,
 	).Scan(
 		&e.ExamSessionID, &e.ExamSessionExamPeriodID, &e.ExamSessionExamTypeID,
+		&e.ExamSessionName, &e.ExamSessionDescription,
 		&e.ExamSessionDate, &e.ExamSessionShift, &e.ExamSessionCapacity, &e.ExamSessionFee,
 		&e.ExamSessionRegistrationDeadline, &e.ExamSessionStatus,
 		&e.ExamSessionPublicationStatus, &e.ExamSessionPublishAt, &e.ExamSessionCheckInAt,
+		&e.ExamSessionDuplicatedFromID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return response.ExamSessionResponseDTO{}, ErrExamSessionNotFound
@@ -1513,7 +1562,7 @@ func (s *Service) AdminUpdateExamSession(ctx context.Context, sessionID, actorID
 		if *req.Capacity <= 0 {
 			return response.ExamSessionResponseDTO{}, ValidationError{Msg: "sức chứa ca thi phải lớn hơn 0"}
 		}
-		capacity = *req.Capacity
+		capacity = req.Capacity
 	}
 
 	fee := e.ExamSessionFee
@@ -1554,15 +1603,19 @@ func (s *Service) AdminUpdateExamSession(ctx context.Context, sessionID, actorID
 		    exam_session_updated_at = NOW()
 		WHERE exam_session_id = $7
 		RETURNING exam_session_id, exam_session_exam_period_id, exam_session_exam_type_id,
+		          exam_session_name, exam_session_description,
 		          exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
 		          exam_session_registration_deadline, exam_session_status,
-		          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at`,
+		          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		          exam_session_duplicated_from_id`,
 		sessionDate, shift, capacity, fee, deadline, checkInAt, sessionID,
 	).Scan(
 		&updated.ExamSessionID, &updated.ExamSessionExamPeriodID, &updated.ExamSessionExamTypeID,
+		&updated.ExamSessionName, &updated.ExamSessionDescription,
 		&updated.ExamSessionDate, &updated.ExamSessionShift, &updated.ExamSessionCapacity, &updated.ExamSessionFee,
 		&updated.ExamSessionRegistrationDeadline, &updated.ExamSessionStatus,
 		&updated.ExamSessionPublicationStatus, &updated.ExamSessionPublishAt, &updated.ExamSessionCheckInAt,
+		&updated.ExamSessionDuplicatedFromID,
 	)
 	if err != nil {
 		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: update session: %w", err)
@@ -1588,6 +1641,143 @@ func (s *Service) AdminUpdateExamSession(ctx context.Context, sessionID, actorID
 	}
 	s.invalidateSessionCache(ctx, sessionID)
 	return ToExamSessionResponseDTO(updated), nil
+}
+
+// AdminDuplicateExamSession duplicates an individual exam session within the same exam period.
+func (s *Service) AdminDuplicateExamSession(ctx context.Context, sessionID, actorID int64, req examreq.DuplicateExamSessionRequestDTO) (response.ExamSessionResponseDTO, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: begin duplicate session tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Lock source session and verify it is not deleted
+	var src ExamSessionEntity
+	err = tx.QueryRowContext(ctx, `
+		SELECT exam_session_id, exam_session_exam_period_id, exam_session_exam_type_id,
+		       exam_session_exam_room_id, exam_session_name, exam_session_description,
+		       exam_session_shift, exam_session_fee
+		FROM exam_sessions
+		WHERE exam_session_id = $1 AND exam_session_is_deleted = FALSE
+		FOR SHARE`, sessionID,
+	).Scan(
+		&src.ExamSessionID, &src.ExamSessionExamPeriodID, &src.ExamSessionExamTypeID,
+		&src.ExamSessionExamRoomID, &src.ExamSessionName, &src.ExamSessionDescription,
+		&src.ExamSessionShift, &src.ExamSessionFee,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.ExamSessionResponseDTO{}, ErrExamSessionNotFound
+	} else if err != nil {
+		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: lock source session: %w", err)
+	}
+
+	// 2. Validate parent exam_period is not in a closed/final status
+	if src.ExamSessionExamPeriodID != nil {
+		var periodStatus string
+		err = tx.QueryRowContext(ctx, `
+			SELECT exam_period_status
+			FROM exam_periods
+			WHERE exam_period_id = $1 AND exam_period_is_deleted = FALSE`,
+			*src.ExamSessionExamPeriodID,
+		).Scan(&periodStatus)
+		if errors.Is(err, sql.ErrNoRows) {
+			return response.ExamSessionResponseDTO{}, errors.New("Không tìm thấy đợt thi của ca thi")
+		} else if err != nil {
+			return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: check parent period status: %w", err)
+		}
+
+		if periodStatus == "registration_closed" || periodStatus == "cancelled" || periodStatus == "completed" {
+			return response.ExamSessionResponseDTO{}, ErrParentPeriodClosed
+		}
+	}
+
+	// 3. Name computation with chained duplication suffix handling
+	var newName string
+	if req.Name != nil && strings.TrimSpace(*req.Name) != "" {
+		newName = strings.TrimSpace(*req.Name)
+	} else {
+		baseName := ""
+		if src.ExamSessionName != nil && strings.TrimSpace(*src.ExamSessionName) != "" {
+			baseName = strings.TrimSpace(*src.ExamSessionName)
+		} else {
+			var typeName string
+			_ = tx.QueryRowContext(ctx, `SELECT exam_type_name FROM exam_types WHERE exam_type_id = $1`, src.ExamSessionExamTypeID).Scan(&typeName)
+			baseName = fmt.Sprintf("%s - %s", typeName, strings.Title(string(src.ExamSessionShift)))
+		}
+		newName = formatDuplicateSessionName(baseName)
+	}
+
+	// 4. Insert new session with date, capacity, and deadlines set to NULL
+	var created ExamSessionEntity
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO exam_sessions (
+			exam_session_exam_period_id,
+			exam_session_exam_type_id,
+			exam_session_exam_room_id,
+			exam_session_name,
+			exam_session_description,
+			exam_session_date,
+			exam_session_shift,
+			exam_session_capacity,
+			exam_session_fee,
+			exam_session_registration_deadline,
+			exam_session_status,
+			exam_session_publication_status,
+			exam_session_publish_at,
+			exam_session_check_in_at,
+			exam_session_duplicated_from_id
+		) VALUES (
+			$1, $2, $3, $4, $5, NULL, $6, NULL, $7, NULL, 'open', 'draft', NULL, NULL, $8
+		)
+		RETURNING exam_session_id, exam_session_exam_period_id, exam_session_exam_type_id,
+		          exam_session_name, exam_session_description,
+		          exam_session_date, exam_session_shift, exam_session_capacity, exam_session_fee,
+		          exam_session_registration_deadline, exam_session_status,
+		          exam_session_publication_status, exam_session_publish_at, exam_session_check_in_at,
+		          exam_session_duplicated_from_id, exam_session_created_at, exam_session_updated_at`,
+		src.ExamSessionExamPeriodID,
+		src.ExamSessionExamTypeID,
+		src.ExamSessionExamRoomID,
+		newName,
+		src.ExamSessionDescription,
+		src.ExamSessionShift,
+		src.ExamSessionFee,
+		src.ExamSessionID,
+	).Scan(
+		&created.ExamSessionID, &created.ExamSessionExamPeriodID, &created.ExamSessionExamTypeID,
+		&created.ExamSessionName, &created.ExamSessionDescription,
+		&created.ExamSessionDate, &created.ExamSessionShift, &created.ExamSessionCapacity, &created.ExamSessionFee,
+		&created.ExamSessionRegistrationDeadline, &created.ExamSessionStatus,
+		&created.ExamSessionPublicationStatus, &created.ExamSessionPublishAt, &created.ExamSessionCheckInAt,
+		&created.ExamSessionDuplicatedFromID, &created.ExamSessionCreatedAt, &created.ExamSessionUpdatedAt,
+	)
+	if err != nil {
+		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: insert duplicated session: %w", err)
+	}
+
+	// 6. Audit logging
+	auditPayload, _ := json.Marshal(map[string]any{
+		"source_session_id": src.ExamSessionID,
+		"new_session_id":    created.ExamSessionID,
+		"period_id":         src.ExamSessionExamPeriodID,
+		"exam_type_id":      src.ExamSessionExamTypeID,
+		"name":              newName,
+		"fee":               created.ExamSessionFee,
+	})
+	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+		ActorAccountID: &actorID,
+		Action:         auditenum.AuditActionDuplicate.String(),
+		EntityTable:    auditenum.AuditEntityExamSession.String(),
+		EntityID:       created.ExamSessionID,
+		NewValue:       auditPayload,
+	})
+
+	if err := tx.Commit(); err != nil {
+		return response.ExamSessionResponseDTO{}, fmt.Errorf("exam: commit duplicate session tx: %w", err)
+	}
+
+	_ = s.ClearCache(ctx)
+	return ToExamSessionResponseDTO(created), nil
 }
 
 func parseDate(value string) (*time.Time, error) {

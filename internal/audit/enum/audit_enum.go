@@ -19,6 +19,7 @@ const (
 	AuditActionReject               AuditAction = "REJECT"
 	AuditActionRecheck              AuditAction = "RECHECK"
 	AuditActionCancelSuccessPayment AuditAction = "CANCEL_SUCCESS_PAYMENT"
+	AuditActionDuplicate            AuditAction = "DUPLICATE"
 )
 
 // Valid reports whether a is a recognised AuditAction.
@@ -29,7 +30,7 @@ func (a AuditAction) Valid() bool {
 		AuditActionLogin, AuditActionLogout, AuditActionPasswordChange,
 		AuditActionPayment, AuditActionRefund, AuditActionExport,
 		AuditActionApprove, AuditActionReject, AuditActionRecheck,
-		AuditActionCancelSuccessPayment:
+		AuditActionCancelSuccessPayment, AuditActionDuplicate:
 		return true
 	}
 	return false

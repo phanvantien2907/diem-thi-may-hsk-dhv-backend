@@ -47,6 +47,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		admin.POST("/exam-sessions/:id/seats/generate", h.GenerateSeats)
 		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)
 		admin.POST("/exam-sessions/:id/close-registration", h.AdminCloseSessionRegistration)
+		admin.POST("/exam-sessions/:id/duplicate", h.AdminDuplicateExamSession)
 		admin.PATCH("/exam-sessions/:id/publication-status", h.UpdatePublicationStatus)
 		admin.PUT("/exam-sessions/:id", h.AdminUpdateExamSession)
 	}

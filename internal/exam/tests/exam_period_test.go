@@ -440,13 +440,16 @@ func TestService_AdminUpdateExamSession_DraftSuccess(t *testing.T) {
 		WithArgs(sessionID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"exam_session_id", "exam_session_exam_period_id", "exam_session_exam_type_id",
+			"exam_session_name", "exam_session_description",
 			"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 			"exam_session_registration_deadline", "exam_session_status",
 			"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
+			"exam_session_duplicated_from_id",
 		}).AddRow(
 			sessionID, int64(1), int64(1),
+			"HSK 3", "Desc",
 			nil, "morning", 40, int64(1300000),
-			nil, "open", "draft", nil, nil,
+			nil, "open", "draft", nil, nil, nil,
 		))
 
 	newDate := "2027-01-15"
@@ -458,13 +461,16 @@ func TestService_AdminUpdateExamSession_DraftSuccess(t *testing.T) {
 		WithArgs(&parsedDate, "morning", 40, newFee, nil, nil, sessionID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"exam_session_id", "exam_session_exam_period_id", "exam_session_exam_type_id",
+			"exam_session_name", "exam_session_description",
 			"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 			"exam_session_registration_deadline", "exam_session_status",
 			"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
+			"exam_session_duplicated_from_id",
 		}).AddRow(
 			sessionID, int64(1), int64(1),
+			"HSK 3", "Desc",
 			&parsedDate, "morning", 40, newFee,
-			nil, "open", "draft", nil, nil,
+			nil, "open", "draft", nil, nil, nil,
 		))
 
 	mock.ExpectCommit()
@@ -505,13 +511,16 @@ func TestService_AdminUpdateExamSession_NonDraftBlocked(t *testing.T) {
 		WithArgs(sessionID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"exam_session_id", "exam_session_exam_period_id", "exam_session_exam_type_id",
+			"exam_session_name", "exam_session_description",
 			"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 			"exam_session_registration_deadline", "exam_session_status",
 			"exam_session_publication_status", "exam_session_publish_at", "exam_session_check_in_at",
+			"exam_session_duplicated_from_id",
 		}).AddRow(
 			sessionID, int64(1), int64(1),
+			"HSK 3", "Desc",
 			&sessDate, "morning", 40, int64(1300000),
-			&sessDate, "open", "published", nil, nil,
+			&sessDate, "open", "published", nil, nil, nil,
 		))
 
 	// 2. Query active registrations count
@@ -551,8 +560,8 @@ func TestService_UpdatePublicationStatus_BlocksIncompleteSchedule(t *testing.T) 
 		WithArgs(sessionID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"exam_session_publication_status", "exam_session_status",
-			"exam_session_date", "exam_session_registration_deadline",
-		}).AddRow("draft", "open", nil, nil))
+			"exam_session_date", "exam_session_capacity", "exam_session_registration_deadline",
+		}).AddRow("draft", "open", nil, nil, nil))
 
 	mock.ExpectRollback()
 

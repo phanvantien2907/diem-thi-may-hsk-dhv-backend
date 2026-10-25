@@ -40,15 +40,19 @@ type ExamSessionEntity struct {
 	ExamSessionID                   int64
 	ExamSessionExamPeriodID         *int64
 	ExamSessionExamTypeID           int64
+	ExamSessionExamRoomID           *int64
+	ExamSessionName                 *string
+	ExamSessionDescription          *string
 	ExamSessionDate                 *time.Time
 	ExamSessionShift                enum.ExamShift
-	ExamSessionCapacity             int
+	ExamSessionCapacity             *int
 	ExamSessionFee                  int64
 	ExamSessionRegistrationDeadline *time.Time
 	ExamSessionStatus               enum.ExamSessionStatus
 	ExamSessionPublicationStatus    enum.ExamSessionPublicationStatus
 	ExamSessionPublishAt            *time.Time
 	ExamSessionCheckInAt            *time.Time
+	ExamSessionDuplicatedFromID     *int64
 	ExamSessionIsDeleted            bool
 	ExamSessionCreatedAt            time.Time
 	ExamSessionUpdatedAt            time.Time

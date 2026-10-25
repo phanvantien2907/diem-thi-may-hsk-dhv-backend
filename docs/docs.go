@@ -1925,6 +1925,93 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/exam-sessions/{id}/duplicate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Nhân bản một ca thi thuộc cùng đợt thi. Sao chép loại thi, mô tả, phòng thi, lệ phí và phụ phí; đặt ngày thi, số lượng chỗ và hạn chót về NULL; trạng thái về draft; tên thêm hậu tố (Copy); ghi nhận lineage trong duplicated_from_id. Không sao chép thí sinh, đơn đăng ký hay ghế ngồi.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Nhân bản ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi nguồn",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tùy chọn tên cho ca thi mới",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.DuplicateExamSessionRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Nhân bản ca thi thành công",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "ID không hợp lệ hoặc dữ liệu sai",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi nguồn",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Đợt thi cha đã đóng hoặc đã hủy",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/locations/stats/candidates-by-province": {
             "get": {
                 "security": [
@@ -6576,6 +6663,16 @@ const docTemplate = `{
                 }
             }
         },
+        "request.DuplicateExamSessionRequestDTO": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "description": "Optional custom name; defaults to \"\u003csource_name\u003e (Copy)\"",
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
         "request.ForceChangePasswordRequestDTO": {
             "type": "object",
             "required": [
@@ -7232,6 +7329,12 @@ const docTemplate = `{
                 "date": {
                     "type": "string"
                 },
+                "description": {
+                    "type": "string"
+                },
+                "duplicated_from_id": {
+                    "type": "integer"
+                },
                 "exam_session_check_in_at": {
                     "type": "string"
                 },
@@ -7249,6 +7352,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "name": {
+                    "type": "string"
                 },
                 "period_id": {
                     "type": "integer"

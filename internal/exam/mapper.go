@@ -18,6 +18,8 @@ func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseD
 		ID:                   e.ExamSessionID,
 		PeriodID:             e.ExamSessionExamPeriodID,
 		ExamTypeID:           e.ExamSessionExamTypeID,
+		Name:                 e.ExamSessionName,
+		Description:          e.ExamSessionDescription,
 		Date:                 e.ExamSessionDate,
 		Shift:                string(e.ExamSessionShift),
 		Capacity:             e.ExamSessionCapacity,
@@ -27,6 +29,7 @@ func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseD
 		PublicationStatus:    string(e.ExamSessionPublicationStatus),
 		PublishAt:            e.ExamSessionPublishAt,
 		CheckInAt:            e.ExamSessionCheckInAt,
+		DuplicatedFromID:     e.ExamSessionDuplicatedFromID,
 	}
 }
 
