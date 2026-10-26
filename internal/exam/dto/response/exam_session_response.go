@@ -23,7 +23,6 @@ type ExamSessionResponseDTO struct {
 	ClosedReason         *string    `json:"closed_reason"`
 	PublishAt            *time.Time `json:"publish_at,omitempty"`
 	CheckInAt            *time.Time `json:"check_in_at,omitempty"`
-	DuplicatedFromID     *int64     `json:"duplicated_from_id,omitempty"`
 	AvailableActions     []string   `json:"available_actions"`
 }
 

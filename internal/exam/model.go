@@ -54,7 +54,6 @@ type ExamSessionEntity struct {
 	ExamSessionClosedReason         enum.ExamSessionClosedReason
 	ExamSessionPublishAt            *time.Time
 	ExamSessionCheckInAt            *time.Time
-	ExamSessionDuplicatedFromID     *int64
 	ExamSessionIsDeleted            bool
 	ExamSessionCreatedAt            time.Time
 	ExamSessionUpdatedAt            time.Time

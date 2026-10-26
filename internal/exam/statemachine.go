@@ -44,7 +44,7 @@ var (
 		ActionView, ActionEdit, ActionPublish, ActionSchedulePublish, ActionUnpublish,
 		ActionCloseRegistration, ActionReopenRegistration, ActionIncreaseCapacity,
 		ActionDecreaseCapacity, ActionReschedule, ActionViewRoster, ActionCheckIn,
-		ActionDuplicate, ActionCancel, ActionDeleteDraft,
+		ActionCancel, ActionDeleteDraft,
 	}
 )
 
@@ -375,7 +375,7 @@ func periodDenial(a Action, eff enum.ExamPeriodStatus, st PeriodState, now time.
 // sessionDenial returns a Vietnamese reason when action a is not allowed, or "".
 func sessionDenial(a Action, eff enum.ExamSessionStatus, reason enum.ExamSessionClosedReason, st SessionState, now time.Time) string {
 	switch a {
-	case ActionView, ActionDuplicate:
+	case ActionView:
 		return ""
 
 	case ActionEdit:

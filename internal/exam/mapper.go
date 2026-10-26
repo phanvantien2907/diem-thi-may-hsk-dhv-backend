@@ -42,7 +42,6 @@ func ToExamSessionResponseDTO(e ExamSessionEntity, st SessionState, now time.Tim
 		ClosedReason:         closedReason,
 		PublishAt:            e.ExamSessionPublishAt,
 		CheckInAt:            e.ExamSessionCheckInAt,
-		DuplicatedFromID:     e.ExamSessionDuplicatedFromID,
 		AvailableActions:     actionStrings(AvailableSessionActions(st, now)),
 	}
 }

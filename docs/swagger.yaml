@@ -480,13 +480,6 @@ definitions:
         maxLength: 150
         type: string
     type: object
-  request.DuplicateExamSessionRequestDTO:
-    properties:
-      name:
-        description: Optional custom name; defaults to "<source_name> (Bản sao)"
-        maxLength: 255
-        type: string
-    type: object
   request.ForceChangePasswordRequestDTO:
     properties:
       new_password:
@@ -985,8 +978,6 @@ definitions:
         type: string
       description:
         type: string
-      duplicated_from_id:
-        type: integer
       exam_type_id:
         type: integer
       fee:
@@ -2319,43 +2310,6 @@ paths:
       summary: Xóa bản nháp ca thi (Admin)
       tags:
       - Exam Session Status
-  /admin/exam-sessions/{id}/duplicate:
-    post:
-      description: Bản sao luôn ở trạng thái nháp, không có ngày thi, sức chứa hay
-        hạn đăng ký; đợt cha không được đã đóng/đã hủy/đã hoàn tất.
-      parameters:
-      - description: ID ca thi
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Tên mới (tùy chọn)
-        in: body
-        name: request
-        schema:
-          $ref: '#/definitions/request.DuplicateExamSessionRequestDTO'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/response.ExamSessionResponseDTO'
-        "400":
-          description: Không thể nhân bản vào đợt thi đã đóng
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Không tìm thấy ca thi
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Nhân bản ca thi (Admin)
-      tags:
-      - Exam
   /admin/exam-sessions/{id}/publish:
     post:
       description: Công khai ca thi nháp hoặc hẹn giờ ngay lập tức. Ca thi phải có

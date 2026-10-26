@@ -808,32 +808,3 @@ func (h *Handler) AdminUpdateExamSession(c *gin.Context) {
 	}
 	utils.OK(c, res)
 }
-
-// AdminDuplicateExamSession POST /admin/exam-sessions/:id/duplicate
-// @Summary  Nhân bản ca thi (Admin)
-// @Description Bản sao luôn ở trạng thái nháp, không có ngày thi, sức chứa hay hạn đăng ký; đợt cha không được đã đóng/đã hủy/đã hoàn tất.
-// @Tags     Exam
-// @Produce  json
-// @Security BearerAuth
-// @Param    id path int true "ID ca thi"
-// @Param    request body examreq.DuplicateExamSessionRequestDTO false "Tên mới (tùy chọn)"
-// @Success  201 {object} response.ExamSessionResponseDTO
-// @Failure  400 {object} map[string]interface{} "Không thể nhân bản vào đợt thi đã đóng"
-// @Failure  404 {object} map[string]interface{} "Không tìm thấy ca thi"
-// @Router   /admin/exam-sessions/{id}/duplicate [post]
-func (h *Handler) AdminDuplicateExamSession(c *gin.Context) {
-	id, ok := sessionIDParam(c, "ID ca thi")
-	if !ok {
-		return
-	}
-	var req examreq.DuplicateExamSessionRequestDTO
-	if !optionalJSON(c, &req) {
-		return
-	}
-	res, err := h.svc.AdminDuplicateExamSession(c.Request.Context(), id, utils.MustAccountID(c), req)
-	if err != nil {
-		failState(c, err, "Nhân bản ca thi thất bại")
-		return
-	}
-	utils.Created(c, res)
-}

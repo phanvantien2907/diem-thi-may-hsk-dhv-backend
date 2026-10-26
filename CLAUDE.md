@@ -64,7 +64,8 @@ migrations/
 ├── 000001_schema.up.sql          # Full DB schema (applied first)
 ├── 000001_schema.down.sql        # Rollback for schema
 ├── 000002_seed_data.up.sql       # Seed / reference data
-└── 000002_seed_data.down.sql     # Rollback for seed data
+├── 000002_seed_data.down.sql     # Rollback for seed data
+└── 00NN_*.up.sql / *.down.sql    # Incremental schema changes (000018 drops exam_session_duplicated_from_id)
 
 Dockerfile                  # Multi-stage build
 docker-compose.yml          # PostgreSQL 16, Go API, Adminer
@@ -294,7 +295,6 @@ All API routes are mounted under `/api/v1`.
 | exam | POST | `/admin/exam-sessions/:id/close-registration` | JWT + admin |
 | exam | POST | `/admin/exam-sessions/:id/reopen-registration` | JWT + admin |
 | exam | POST | `/admin/exam-sessions/:id/capacity` | JWT + admin |
-| exam | POST | `/admin/exam-sessions/:id/duplicate` | JWT + admin |
 | exam | POST | `/admin/exam-sessions/:id/cancel` | JWT + admin |
 | exam | DELETE | `/admin/exam-sessions/:id/draft` | JWT + admin |
 | exam | PUT | `/admin/exam-sessions/:id` | JWT + admin |
@@ -888,6 +888,33 @@ Stored status columns lag behind wall-clock time, so **never trust
 - The cron (`worker/exam_publication_cron.go` → `Service.SyncStoredStatuses`)
   only writes the stored column so lists and dashboards render correctly.
 
+### Column-const aliasing (exam service)
+
+`sessionColumns` and `periodColumns` in `internal/exam/service.go` emit
+`es.`/`ep.`-qualified names, so **every statement that uses them must alias its
+target table**. `RETURNING` resolves against the DML target's scope, so
+`UPDATE exam_sessions RETURNING es.exam_session_id` fails with
+`missing FROM-clause entry for table "es"`. Always write
+`UPDATE exam_sessions es SET ...`, `INSERT INTO exam_sessions AS es (...)`,
+`UPDATE exam_periods ep SET ...`, `INSERT INTO exam_periods AS ep (...)`.
+A new DML statement using these consts without the alias is a runtime 500 that
+compiles, vets and `go test` pass — sqlmock only matches the parameterised
+prefix, not `RETURNING`. Verify any new statement against real PostgreSQL with
+`PREPARE stmt AS <sql>; DEALLOCATE stmt;` (a `PREPARE` failure is exactly the
+error the API would return), or hit the endpoint and confirm a 2xx.
+
+### Exam session duplication was removed
+
+`POST /admin/exam-sessions/:id/duplicate` and
+`request.DuplicateExamSessionRequestDTO` no longer exist, and the column
+`exam_session_duplicated_from_id` was dropped by migration
+`000018_remove_exam_session_duplication`. Do not reintroduce a session-level
+copy: duplicating a **period** (`POST /admin/exam-periods/:id/duplicate`) is the
+only supported way to pre-fill a new event, and it always regenerates child
+sessions in `draft`. `ActionDuplicate` therefore remains valid for periods but
+is **not** part of `allSessionActions` — `GuardSessionAction` denies it for every
+session status, and `available_actions` on a session never contains `duplicate`.
+
 ### Shared guard
 
 Every mutating exam endpoint calls `GuardPeriodAction` / `GuardSessionAction`
@@ -900,6 +927,20 @@ is the one documented in the business spec: editing is full for `draft`/
 publish requires ≥ 1 valid child session; unpublish from `registration_open` is
 allowed only with 0 registrations; reschedule is allowed for `published`/
 `registration_open`/`registration_closed`; delete is `draft`-only.
+
+Session-level rules: `publish`/`schedule_publish` only from `draft`/`scheduled`;
+`unpublish` from `scheduled`, or from `open` with 0 registrations;
+`reopen_registration` from `closed` only when the parent period is effectively
+`registration_open`, the exam day has not passed, and `closed_reason` is
+`manual` or `deadline` (a `full` session must be widened first, a
+`period_closed` session can only be reopened via its period);
+`increase_capacity`/`decrease_capacity` from `open`/`closed`;
+`check_in` from `closed` on the exam day or from `completed`;
+`cancel` from `open`/`closed`; `delete_draft` from `draft`/`scheduled`.
+
+`internal/exam/tests/status_matrix_test.go` asserts this matrix cell by cell for
+both state machines, and `internal/exam/tests/cascade_test.go` covers every
+cascade path. Any change to a denial rule must update those tables.
 
 ### Exam period ↔ session cascade (single transaction)
 
@@ -1125,6 +1166,14 @@ go test -race ./...
 **The project mandates test files to be placed in a dedicated `tests/` subdirectory within each domain** (e.g. `internal/<domain>/tests/`).
 These tests run in a separate package (e.g. `package tests`), enforcing **black-box testing** where only exported identifiers can be tested. We use `go-sqlmock` and the standard `testing` package. Table-driven tests are preferred when the case set is meaningful.
 Candidate admin listing, metrics, and PDF export behavior is covered by `internal/candidate/tests/admin_features_test.go`, including filter/pagination SQL arguments, metrics counts, exam-date validation, PDF generation, and handler validation.
+
+Exam status behavior is covered by three black-box suites in `internal/exam/tests/`:
+`statemachine_test.go` (guard + effective-status units), `status_matrix_test.go`
+(the full period/session action matrix, `closed_reason` reopen rules, drift edge
+cases, and the absence of session `duplicate`), `cascade_test.go` (period
+complete/unpublish/cancel/reschedule/close cascades with sqlmock), and
+`handler_state_test.go` (the HTTP 409 `INVALID_STATE_TRANSITION` envelope, 400
+and 404 mappings).
 
 ---
 

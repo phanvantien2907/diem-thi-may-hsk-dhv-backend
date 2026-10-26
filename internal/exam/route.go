@@ -39,7 +39,6 @@ import (
 //	  POST   /admin/exam-sessions/:id/close-registration
 //	  POST   /admin/exam-sessions/:id/reopen-registration
 //	  POST   /admin/exam-sessions/:id/capacity
-//	  POST   /admin/exam-sessions/:id/duplicate
 //	  POST   /admin/exam-sessions/:id/cancel
 //	  DELETE /admin/exam-sessions/:id/draft
 //	  PUT    /admin/exam-sessions/:id
@@ -81,7 +80,6 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		admin.POST("/exam-sessions/:id/close-registration", h.AdminCloseSessionRegistration)
 		admin.POST("/exam-sessions/:id/reopen-registration", h.AdminReopenSessionRegistration)
 		admin.POST("/exam-sessions/:id/capacity", h.UpdateSessionCapacity)
-		admin.POST("/exam-sessions/:id/duplicate", h.AdminDuplicateExamSession)
 		admin.POST("/exam-sessions/:id/cancel", h.CancelExamSession)
 		admin.DELETE("/exam-sessions/:id/draft", h.DeleteExamSessionDraft)
 		admin.PUT("/exam-sessions/:id", h.AdminUpdateExamSession)

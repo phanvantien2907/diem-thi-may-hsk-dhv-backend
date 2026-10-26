@@ -21,13 +21,13 @@ var sessionRowColumns = []string{
 	"exam_session_name", "exam_session_description",
 	"exam_session_date", "exam_session_shift", "exam_session_capacity", "exam_session_fee",
 	"exam_session_registration_deadline", "exam_session_status", "exam_session_closed_reason",
-	"exam_session_publish_at", "exam_session_check_in_at", "exam_session_duplicated_from_id",
+	"exam_session_publish_at", "exam_session_check_in_at",
 	"exam_period_status", "exam_period_registration_start", "exam_period_registration_deadline",
 	"exam_period_end_date", "head_count",
 }
 
 // sessionOnlyColumns matches a bare `RETURNING sessionColumns` projection.
-var sessionOnlyColumns = sessionRowColumns[:15]
+var sessionOnlyColumns = sessionRowColumns[:14]
 
 // periodOnlyColumns matches a bare `RETURNING periodColumns` projection.
 var periodOnlyColumns = periodRowColumns[:14]
@@ -51,6 +51,7 @@ type sessionRow struct {
 	id            int64
 	periodID      *int64
 	examTypeID    int64
+	name          *string
 	date          *time.Time
 	shift         enum.ExamShift
 	capacity      *int
@@ -60,7 +61,6 @@ type sessionRow struct {
 	closedReason  *string
 	publishAt     *time.Time
 	checkInAt     *time.Time
-	duplicatedID  *int64
 	periodStatus  *string
 	periodRegFrom *time.Time
 	periodRegTo   *time.Time
@@ -70,10 +70,10 @@ type sessionRow struct {
 
 func (r sessionRow) values() []driver.Value {
 	return []driver.Value{
-		r.id, r.periodID, r.examTypeID, nil, nil,
+		r.id, r.periodID, r.examTypeID, r.name, nil,
 		r.date, r.shift, r.capacity, r.fee,
 		r.deadline, r.status, r.closedReason,
-		r.publishAt, r.checkInAt, r.duplicatedID,
+		r.publishAt, r.checkInAt,
 		r.periodStatus, r.periodRegFrom, r.periodRegTo,
 		r.periodEndDate, r.headCount,
 	}
@@ -92,6 +92,8 @@ func newMockService(t *testing.T) (*exam.Service, sqlmock.Sqlmock) {
 func intPtr(v int) *int { return &v }
 
 func strPtr(v string) *string { return &v }
+
+func timePtr(v time.Time) *time.Time { return &v }
 
 func TestPublishExamSession_SetsOpenWhenScheduleComplete(t *testing.T) {
 	svc, mock := newMockService(t)
@@ -112,7 +114,7 @@ func TestPublishExamSession_SetsOpenWhenScheduleComplete(t *testing.T) {
 			periodStatus: &periodStatus, periodRegFrom: &regStart, periodRegTo: &deadline,
 			periodEndDate: &date,
 		}.values()...))
-	mock.ExpectQuery(`UPDATE exam_sessions\s+SET exam_session_status = \$1`).
+	mock.ExpectQuery(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = \$1`).
 		WithArgs(enum.SessionStatusOpen, nil, int64(7)).
 		WillReturnRows(sqlmock.NewRows(sessionOnlyColumns).AddRow(sessionRow{
 			id: 7, periodID: &periodID, examTypeID: 3,
@@ -120,7 +122,7 @@ func TestPublishExamSession_SetsOpenWhenScheduleComplete(t *testing.T) {
 			deadline: &deadline, status: enum.SessionStatusOpen,
 			periodStatus: &periodStatus, periodRegFrom: &regStart, periodRegTo: &deadline,
 			periodEndDate: &date,
-		}.values()[:15]...))
+		}.values()[:14]...))
 	mock.ExpectCommit()
 
 	got, err := svc.PublishExamSession(context.Background(), 7, 42, examreq.PublishSessionRequestDTO{})
@@ -156,14 +158,14 @@ func TestPublishExamSession_SchedulesWithFutureTime(t *testing.T) {
 			periodStatus: &periodStatus, periodRegFrom: &regStart, periodRegTo: &deadline,
 			periodEndDate: &date,
 		}.values()...))
-	mock.ExpectQuery(`UPDATE exam_sessions\s+SET exam_session_status = \$1`).
+	mock.ExpectQuery(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = \$1`).
 		WithArgs(enum.SessionStatusScheduled, sqlmock.AnyArg(), int64(7)).
 		WillReturnRows(sqlmock.NewRows(sessionOnlyColumns).AddRow(sessionRow{
 			id: 7, examTypeID: 3, date: &date, shift: enum.ShiftMorning,
 			capacity: intPtr(30), deadline: &deadline, status: enum.SessionStatusScheduled,
 			publishAt: &publishAt, periodStatus: &periodStatus, periodRegFrom: &regStart,
 			periodRegTo: &deadline, periodEndDate: &date,
-		}.values()[:15]...))
+		}.values()[:14]...))
 	mock.ExpectCommit()
 
 	got, err := svc.PublishExamSession(context.Background(), 7, 42, examreq.PublishSessionRequestDTO{
@@ -257,14 +259,14 @@ func TestCloseSessionRegistration_DefaultsToManualReason(t *testing.T) {
 			periodStatus: &periodStatus, periodRegFrom: &regStart, periodRegTo: &deadline,
 			periodEndDate: &date,
 		}.values()...))
-	mock.ExpectQuery(`UPDATE exam_sessions\s+SET exam_session_status = 'closed'`).
+	mock.ExpectQuery(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = 'closed'`).
 		WithArgs(enum.ClosedReasonManual, int64(7)).
 		WillReturnRows(sqlmock.NewRows(sessionOnlyColumns).AddRow(sessionRow{
 			id: 7, examTypeID: 3, date: &date, shift: enum.ShiftMorning,
 			capacity: intPtr(30), deadline: &now, status: enum.SessionStatusClosed,
 			closedReason: strPtr("manual"), periodStatus: &periodStatus,
 			periodRegFrom: &regStart, periodRegTo: &deadline, periodEndDate: &date,
-		}.values()[:15]...))
+		}.values()[:14]...))
 	mock.ExpectCommit()
 
 	got, err := svc.CloseSessionRegistration(context.Background(), 7, 42, examreq.CloseRegistrationRequestDTO{
@@ -353,14 +355,14 @@ func TestUpdateSessionCapacity_ReopensFullSession(t *testing.T) {
 			periodRegFrom: &regStart, periodRegTo: &deadline, periodEndDate: &date,
 			headCount: capacity,
 		}.values()...))
-	mock.ExpectQuery(`UPDATE exam_sessions\s+SET exam_session_capacity = \$1`).
+	mock.ExpectQuery(`UPDATE exam_sessions(?: es)?\s+SET exam_session_capacity = \$1`).
 		WithArgs(40, enum.SessionStatusOpen, nil, int64(7)).
 		WillReturnRows(sqlmock.NewRows(sessionOnlyColumns).AddRow(sessionRow{
 			id: 7, examTypeID: 3, date: &date, shift: enum.ShiftMorning,
 			capacity: intPtr(40), deadline: &deadline, status: enum.SessionStatusOpen,
 			periodStatus: &periodStatus, periodRegFrom: &regStart, periodRegTo: &deadline,
 			periodEndDate: &date, headCount: capacity,
-		}.values()[:15]...))
+		}.values()[:14]...))
 	mock.ExpectCommit()
 
 	got, err := svc.UpdateSessionCapacity(context.Background(), 7, 42, examreq.UpdateCapacityRequestDTO{Capacity: 40})
@@ -418,17 +420,17 @@ func TestAdminCloseRegistration_CascadesPeriodClosedAndCancelsSchedules(t *testi
 			enum.PeriodStatusRegistrationOpen, nil, 0, now, now,
 			3, 2, 5,
 		))
-	mock.ExpectQuery(`UPDATE exam_periods\s+SET exam_period_status = 'registration_closed'`).
+	mock.ExpectQuery(`UPDATE exam_periods(?: ep)?\s+SET exam_period_status = 'registration_closed'`).
 		WithArgs(int64(11)).
 		WillReturnRows(sqlmock.NewRows(periodOnlyColumns).AddRow(
 			11, "Đợt thi tháng 6", "HSK-2026-06", nil, nil,
 			&start, &end, &regStart, &now,
 			enum.PeriodStatusRegistrationClosed, nil, 0, now, now,
 		))
-	mock.ExpectExec(`UPDATE exam_sessions\s+SET exam_session_status = 'closed'`).
+	mock.ExpectExec(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = 'closed'`).
 		WithArgs(int64(11)).
 		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec(`UPDATE exam_sessions\s+SET exam_session_status = 'draft'`).
+	mock.ExpectExec(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = 'draft'`).
 		WithArgs(int64(11)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -480,7 +482,7 @@ func TestAdminReopenPeriodRegistration_ReopensOnlyPeriodClosedSessions(t *testin
 			enum.PeriodStatusRegistrationClosed, nil, 0, now, now,
 			3, 2, 5,
 		))
-	mock.ExpectQuery(`UPDATE exam_periods\s+SET exam_period_status = 'registration_open'`).
+	mock.ExpectQuery(`UPDATE exam_periods(?: ep)?\s+SET exam_period_status = 'registration_open'`).
 		WithArgs(sqlmock.AnyArg(), int64(11)).
 		WillReturnRows(sqlmock.NewRows(periodOnlyColumns).AddRow(
 			11, "Đợt thi tháng 6", "HSK-2026-06", nil, nil,
@@ -538,5 +540,87 @@ func TestGetExamSession_NotFound(t *testing.T) {
 	_, err := svc.GetExamSession(context.Background(), 404)
 	if !errors.Is(err, exam.ErrExamSessionNotFound) {
 		t.Fatalf("error = %v, want ErrExamSessionNotFound", err)
+	}
+}
+
+// TestReopenSessionRegistration_RequiresFutureDeadline guards against reopening a session
+// whose deadline was truncated to "now" when it was closed. Storing `open` with a past
+// deadline would make the row effectively closed and re-introduce stored/effective drift.
+func TestReopenSessionRegistration_RequiresFutureDeadline(t *testing.T) {
+	cases := []struct {
+		name         string
+		request      examreq.ReopenSessionRegistrationRequestDTO
+		wantOpen     bool
+		wantDeadline *time.Time
+	}{
+		{
+			name:     "rejects when existing deadline already elapsed",
+			request:  examreq.ReopenSessionRegistrationRequestDTO{},
+			wantOpen: false,
+		},
+		{
+			name:     "rejects when supplied deadline is in the past",
+			request:  examreq.ReopenSessionRegistrationRequestDTO{RegistrationDeadline: time.Now().Add(-time.Hour).Format(time.RFC3339)},
+			wantOpen: false,
+		},
+		{
+			name:     "opens when a future deadline is supplied",
+			request:  examreq.ReopenSessionRegistrationRequestDTO{RegistrationDeadline: time.Now().Add(48 * time.Hour).Format(time.RFC3339)},
+			wantOpen: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, mock := newMockService(t)
+			now := time.Now()
+			date := now.Add(30 * 24 * time.Hour)
+			elapsed := now.Add(-time.Minute)
+			periodID := int64(9)
+			periodStatus := string(enum.PeriodStatusRegistrationOpen)
+
+			mock.ExpectBegin()
+			mock.ExpectQuery(lockSessionSQL).
+				WithArgs(int64(32)).
+				WillReturnRows(sqlmock.NewRows(sessionRowColumns).AddRow(sessionRow{
+					id: 32, periodID: &periodID, examTypeID: 3,
+					date: &date, shift: enum.ShiftMorning, capacity: intPtr(45), fee: 1900000,
+					deadline: &elapsed, status: enum.SessionStatusClosed,
+					closedReason: strPtr(string(enum.ClosedReasonManual)),
+					periodStatus: &periodStatus, periodRegFrom: &elapsed,
+				}.values()...))
+
+			if tc.wantOpen {
+				mock.ExpectQuery(`UPDATE exam_sessions(?: es)?\s+SET exam_session_status = 'open'`).
+					WithArgs(sqlmock.AnyArg(), int64(32)).
+					WillReturnRows(sqlmock.NewRows(sessionOnlyColumns).AddRow(sessionRow{
+						id: 32, periodID: &periodID, examTypeID: 3,
+						date: &date, shift: enum.ShiftMorning, capacity: intPtr(45), fee: 1900000,
+						deadline:     timePtr(time.Now().Add(48 * time.Hour)),
+						status:       enum.SessionStatusOpen,
+						periodStatus: &periodStatus, periodRegFrom: &elapsed,
+					}.values()[:14]...))
+				mock.ExpectCommit()
+			} else {
+				mock.ExpectRollback()
+			}
+
+			got, err := svc.ReopenSessionRegistration(context.Background(), 32, 42, tc.request)
+			if !tc.wantOpen {
+				if !exam.IsValidationError(err) {
+					t.Fatalf("error = %v, want ValidationError", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReopenSessionRegistration() error = %v", err)
+			}
+			if got.Status != string(enum.SessionStatusOpen) {
+				t.Errorf("Status = %q, want open", got.Status)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unmet sqlmock expectations: %v", err)
+			}
+		})
 	}
 }

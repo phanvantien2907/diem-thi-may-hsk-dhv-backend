@@ -349,7 +349,7 @@ func TestGuardSessionActionDeniesIllegalTransitions(t *testing.T) {
 		allowed bool
 	}{
 		{name: "view cancelled", action: exam.ActionView, state: cancelled, allowed: true},
-		{name: "duplicate completed", action: exam.ActionDuplicate, state: completed, allowed: true},
+		{name: "duplicate removed from sessions", action: exam.ActionDuplicate, state: completed, allowed: false},
 		{name: "edit draft", action: exam.ActionEdit, state: draftIncomplete, allowed: true},
 		{name: "edit open", action: exam.ActionEdit, state: openWithRegs, allowed: true},
 		{name: "edit closed", action: exam.ActionEdit, state: closedManual, allowed: true},

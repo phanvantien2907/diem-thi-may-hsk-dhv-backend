@@ -1955,62 +1955,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/exam-sessions/{id}/duplicate": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Bản sao luôn ở trạng thái nháp, không có ngày thi, sức chứa hay hạn đăng ký; đợt cha không được đã đóng/đã hủy/đã hoàn tất.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Exam"
-                ],
-                "summary": "Nhân bản ca thi (Admin)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "ID ca thi",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Tên mới (tùy chọn)",
-                        "name": "request",
-                        "in": "body",
-                        "schema": {
-                            "$ref": "#/definitions/request.DuplicateExamSessionRequestDTO"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Không thể nhân bản vào đợt thi đã đóng",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy ca thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/admin/exam-sessions/{id}/publish": {
             "post": {
                 "security": [
@@ -6980,16 +6924,6 @@ const docTemplate = `{
                 }
             }
         },
-        "request.DuplicateExamSessionRequestDTO": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "description": "Optional custom name; defaults to \"\u003csource_name\u003e (Bản sao)\"",
-                    "type": "string",
-                    "maxLength": 255
-                }
-            }
-        },
         "request.ForceChangePasswordRequestDTO": {
             "type": "object",
             "required": [
@@ -7710,9 +7644,6 @@ const docTemplate = `{
                 },
                 "description": {
                     "type": "string"
-                },
-                "duplicated_from_id": {
-                    "type": "integer"
                 },
                 "exam_type_id": {
                     "type": "integer"

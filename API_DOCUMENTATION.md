@@ -1600,7 +1600,7 @@ Endpoint này chỉ dành cho tài khoản Admin. API public bên trên chỉ tr
       "closed_reason": null,
       "publish_at": null,
       "check_in_at": "2026-10-15T07:30:00+07:00",
-      "available_actions": ["view", "copy_code", "edit", "close_registration", "increase_capacity", "duplicate", "cancel"]
+      "available_actions": ["view", "copy_code", "edit", "close_registration", "increase_capacity", "cancel"]
     }
   ],
   "error": null,
@@ -1627,7 +1627,6 @@ Endpoint này chỉ dành cho tài khoản Admin. API public bên trên chỉ tr
 | `closed_reason` | `string` | ✅ | Chỉ có khi `status = "closed"`: `manual`, `full`, `deadline`, `period_closed` |
 | `publish_at` | `datetime` | ✅ | Thời điểm hẹn công khai; bắt buộc ở trạng thái `scheduled` |
 | `check_in_at` | `datetime` | ✅ | Giờ có mặt của thí sinh |
-| `duplicated_from_id` | `integer` | ✅ | ID ca thi gốc nếu đây là bản sao |
 | `available_actions` | `string[]` | ❌ | Các hành động được phép ở trạng thái hiện tại |
 
 > **Lưu ý:** `status` **không** phải giá trị trong DB. Backend luôn tính lại từ
@@ -1757,7 +1756,14 @@ thay vì tự suy luận từ `status`.
 
 Ca thi: `view`, `copy_code`, `edit`, `edit_notes`, `publish`, `schedule_publish`,
 `unpublish`, `close_registration`, `reopen_registration`, `increase_capacity`,
-`decrease_capacity`, `participant_list`, `check_in`, `duplicate`, `cancel`, `delete`.
+`decrease_capacity`, `participant_list`, `check_in`, `cancel`, `delete`.
+
+> **Đã bỏ nhân bản ca thi.** `POST /api/v1/admin/exam-sessions/:id/duplicate` và
+> trường `duplicated_from_id` không còn tồn tại (migration
+> `000018_remove_exam_session_duplication` xóa cột `exam_session_duplicated_from_id`).
+> `duplicate` **không bao giờ** xuất hiện trong `available_actions` của ca thi; muốn
+> nhân bản, dùng `POST /api/v1/admin/exam-periods/:id/duplicate` — đợt mới sinh lại
+> các ca con ở trạng thái `draft`.
 
 Đợt thi: `view`, `copy_code`, `export_candidates`, `edit`, `edit_description`,
 `publish`, `unpublish`, `close_registration`, `reopen_registration`, `reschedule`,
@@ -2033,7 +2039,7 @@ Các trạng thái khác trả 409.
 2. `closed_reason = "manual"` → mở lại luôn được.
 3. `closed_reason = "full"` → 409, phải nới sĩ số trước ([4.14](#414-admin-nới--giảm-sĩ-số)).
 4. `closed_reason = "deadline"` → bắt buộc gửi `registration_deadline` mới trong tương lai.
-5. `closed_reason = "period_closed"` → 409, phải mở lại từ đợt ([4.28](#428-admin-mở-lại-đăng-ký-đợt-thi)).
+5. `closed_reason = "period_closed"` → 409, phải mở lại từ đợt ([4.27](#427-admin-mở-lại-đăng-ký-đợt-thi)).
 
 **Response (200 OK):** `ExamSessionResponseDTO` với `status = "open"`.
 
@@ -2068,31 +2074,7 @@ Các trạng thái khác trả 409.
 
 ---
 
-### 4.15. [Admin] Nhân bản Ca thi
-
-| | |
-|---|---|
-| **Endpoint** | `POST /api/v1/admin/exam-sessions/:id/duplicate` |
-| **Auth** | 🔐 JWT + Admin |
-| **Use-case** | Tạo bản sao của một ca thi (ở mọi trạng thái) |
-
-**Request Body (tùy chọn):**
-
-```json
-{ "name": "Ca sáng HSK 3 (bản 2)" }
-```
-
-| Field | Kiểu | Bắt buộc | Validate | Mô tả |
-|---|---|---|---|---|
-| `name` | `string` | ❌ | Max 255 | Tên ca mới; mặc định `"<tên gốc> (Copy)"` |
-
-Bản sao được tạo ở trạng thái `draft` và không mang theo ghế hay đăng ký.
-
-**Response (201 Created):** `ExamSessionResponseDTO`.
-
----
-
-### 4.16. [Admin] Hủy ca thi
+### 4.15. [Admin] Hủy ca thi
 
 | | |
 |---|---|
@@ -2105,7 +2087,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 **Request Body:** Không cần.
 
 **Điều kiện:** chỉ `open` hoặc `closed`. `draft`/`scheduled` phải dùng Xóa nháp
-([4.17](#417-admin-xóa-ca-thi-nháp)); `completed`/`cancelled` trả 409.
+([4.16](#416-admin-xóa-ca-thi-nháp)); `completed`/`cancelled` trả 409.
 
 **Response (200 OK):**
 
@@ -2120,7 +2102,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.17. [Admin] Xóa ca thi nháp
+### 4.16. [Admin] Xóa ca thi nháp
 
 | | |
 |---|---|
@@ -2145,7 +2127,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.18. [Admin] Xoá bộ nhớ đệm Ca thi (Clear Exam Sessions Cache)
+### 4.17. [Admin] Xoá bộ nhớ đệm Ca thi (Clear Exam Sessions Cache)
 
 | | |
 |---|---|
@@ -2170,7 +2152,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.19. [Admin] Danh sách Đợt thi (List Exam Periods)
+### 4.18. [Admin] Danh sách Đợt thi (List Exam Periods)
 
 | | |
 |---|---|
@@ -2185,7 +2167,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.20. [Admin] Chi tiết Đợt thi kèm danh sách Ca con
+### 4.19. [Admin] Chi tiết Đợt thi kèm danh sách Ca con
 
 | | |
 |---|---|
@@ -2198,7 +2180,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.21. [Admin] Tạo mới Đợt thi
+### 4.20. [Admin] Tạo mới Đợt thi
 
 | | |
 |---|---|
@@ -2236,7 +2218,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.22. [Admin] Chỉnh sửa Đợt thi
+### 4.21. [Admin] Chỉnh sửa Đợt thi
 
 | | |
 |---|---|
@@ -2258,7 +2240,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.23. [Admin] Nhân bản Đợt thi
+### 4.22. [Admin] Nhân bản Đợt thi
 
 | | |
 |---|---|
@@ -2285,7 +2267,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.24. [Admin] Dời lịch thi Đợt thi (Reschedule)
+### 4.23. [Admin] Dời lịch thi Đợt thi (Reschedule)
 
 | | |
 |---|---|
@@ -2336,7 +2318,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.25. [Admin] Công bố Đợt thi
+### 4.24. [Admin] Công bố Đợt thi
 
 | | |
 |---|---|
@@ -2352,7 +2334,7 @@ Bản sao được tạo ở trạng thái `draft` và không mang theo ghế ha
 
 ---
 
-### 4.26. [Admin] Thu hồi công bố Đợt thi
+### 4.25. [Admin] Thu hồi công bố Đợt thi
 
 | | |
 |---|---|
@@ -2369,7 +2351,7 @@ Các trạng thái khác trả 409.
 
 ---
 
-### 4.27. [Admin] Đóng đăng ký sớm cấp Đợt thi (Cascade)
+### 4.26. [Admin] Đóng đăng ký sớm cấp Đợt thi (Cascade)
 
 | | |
 |---|---|
@@ -2394,7 +2376,7 @@ Các trạng thái khác trả 409.
 
 ---
 
-### 4.28. [Admin] Mở lại đăng ký Đợt thi
+### 4.27. [Admin] Mở lại đăng ký Đợt thi
 
 | | |
 |---|---|
@@ -2421,7 +2403,7 @@ ca đóng vì `full` hoặc `manual`/`deadline` **giữ nguyên**.
 
 ---
 
-### 4.29. [Admin] Hoàn tất Đợt thi
+### 4.28. [Admin] Hoàn tất Đợt thi
 
 | | |
 |---|---|
@@ -2438,7 +2420,7 @@ ngược lại 409.
 
 ---
 
-### 4.30. [Admin] Hủy Đợt thi (kèm hoàn tiền / chuyển ca)
+### 4.29. [Admin] Hủy Đợt thi (kèm hoàn tiền / chuyển ca)
 
 | | |
 |---|---|
@@ -2469,7 +2451,7 @@ ngược lại 409.
 
 ---
 
-### 4.31. [Admin] Xóa Đợt thi nháp
+### 4.30. [Admin] Xóa Đợt thi nháp
 
 | | |
 |---|---|
@@ -4918,66 +4900,65 @@ ngày thi, `publish_at` và trạng thái hiệu lực của đợt cha — **kh
 | 54 | `POST` | `/admin/exam-sessions/:id/close-registration` | 🔐👑 | Exam |
 | 55 | `POST` | `/admin/exam-sessions/:id/reopen-registration` | 🔐👑 | Exam |
 | 56 | `POST` | `/admin/exam-sessions/:id/capacity` | 🔐👑 | Exam |
-| 57 | `POST` | `/admin/exam-sessions/:id/duplicate` | 🔐👑 | Exam |
-| 58 | `POST` | `/admin/exam-sessions/:id/cancel` | 🔐👑 | Exam |
-| 59 | `DELETE` | `/admin/exam-sessions/:id/draft` | 🔐👑 | Exam |
-| 60 | `PUT` | `/admin/exam-sessions/:id` | 🔐👑 | Exam |
-| 61 | `POST` | `/me/registrations` | 🔐 | Registration |
-| 62 | `GET` | `/me/registrations` | 🔐 | Registration |
-| 63 | `POST` | `/me/registrations/:id/payment-confirm` | 🔐 | Registration |
-| 64 | `POST` | `/me/registrations/:id/transfer` | 🔐 | Registration |
-| 65 | `POST` | `/me/registrations/:id/cancel` | 🔐 | Registration |
-| 66 | `GET` | `/me/registrations/:id/admission-slip` | 🔐 | Registration |
-| 67 | `POST` | `/me/exam-sessions/:id/waitlist` | 🔐 | Registration |
-| 68 | `PATCH` | `/proctor/exam-sessions/:id/attendance/:registration_id` | 🔐 | Registration |
-| 69 | `GET` | `/admin/exam-sessions/:id/dashboard` | 🔐👑 | Registration |
-| 70 | `GET` | `/admin/payments/reconcile` | 🔐👑 | Registration |
-| 71 | `POST` | `/payments/payos/create` | 🔐 | Payment |
-| 72 | `POST` | `/payments/callback` | 🔐 | Payment |
-| 73 | `GET` | `/payments` | 🔐 | Payment |
-| 74 | `GET` | `/results/:registration_id` | 🔐 | Result |
-| 75 | `POST` | `/rechecks` | 🔐 | Result |
-| 76 | `POST` | `/admin/results` | 🔐👑 | Result |
-| 77 | `GET` | `/admin/payments` | 🔐👑 | Payment |
-| 78 | `GET` | `/admin/payments/export` | 🔐👑 | Payment |
-| 79 | `POST` | `/admin/payments/:id/confirm` | 🔐👑 | Payment |
-| 80 | `POST` | `/admin/payments/:id/sync` | 🔐👑 | Payment |
-| 81 | `POST` | `/admin/payments/:id/cancel` | 🔐👑 | Payment |
-| 82 | `POST` | `/admin/payments/:id/mark-refund` | 🔐👑 | Payment |
-| 83 | `POST` | `/admin/payments/:id/confirm-refund` | 🔐👑 | Payment |
-| 84 | `GET` | `/admin/payments/evidence-upload-signature` | 🔐👑 | Payment |
-| 85 | `POST` | `/admin/payments/:id/top-up` | 🔐👑 | Payment |
-| 86 | `POST` | `/admin/payments/:id/resolve-overpayment` | 🔐👑 | Payment |
-| 87 | `GET` | `/admin/payments/double-charges` | 🔐👑 | Payment |
-| 88 | `POST` | `/admin/payments/resolve-double-charge` | 🔐👑 | Payment |
-| 89 | `GET` | `/admin/payments/suspense` | 🔐👑 | Payment |
-| 90 | `POST` | `/admin/payments/suspense` | 🔐👑 | Payment |
-| 91 | `POST` | `/admin/payments/suspense/:id/match` | 🔐👑 | Payment |
-| 92 | `POST` | `/admin/payments/suspense/import` | 🔐👑 | Payment |
-| 93 | `GET` | `/me/certificates` | 🔐 | Certificate |
-| 94 | `GET` | `/me/certificates/:id` | 🔐 | Certificate |
-| 95 | `GET` | `/me/certificates/:id/pdf` | 🔐 | Certificate |
-| 96 | `POST` | `/me/certificates/:id/deliveries` | 🔐 | Certificate |
-| 97 | `GET` | `/me/certificates/:id/deliveries` | 🔐 | Certificate |
-| 98 | `POST` | `/me/certificates/:id/reissue-request` | 🔐 | Certificate |
-| 99 | `PATCH` | `/me/deliveries/:delivery_id` | 🔐 | Certificate |
-| 100 | `GET` | `/public/certificates/verify` | 🔓 | Certificate |
-| 101 | `POST` | `/admin/certificates/:id/issue` | 🔐👑 | Certificate |
-| 102 | `POST` | `/admin/certificates/issue-batch` | 🔐👑 | Certificate |
-| 103 | `POST` | `/admin/certificates/:id/revoke` | 🔐👑 | Certificate |
-| 104 | `GET` | `/admin/certificates` | 🔐👑 | Certificate |
-| 105 | `GET` | `/admin/certificates/print-batch` | 🔐👑 | Certificate |
-| 106 | `GET` | `/admin/deliveries` | 🔐👑 | Certificate |
-| 107 | `PATCH` | `/admin/deliveries/:id` | 🔐👑 | Certificate |
-| 108 | `POST` | `/webhooks/shipping/:courier` | HMAC | Certificate |
-| 109 | `GET` | `/notifications` | 🔐 | Notification |
-| 110 | `PUT` | `/notifications/:id/read` | 🔐 | Notification |
-| 111 | `GET` | `/locations/provinces` | 🔓 | Location |
-| 112 | `GET` | `/locations/provinces/:id/wards` | 🔓 | Location |
-| 113 | `GET` | `/locations/wards/:id/delivery-coverage` | 🔓 | Location |
-| 114 | `GET` | `/admin/locations/stats/candidates-by-province` | 🔐👑 | Location |
-| 115 | `POST` | `/admin/locations/wards/:id/merge` | 🔐👑 | Location |
-| 116 | `GET` | `/admin/audit-logs` | 🔐👑 | Audit |
+| 57 | `POST` | `/admin/exam-sessions/:id/cancel` | 🔐👑 | Exam |
+| 58 | `DELETE` | `/admin/exam-sessions/:id/draft` | 🔐👑 | Exam |
+| 59 | `PUT` | `/admin/exam-sessions/:id` | 🔐👑 | Exam |
+| 60 | `POST` | `/me/registrations` | 🔐 | Registration |
+| 61 | `GET` | `/me/registrations` | 🔐 | Registration |
+| 62 | `POST` | `/me/registrations/:id/payment-confirm` | 🔐 | Registration |
+| 63 | `POST` | `/me/registrations/:id/transfer` | 🔐 | Registration |
+| 64 | `POST` | `/me/registrations/:id/cancel` | 🔐 | Registration |
+| 65 | `GET` | `/me/registrations/:id/admission-slip` | 🔐 | Registration |
+| 66 | `POST` | `/me/exam-sessions/:id/waitlist` | 🔐 | Registration |
+| 67 | `PATCH` | `/proctor/exam-sessions/:id/attendance/:registration_id` | 🔐 | Registration |
+| 68 | `GET` | `/admin/exam-sessions/:id/dashboard` | 🔐👑 | Registration |
+| 69 | `GET` | `/admin/payments/reconcile` | 🔐👑 | Registration |
+| 70 | `POST` | `/payments/payos/create` | 🔐 | Payment |
+| 71 | `POST` | `/payments/callback` | 🔐 | Payment |
+| 72 | `GET` | `/payments` | 🔐 | Payment |
+| 73 | `GET` | `/results/:registration_id` | 🔐 | Result |
+| 74 | `POST` | `/rechecks` | 🔐 | Result |
+| 75 | `POST` | `/admin/results` | 🔐👑 | Result |
+| 76 | `GET` | `/admin/payments` | 🔐👑 | Payment |
+| 77 | `GET` | `/admin/payments/export` | 🔐👑 | Payment |
+| 78 | `POST` | `/admin/payments/:id/confirm` | 🔐👑 | Payment |
+| 79 | `POST` | `/admin/payments/:id/sync` | 🔐👑 | Payment |
+| 80 | `POST` | `/admin/payments/:id/cancel` | 🔐👑 | Payment |
+| 81 | `POST` | `/admin/payments/:id/mark-refund` | 🔐👑 | Payment |
+| 82 | `POST` | `/admin/payments/:id/confirm-refund` | 🔐👑 | Payment |
+| 83 | `GET` | `/admin/payments/evidence-upload-signature` | 🔐👑 | Payment |
+| 84 | `POST` | `/admin/payments/:id/top-up` | 🔐👑 | Payment |
+| 85 | `POST` | `/admin/payments/:id/resolve-overpayment` | 🔐👑 | Payment |
+| 86 | `GET` | `/admin/payments/double-charges` | 🔐👑 | Payment |
+| 87 | `POST` | `/admin/payments/resolve-double-charge` | 🔐👑 | Payment |
+| 88 | `GET` | `/admin/payments/suspense` | 🔐👑 | Payment |
+| 89 | `POST` | `/admin/payments/suspense` | 🔐👑 | Payment |
+| 90 | `POST` | `/admin/payments/suspense/:id/match` | 🔐👑 | Payment |
+| 91 | `POST` | `/admin/payments/suspense/import` | 🔐👑 | Payment |
+| 92 | `GET` | `/me/certificates` | 🔐 | Certificate |
+| 93 | `GET` | `/me/certificates/:id` | 🔐 | Certificate |
+| 94 | `GET` | `/me/certificates/:id/pdf` | 🔐 | Certificate |
+| 95 | `POST` | `/me/certificates/:id/deliveries` | 🔐 | Certificate |
+| 96 | `GET` | `/me/certificates/:id/deliveries` | 🔐 | Certificate |
+| 97 | `POST` | `/me/certificates/:id/reissue-request` | 🔐 | Certificate |
+| 98 | `PATCH` | `/me/deliveries/:delivery_id` | 🔐 | Certificate |
+| 99 | `GET` | `/public/certificates/verify` | 🔓 | Certificate |
+| 100 | `POST` | `/admin/certificates/:id/issue` | 🔐👑 | Certificate |
+| 101 | `POST` | `/admin/certificates/issue-batch` | 🔐👑 | Certificate |
+| 102 | `POST` | `/admin/certificates/:id/revoke` | 🔐👑 | Certificate |
+| 103 | `GET` | `/admin/certificates` | 🔐👑 | Certificate |
+| 104 | `GET` | `/admin/certificates/print-batch` | 🔐👑 | Certificate |
+| 105 | `GET` | `/admin/deliveries` | 🔐👑 | Certificate |
+| 106 | `PATCH` | `/admin/deliveries/:id` | 🔐👑 | Certificate |
+| 107 | `POST` | `/webhooks/shipping/:courier` | HMAC | Certificate |
+| 108 | `GET` | `/notifications` | 🔐 | Notification |
+| 109 | `PUT` | `/notifications/:id/read` | 🔐 | Notification |
+| 110 | `GET` | `/locations/provinces` | 🔓 | Location |
+| 111 | `GET` | `/locations/provinces/:id/wards` | 🔓 | Location |
+| 112 | `GET` | `/locations/wards/:id/delivery-coverage` | 🔓 | Location |
+| 113 | `GET` | `/admin/locations/stats/candidates-by-province` | 🔐👑 | Location |
+| 114 | `POST` | `/admin/locations/wards/:id/merge` | 🔐👑 | Location |
+| 115 | `GET` | `/admin/audit-logs` | 🔐👑 | Audit |
 
 > **Chú thích:** 🔓 = Public | 🔐 = JWT | 🔐👑 = JWT + Admin | HMAC = Webhook signature
 
