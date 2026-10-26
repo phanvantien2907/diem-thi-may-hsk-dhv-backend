@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditresp "github.com/hskvinh/backend/internal/audit/dto/response"
@@ -24,23 +23,6 @@ func (f *fakeAudit) Log(_ context.Context, _ *sql.Tx, _ auditreq.CreateAuditLogR
 }
 func (f *fakeAudit) List(_ context.Context, _ auditreq.ListAuditLogRequestDTO) (auditresp.AuditLogListResponseDTO, error) {
 	return auditresp.AuditLogListResponseDTO{}, nil
-}
-
-func setupHandlerTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock, *dashboard.Handler) {
-	gin.SetMode(gin.TestMode)
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("failed to create sqlmock: %v", err)
-	}
-
-	fa := &fakeAudit{}
-	svc := dashboard.NewService(db, fa, nil)
-	handler := dashboard.NewHandler(svc)
-
-	r := gin.New()
-	dashboard.RegisterRoutes(r.Group("/api/v1"), handler, "dummy_secret")
-
-	return r, mock, handler
 }
 
 func TestHandler_ManualApprove_Validation(t *testing.T) {
@@ -106,10 +88,10 @@ func TestHandler_ManualApprove_Validation(t *testing.T) {
 			if w.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d; body = %s", w.Code, tt.wantStatus, w.Body.String())
 			}
-			
+
 			var resp map[string]interface{}
 			_ = json.Unmarshal(w.Body.Bytes(), &resp)
-			
+
 			if errResp, ok := resp["error"].(string); ok {
 				if tt.wantMsg != "" && !strings.Contains(errResp, tt.wantMsg) {
 					t.Errorf("error %q does not contain %q", errResp, tt.wantMsg)

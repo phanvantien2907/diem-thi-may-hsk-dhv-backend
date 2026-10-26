@@ -33,6 +33,32 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 // SetHub attaches a WebSocket hub for broadcasting real-time events.
 func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
 
+// mapBookingError translates the plpgsql RAISE EXCEPTION names raised by
+// fn_assert_session_accepts_registration (used by fn_book_exam_seat and
+// fn_transfer_registration) into user-facing Vietnamese messages.
+// It returns nil when the error is not one of those business exceptions.
+func mapBookingError(err error, duplicateMsg string) error {
+	switch {
+	case strings.Contains(err.Error(), "EXAM_SESSION_NOT_FOUND"):
+		return errors.New("Không tìm thấy ca thi")
+	case strings.Contains(err.Error(), "EXAM_SESSION_CANCELLED"):
+		return errors.New("Ca thi đã bị hủy")
+	case strings.Contains(err.Error(), "EXAM_SESSION_COMPLETED"):
+		return errors.New("Ca thi đã kết thúc")
+	case strings.Contains(err.Error(), "EXAM_SESSION_NOT_PUBLISHED"):
+		return errors.New("Ca thi chưa được công khai")
+	case strings.Contains(err.Error(), "EXAM_PERIOD_CANCELLED"):
+		return errors.New("Đợt thi đã bị hủy")
+	case strings.Contains(err.Error(), "REGISTRATION_CLOSED"):
+		return errors.New("Đã hết thời gian đăng ký của ca thi")
+	case strings.Contains(err.Error(), "DUPLICATE_REGISTRATION"):
+		return errors.New(duplicateMsg)
+	case strings.Contains(err.Error(), "NO_SEAT_AVAILABLE"):
+		return errors.New("Đã hết ghế trống cho ca thi này")
+	}
+	return nil
+}
+
 // GetCandidateID looks up the internal candidate_id for the given account_id.
 func (s *Service) GetCandidateID(ctx context.Context, accountID int64) (int64, error) {
 	var candidateID int64
@@ -52,14 +78,10 @@ func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatReques
 	var regID int64
 	err := s.db.QueryRowContext(ctx, "SELECT fn_book_exam_seat($1, $2, 15)", candidateID, req.ExamSessionID).Scan(&regID)
 	if err != nil {
-		switch {
-		case strings.Contains(err.Error(), "DUPLICATE_REGISTRATION"):
-			return response.ExamRegistrationResponseDTO{}, errors.New("Bạn đã đăng ký ca thi này rồi")
-		case strings.Contains(err.Error(), "NO_SEAT_AVAILABLE"):
-			return response.ExamRegistrationResponseDTO{}, errors.New("Đã hết ghế trống cho ca thi này")
-		default:
-			return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: book seat: %w", err)
+		if mapped := mapBookingError(err, "Bạn đã đăng ký ca thi này rồi"); mapped != nil {
+			return response.ExamRegistrationResponseDTO{}, mapped
 		}
+		return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: book seat: %w", err)
 	}
 
 	var e entities.ExamRegistrationEntity
@@ -263,13 +285,11 @@ func (s *Service) TransferRegistration(ctx context.Context, registrationID, cand
 			return response.ExamRegistrationResponseDTO{}, errors.New("Phiếu đăng ký không thể chuyển ca")
 		case strings.Contains(err.Error(), "TRANSFER_SAME_SESSION"):
 			return response.ExamRegistrationResponseDTO{}, errors.New("Không thể chuyển sang cùng ca thi")
-		case strings.Contains(err.Error(), "DUPLICATE_REGISTRATION"):
-			return response.ExamRegistrationResponseDTO{}, errors.New("Bạn đã đăng ký ca thi đích rồi")
-		case strings.Contains(err.Error(), "NO_SEAT_AVAILABLE"):
-			return response.ExamRegistrationResponseDTO{}, errors.New("Đã hết ghế trống tại ca thi mới")
-		default:
-			return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: transfer: %w", err)
 		}
+		if mapped := mapBookingError(err, "Bạn đã đăng ký ca thi đích rồi"); mapped != nil {
+			return response.ExamRegistrationResponseDTO{}, mapped
+		}
+		return response.ExamRegistrationResponseDTO{}, fmt.Errorf("registration: transfer: %w", err)
 	}
 
 	var e entities.ExamRegistrationEntity

@@ -63,6 +63,11 @@ func Conflict(c *gin.Context, msg string) {
 	exception.Send(c, http.StatusConflict, msg)
 }
 
+// ConflictWithCode sends a 409 response carrying a stable machine-readable code.
+func ConflictWithCode(c *gin.Context, code, msg string) {
+	exception.SendWithCode(c, http.StatusConflict, code, msg)
+}
+
 // TooManyRequests sends a 429 response.
 func TooManyRequests(c *gin.Context, msg string) {
 	exception.Send(c, http.StatusTooManyRequests, msg)

@@ -3,6 +3,8 @@ package response
 import "time"
 
 // ExamPeriodResponseDTO is the public exam period representation.
+// `status` is always the effective, time-derived status; `stored_status` keeps the
+// persisted column for display/debugging only.
 type ExamPeriodResponseDTO struct {
 	ID                   int64                    `json:"id"`
 	Name                 string                   `json:"name"`
@@ -11,11 +13,15 @@ type ExamPeriodResponseDTO struct {
 	Instructions         *string                  `json:"instructions,omitempty"`
 	StartDate            *string                  `json:"start_date,omitempty"`
 	EndDate              *string                  `json:"end_date,omitempty"`
+	OriginalDate         *string                  `json:"original_date,omitempty"`
+	RescheduleCount      int                      `json:"reschedule_count"`
 	RegistrationStart    *time.Time               `json:"registration_start,omitempty"`
 	RegistrationDeadline *time.Time               `json:"registration_deadline,omitempty"`
 	Status               string                   `json:"status"`
+	StoredStatus         string                   `json:"stored_status"`
 	SessionCount         int                      `json:"session_count"`
 	Sessions             []ExamSessionResponseDTO `json:"sessions,omitempty"`
+	AvailableActions     []string                 `json:"available_actions"`
 	CreatedAt            time.Time                `json:"created_at"`
 	UpdatedAt            time.Time                `json:"updated_at"`
 }

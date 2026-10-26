@@ -40,6 +40,29 @@ func (s *Service) SetCache(cacheSvc *cache.Service) {
 	s.cacheSvc = cacheSvc
 }
 
+// effectiveOpenSessionPredicate is the single definition of "this exam session is
+// acceptably open right now". It is derived from now() and the deadline columns
+// rather than trusting exam_session_status, which the cron only refreshes for
+// display (CLAUDE.md §18). Shared by the overview and live-status queries so the
+// two can never drift apart.
+const effectiveOpenSessionPredicate = `AND (es.exam_session_status IN ('open', 'scheduled')
+		       AND (es.exam_session_status = 'open'
+		            OR (es.exam_session_publish_at IS NOT NULL AND es.exam_session_publish_at <= NOW())))
+		  AND (es.exam_session_date IS NULL OR es.exam_session_date >= CURRENT_DATE)
+		  AND (es.exam_session_registration_deadline IS NULL
+		       OR es.exam_session_registration_deadline > NOW())
+		  AND NOT EXISTS (
+		      SELECT 1 FROM exam_periods ep
+		      WHERE ep.exam_period_id = es.exam_session_exam_period_id
+		        AND ep.exam_period_is_deleted = FALSE
+		        AND (ep.exam_period_status <> 'registration_open'
+		             OR (ep.exam_period_registration_start IS NOT NULL
+		                 AND ep.exam_period_registration_start > NOW())
+		             OR (ep.exam_period_registration_deadline IS NOT NULL
+		                 AND ep.exam_period_registration_deadline <= NOW())
+		             OR (ep.exam_period_end_date IS NOT NULL
+		                 AND ep.exam_period_end_date < CURRENT_DATE)))`
+
 // GetMetricsOverview returns real-time top-level KPIs directly from PostgreSQL (real-time 100%).
 func (s *Service) GetMetricsOverview(ctx context.Context) (response.MetricsOverviewResponseDTO, error) {
 	var result response.MetricsOverviewResponseDTO
@@ -59,7 +82,8 @@ func (s *Service) GetMetricsOverview(ctx context.Context) (response.MetricsOverv
 		LEFT JOIN payments p ON p.payment_exam_registration_id = er.exam_registration_id
 		                      AND p.payment_is_deleted = FALSE
 		WHERE es.exam_session_is_deleted = FALSE
-		  AND es.exam_session_status = 'open'`).Scan(
+		`+effectiveOpenSessionPredicate+`
+	`).Scan(
 		&result.TotalRevenue,
 		&result.TotalRegistrations,
 		&result.FillRate,
@@ -174,7 +198,7 @@ func (s *Service) GetLiveSessionStatus(ctx context.Context) ([]response.LiveSess
 			es.exam_session_id,
 			et.exam_type_name,
 			et.exam_type_code,
-			rm.exam_room_name,
+			COALESCE(rm.exam_room_name, '')                                    AS room_name,
 			es.exam_session_date::TEXT,
 			es.exam_session_shift,
 			COUNT(seat.exam_seat_id)                                             AS total_seats,
@@ -183,11 +207,11 @@ func (s *Service) GetLiveSessionStatus(ctx context.Context) ([]response.LiveSess
 			COUNT(seat.exam_seat_id) FILTER (WHERE seat.exam_seat_status = 'available') AS available_seats
 		FROM exam_sessions es
 		JOIN exam_types et ON et.exam_type_id = es.exam_session_exam_type_id
-		JOIN exam_rooms rm ON rm.exam_room_id = es.exam_session_exam_room_id
+		LEFT JOIN exam_rooms rm ON rm.exam_room_id = es.exam_session_exam_room_id
 		LEFT JOIN exam_seats seat ON seat.exam_seat_exam_session_id = es.exam_session_id
 		                          AND seat.exam_seat_is_deleted = FALSE
 		WHERE es.exam_session_is_deleted = FALSE
-		  AND es.exam_session_status = 'open'
+		`+effectiveOpenSessionPredicate+`
 		GROUP BY es.exam_session_id, et.exam_type_name, et.exam_type_code,
 		         rm.exam_room_name, es.exam_session_date, es.exam_session_shift
 		ORDER BY es.exam_session_date ASC, es.exam_session_shift ASC`)

@@ -270,9 +270,34 @@ All API routes are mounted under `/api/v1`.
 | exam | GET | `/exam-sessions` | public |
 | exam | GET | `/exam-sessions/:id` | public |
 | exam | GET | `/exam-sessions/:id/seats` | public |
-| exam | POST | `/admin/exam-sessions/:id/seats/generate` | JWT + admin |
+| exam | POST | `/exam-sessions/clear-cache` | public |
+| exam | GET | `/admin/exam-periods` | JWT + admin |
+| exam | POST | `/admin/exam-periods` | JWT + admin |
+| exam | GET | `/admin/exam-periods/:id` | JWT + admin |
+| exam | PUT | `/admin/exam-periods/:id` | JWT + admin |
+| exam | DELETE | `/admin/exam-periods/:id` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/duplicate` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/publish` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/unpublish` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/close-registration` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/reopen-registration` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/reschedule` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/complete` | JWT + admin |
+| exam | POST | `/admin/exam-periods/:id/cancel` | JWT + admin |
 | exam | GET | `/admin/exam-sessions` | JWT + admin |
-| exam | PATCH | `/admin/exam-sessions/:id/publication-status` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/clear-cache` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/batch-create` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/seats/generate` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/publish` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/schedule-publish` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/unpublish` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/close-registration` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/reopen-registration` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/capacity` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/duplicate` | JWT + admin |
+| exam | POST | `/admin/exam-sessions/:id/cancel` | JWT + admin |
+| exam | DELETE | `/admin/exam-sessions/:id/draft` | JWT + admin |
+| exam | PUT | `/admin/exam-sessions/:id` | JWT + admin |
 | registration | POST | `/registrations` | JWT |
 | registration | GET | `/registrations?candidate_id=X` | JWT |
 | registration | PUT | `/registrations/:id/confirm` | JWT |
@@ -547,8 +572,9 @@ Complete enum reference:
 | candidate | `DocumentType` | `cccd`, `passport` |
 | candidate | `DocumentVerificationStatus` | `pending`, `verified`, `rejected` |
 | exam | `ExamShift` | `morning`, `afternoon`, `evening` |
-| exam | `ExamSessionStatus` | `open`, `closed`, `cancelled` |
-| exam | `ExamSessionPublicationStatus` | `published`, `draft`, `scheduled` |
+| exam | `ExamPeriodStatus` | `draft`, `published`, `registration_open`, `registration_closed`, `completed`, `cancelled` |
+| exam | `ExamSessionStatus` | `draft`, `scheduled`, `open`, `closed`, `completed`, `cancelled` |
+| exam | `ExamSessionClosedReason` | `manual`, `full`, `deadline`, `period_closed` |
 | exam | `ExamSeatStatus` | `available`, `held`, `booked` |
 | registration | `ExamRegistrationStatus` | `pending_payment`, `confirmed`, `cancelled` |
 | payment | `PaymentMethod` | `vnpay`, `momo`, `zalopay`, `bank_transfer`, `cash`, `payos` |
@@ -708,6 +734,20 @@ FOR UPDATE SKIP LOCKED
 
 This is inside a transaction. Do not implement seat reservation with application-level checks only.
 
+Both `fn_book_exam_seat` and `fn_transfer_registration` first delegate to
+`fn_assert_session_accepts_registration(p_session_id, p_candidate_id)`, which
+takes `SELECT ... FROM exam_sessions ... FOR SHARE` on the target session (and
+`FOR SHARE` on its parent `exam_periods`) and validates the **effective**
+status, the registration deadline, the effective capacity, and duplicates.
+`FOR SHARE` is deliberate: closing registration writes to the same session row,
+so the two operations serialise — nobody can slip a booking in at the exact
+moment an admin closes registration. The function raises named plpgsql
+exceptions (`EXAM_SESSION_NOT_FOUND`, `EXAM_SESSION_CANCELLED`,
+`EXAM_SESSION_COMPLETED`, `EXAM_SESSION_NOT_PUBLISHED`,
+`EXAM_PERIOD_CANCELLED`, `REGISTRATION_CLOSED`, `DUPLICATE_REGISTRATION`,
+`NO_SEAT_AVAILABLE`) which
+`registration.mapBookingError` translates into Vietnamese messages.
+
 ### Payment callbacks
 
 `ProcessCallback` locks the payment row with `SELECT ... FOR UPDATE` before updating status, preventing duplicate processing. Only `pending` payments may transition.
@@ -777,6 +817,105 @@ held      → available (on cancellation or expiry)
 booked    → available (on admin cancellation before exam date)
 booked    → available (on registration cancellation)
 ```
+
+### Exam period
+
+```
+(new)  → draft
+draft  → published            (needs ≥ 1 valid child session)
+published → registration_open (automatic: now() ≥ exam_period_registration_start)
+registration_open → registration_closed  (deadline reached, or admin closes early)
+registration_closed → registration_open  (admin reopens before exam date; a new future deadline is required)
+registration_open|registration_closed → completed
+draft|published|registration_open|registration_closed → cancelled
+```
+
+`exam_period_status` persists `draft`, `published`, `registration_open`,
+`registration_closed`, `completed`, `cancelled`. The window between
+`exam_period_registration_start` and `exam_period_registration_deadline`
+distinguishes `published` from `registration_open`.
+
+### Exam session
+
+```
+(new)   → draft
+draft   → open        (publish immediately; requires a date and ≥ 1 seat)
+draft   → scheduled   (schedule publish; requires a future exam_session_publish_at)
+scheduled → open      (publish_at elapsed, parent period effectively registration_open)
+scheduled → draft     (unpublish — cancels the schedule; or parent period closed)
+open    → closed      (closed_reason = manual | full | deadline | period_closed)
+closed  → open        (reopen; see conditions below)
+open|closed → cancelled
+open|closed → completed  (exam day passed)
+```
+
+`exam_session_status` has six values: `draft`, `scheduled`, `open`, `closed`,
+`completed`, `cancelled`. `exam_session_publication_status` **no longer exists** —
+the old publication states are folded into `exam_session_status`.
+
+### Exam session `closed_reason`
+
+`closed_reason` is set if and only if `status = 'closed'`
+(db constraint `ck_exam_session_closed_reason_required`). "Đã đóng" and
+"Đã hết hạn" are two renderings of the same `closed` status, distinguished only
+by the reason. The reason also decides whether the session can be reopened:
+
+| `closed_reason` | Reopen allowed when |
+|---|---|
+| `manual` | always (parent period must be effectively `registration_open`) |
+| `full` | capacity was increased above the registered count first |
+| `deadline` | a new future `exam_session_registration_deadline` is supplied |
+| `period_closed` | never individually — the parent period must be reopened |
+
+### Effective status (authoritative)
+
+Stored status columns lag behind wall-clock time, so **never trust
+`exam_session_status` / `exam_period_status` for a business decision**.
+`internal/exam/statemachine.go` derives the effective state from `now()`:
+
+- `ExamPeriodStatus.Effective(now)`: `draft`/`cancelled`/`completed`/
+  `registration_closed` short-circuit; otherwise `published` before
+  `registration_start`, `registration_closed` after the deadline, else
+  `registration_open`.
+- `SessionState.Effective(now) (status, closedReason)`: short-circuits on
+  `draft`/`cancelled`/`completed`; a passed exam day yields `completed`; a stored
+  `closed` yields `closed` plus its reason; a stored `scheduled` stays `scheduled`
+  until its `publish_at` elapses *and* the parent period is effectively open;
+  then the parent period gates the session (`cancelled`/`completed` propagate,
+  only `registration_open` lets it proceed, anything else closes it with
+  `period_closed`); then its own deadline (`deadline`), then capacity (`full`),
+  else `open`.
+- The cron (`worker/exam_publication_cron.go` → `Service.SyncStoredStatuses`)
+  only writes the stored column so lists and dashboards render correctly.
+
+### Shared guard
+
+Every mutating exam endpoint calls `GuardPeriodAction` / `GuardSessionAction`
+and aborts with HTTP **409** and `code: "INVALID_STATE_TRANSITION"` (plus a
+Vietnamese reason) when the action is not allowed for the effective state.
+`AvailablePeriodActions` / `AvailableSessionActions` are returned to the client
+as `available_actions` so the UI can mirror the same matrix. The action matrix
+is the one documented in the business spec: editing is full for `draft`/
+`published`, description-only for `registration_open`, and denied afterwards;
+publish requires ≥ 1 valid child session; unpublish from `registration_open` is
+allowed only with 0 registrations; reschedule is allowed for `published`/
+`registration_open`/`registration_closed`; delete is `draft`-only.
+
+### Exam period ↔ session cascade (single transaction)
+
+- **Close period registration** — child sessions with effective `open` become
+  `closed` + `period_closed`; children already closed for another reason keep
+  their reason; `scheduled` children are cancelled back to `draft` with
+  `exam_session_publish_at = NULL`; `draft` children are never published.
+- **Reopen period registration** — only children with
+  `closed_reason = 'period_closed'` return to `open`; `full`/`manual`/`deadline`
+  children stay closed. A new future deadline is required.
+- **Cancel period** — every child session becomes `cancelled`; each registration
+  must resolve to either refund or transfer (`resolution` = `refund` |
+  `transfer`, `target_session_id` required for `transfer`).
+- **Reschedule period** — no status change. Writes
+  `exam_period_original_date`, increments `exam_period_reschedule_count`, shifts
+  every child session date and notifies candidates.
 
 ---
 
@@ -899,6 +1038,75 @@ make db-reup
 # Reset database (destroys all data)
 docker compose down -v && docker compose up -d
 ```
+
+### Ordering rules inside a migration
+
+`migrate` runs a whole migration file as one multi-statement `ExecContext`, so PostgreSQL
+executes it inside an **implicit transaction**. If any statement fails the entire file
+rolls back — but `schema_migrations` is still left `dirty = true`.
+
+Because of that, statement order matters and must be:
+
+1. Add new columns.
+2. **Drop / widen the existing `CHECK` constraint.**
+3. Backfill data that needs the widened values.
+4. Add the stricter `CHECK` constraint that codifies the new rule.
+5. Drop obsolete columns and constraints.
+
+Adding the new constraint before the backfill, or backfilling before dropping the old
+constraint, fails on a database that already contains rows (it passes on an empty one —
+always test migrations against a clone of real data, not an empty database).
+
+### Replay safety
+
+A migration may be executed a second time — for example after `schema_migrations` is
+manually rewound, or when the same version is applied to a database whose schema is
+already up to date. Guard every `UPDATE`/`SELECT` that reads a column the same file
+drops, otherwise the replay fails with `column "..." does not exist`:
+
+```sql
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'exam_sessions'
+          AND column_name  = 'exam_session_publication_status'
+    ) THEN
+        UPDATE exam_sessions SET ... WHERE exam_session_publication_status = 'draft';
+    END IF;
+END $$;
+```
+
+DDL statements are already replay-safe when they use `ADD COLUMN IF NOT EXISTS`,
+`DROP CONSTRAINT IF EXISTS` before every `ADD CONSTRAINT`, and
+`CREATE INDEX IF NOT EXISTS`. Backfills that reference soon-to-be-dropped columns are
+the only part that needs an explicit existence guard.
+
+### Recovering from a dirty migration
+
+```bash
+# 1. Read the failure reason
+docker compose logs migrate | tail -30
+
+# 2. Inspect what actually committed. DDL is transactional, so usually nothing —
+#    but verify: if every column/constraint/index from the migration IS present,
+#    the version DID commit and you must set version = <that_version>.
+docker compose exec postgres psql -U postgres -d hsk_vinh -c "SELECT version, dirty FROM schema_migrations;"
+docker compose exec postgres psql -U postgres -d hsk_vinh -c "\d exam_sessions"
+
+# 3. Fix the offending migration file (see "Replay safety" above), then reset the flag:
+#    - migration did NOT commit  -> version = <previous_version>
+#    - migration DID commit      -> version = <failed_version>
+docker compose exec postgres psql -U postgres -d hsk_vinh \
+  -c "UPDATE schema_migrations SET version = <version>, dirty = false;"
+
+# 4. Re-run only the failed migration
+make db-build
+```
+
+Never `UPDATE schema_migrations SET dirty = false` without first fixing the SQL —
+`migrate` would skip the file and the schema would silently stay out of date.
 
 ---
 
@@ -1063,11 +1271,13 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 
 ### 13.5. Quy tắc hiển thị ca thi
 
-- API public của module `exam` chỉ trả về ca có `exam_session_publication_status = published`, chưa bị hủy và đã đến `exam_session_publish_at` (nếu có).
+- API public của module `exam` chỉ trả về ca có **trạng thái hiệu lực** là `open` (xem mục 18). Trạng thái hiệu lực được tính từ `now()`, hạn chót đăng ký, ngày thi, `exam_session_publish_at` và trạng thái hiệu lực của đợt cha — **không** đọc thẳng cột `exam_session_status` đã lưu.
+- Response trả về cả `status` (trạng thái hiệu lực) và `stored_status` (giá trị đã lưu trong DB) để FE đối chiếu khi cột lưu bị trễ.
 - `draft` không hiển thị công khai và không nhận `exam_session_publish_at`.
 - `scheduled` bắt buộc có `exam_session_publish_at` là thời điểm trong tương lai.
-- Worker nền của module `exam` tự động chuyển các ca `scheduled` đến hạn sang `published`
-  bằng một câu lệnh cập nhật atomic; sau đó đặt `exam_session_publish_at = NULL`.
+- Worker nền của module `exam` chỉ đồng bộ cột trạng thái đã lưu để hiển thị (`SyncStoredStatuses`): `scheduled` đến hạn (và đợt cha đang mở đăng ký) → `open` + `exam_session_publish_at = NULL`.
+- `closed` là trạng thái duy nhất cho cả “đã đóng” và “đã hết hạn”; FE phân biệt bằng `closed_reason` (`manual`, `full`, `deadline`, `period_closed`) và ẩn/hiện nút hành động theo `available_actions`.
+- Mọi hành động không hợp lệ trả HTTP 409 kèm `code: "INVALID_STATE_TRANSITION"` và `msg` giải thích lý do bằng tiếng Việt.
 - `exam_session_check_in_at` là thời điểm có mặt dạng RFC 3339 và có thể để trống.
 - API `exam` không còn endpoint hoặc field response về phòng máy; dữ liệu `exam_rooms` và khóa DB cũ chỉ được giữ nội bộ để tương thích registration.
 

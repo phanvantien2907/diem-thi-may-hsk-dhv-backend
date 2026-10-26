@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditresp "github.com/hskvinh/backend/internal/audit/dto/response"
@@ -23,23 +22,6 @@ func (f *fakeAudit) Log(_ context.Context, _ *sql.Tx, _ auditreq.CreateAuditLogR
 }
 func (f *fakeAudit) List(_ context.Context, _ auditreq.ListAuditLogRequestDTO) (auditresp.AuditLogListResponseDTO, error) {
 	return auditresp.AuditLogListResponseDTO{}, nil
-}
-
-func setupHandlerTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
-	gin.SetMode(gin.TestMode)
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("failed to create sqlmock: %v", err)
-	}
-
-	fa := &fakeAudit{}
-	svc := registration.NewService(db, fa)
-	handler := registration.NewHandler(svc)
-
-	r := gin.New()
-	registration.RegisterRoutes(r.Group("/api/v1"), handler, "dummy_secret")
-
-	return r, mock
 }
 
 func TestHandler_ReserveSeat_Validation(t *testing.T) {
@@ -86,10 +68,10 @@ func TestHandler_ReserveSeat_Validation(t *testing.T) {
 			if w.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d; body = %s", w.Code, tt.wantStatus, w.Body.String())
 			}
-			
+
 			var resp map[string]interface{}
 			_ = json.Unmarshal(w.Body.Bytes(), &resp)
-			
+
 			// For validation errors, they usually go to the error field inside utils.BadRequest
 			if errResp, ok := resp["error"].(string); ok {
 				if tt.wantMsg != "" && !strings.Contains(errResp, tt.wantMsg) {
@@ -149,10 +131,10 @@ func TestHandler_PaymentConfirm_Validation(t *testing.T) {
 			if w.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d; body = %s", w.Code, tt.wantStatus, w.Body.String())
 			}
-			
+
 			var resp map[string]interface{}
 			_ = json.Unmarshal(w.Body.Bytes(), &resp)
-			
+
 			if errResp, ok := resp["error"].(string); ok {
 				if tt.wantMsg != "" && !strings.Contains(errResp, tt.wantMsg) {
 					t.Errorf("error %q does not contain %q", errResp, tt.wantMsg)

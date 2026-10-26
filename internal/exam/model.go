@@ -18,6 +18,8 @@ type ExamPeriodEntity struct {
 	ExamPeriodRegistrationStart    *time.Time
 	ExamPeriodRegistrationDeadline *time.Time
 	ExamPeriodStatus               enum.ExamPeriodStatus
+	ExamPeriodOriginalDate         *time.Time
+	ExamPeriodRescheduleCount      int
 	ExamPeriodIsDeleted            bool
 	ExamPeriodDeletedAt            *time.Time
 	ExamPeriodCreatedAt            time.Time
@@ -49,7 +51,7 @@ type ExamSessionEntity struct {
 	ExamSessionFee                  int64
 	ExamSessionRegistrationDeadline *time.Time
 	ExamSessionStatus               enum.ExamSessionStatus
-	ExamSessionPublicationStatus    enum.ExamSessionPublicationStatus
+	ExamSessionClosedReason         enum.ExamSessionClosedReason
 	ExamSessionPublishAt            *time.Time
 	ExamSessionCheckInAt            *time.Time
 	ExamSessionDuplicatedFromID     *int64

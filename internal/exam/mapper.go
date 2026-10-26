@@ -1,6 +1,10 @@
 package exam
 
-import "github.com/hskvinh/backend/internal/exam/dto/response"
+import (
+	"time"
+
+	"github.com/hskvinh/backend/internal/exam/dto/response"
+)
 
 // ToExamTypeResponseDTO maps an ExamTypeEntity to its public DTO.
 func ToExamTypeResponseDTO(e ExamTypeEntity) response.ExamTypeResponseDTO {
@@ -12,8 +16,16 @@ func ToExamTypeResponseDTO(e ExamTypeEntity) response.ExamTypeResponseDTO {
 	}
 }
 
-// ToExamSessionResponseDTO maps an ExamSessionEntity to its public DTO.
-func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseDTO {
+// ToExamSessionResponseDTO maps a session plus its evaluated state to the public DTO.
+// The exposed `status`/`closed_reason` are the effective values derived from now, never
+// the persisted column, so a lagging background sync can never mislead the client.
+func ToExamSessionResponseDTO(e ExamSessionEntity, st SessionState, now time.Time) response.ExamSessionResponseDTO {
+	effective, reason := st.Effective(now)
+	var closedReason *string
+	if reason != "" {
+		r := reason.String()
+		closedReason = &r
+	}
 	return response.ExamSessionResponseDTO{
 		ID:                   e.ExamSessionID,
 		PeriodID:             e.ExamSessionExamPeriodID,
@@ -25,11 +37,13 @@ func ToExamSessionResponseDTO(e ExamSessionEntity) response.ExamSessionResponseD
 		Capacity:             e.ExamSessionCapacity,
 		Fee:                  e.ExamSessionFee,
 		RegistrationDeadline: e.ExamSessionRegistrationDeadline,
-		Status:               string(e.ExamSessionStatus),
-		PublicationStatus:    string(e.ExamSessionPublicationStatus),
+		Status:               effective.String(),
+		StoredStatus:         e.ExamSessionStatus.String(),
+		ClosedReason:         closedReason,
 		PublishAt:            e.ExamSessionPublishAt,
 		CheckInAt:            e.ExamSessionCheckInAt,
 		DuplicatedFromID:     e.ExamSessionDuplicatedFromID,
+		AvailableActions:     actionStrings(AvailableSessionActions(st, now)),
 	}
 }
 
@@ -44,17 +58,22 @@ func ToExamSeatResponseDTO(e ExamSeatEntity) response.ExamSeatResponseDTO {
 	}
 }
 
-// ToExamPeriodResponseDTO maps an ExamPeriodEntity to its public DTO.
-func ToExamPeriodResponseDTO(e ExamPeriodEntity, sessionCount int, sessions []response.ExamSessionResponseDTO) response.ExamPeriodResponseDTO {
-	var startDate, endDate *string
+// ToExamPeriodResponseDTO maps a period plus its evaluated state to the public DTO.
+func ToExamPeriodResponseDTO(e ExamPeriodEntity, st PeriodState, sessionCount int, sessions []response.ExamSessionResponseDTO, now time.Time) response.ExamPeriodResponseDTO {
+	var startDate, endDate, originalDate *string
 	if e.ExamPeriodStartDate != nil {
-		s := e.ExamPeriodStartDate.Format("2006-01-02")
-		startDate = &s
+		d := e.ExamPeriodStartDate.Format("2006-01-02")
+		startDate = &d
 	}
 	if e.ExamPeriodEndDate != nil {
-		s := e.ExamPeriodEndDate.Format("2006-01-02")
-		endDate = &s
+		d := e.ExamPeriodEndDate.Format("2006-01-02")
+		endDate = &d
 	}
+	if e.ExamPeriodOriginalDate != nil {
+		d := e.ExamPeriodOriginalDate.Format("2006-01-02")
+		originalDate = &d
+	}
+	effective := st.Effective(now)
 	return response.ExamPeriodResponseDTO{
 		ID:                   e.ExamPeriodID,
 		Name:                 e.ExamPeriodName,
@@ -63,12 +82,27 @@ func ToExamPeriodResponseDTO(e ExamPeriodEntity, sessionCount int, sessions []re
 		Instructions:         e.ExamPeriodInstructions,
 		StartDate:            startDate,
 		EndDate:              endDate,
+		OriginalDate:         originalDate,
+		RescheduleCount:      e.ExamPeriodRescheduleCount,
 		RegistrationStart:    e.ExamPeriodRegistrationStart,
 		RegistrationDeadline: e.ExamPeriodRegistrationDeadline,
-		Status:               string(e.ExamPeriodStatus),
+		Status:               effective.String(),
+		StoredStatus:         e.ExamPeriodStatus.String(),
 		SessionCount:         sessionCount,
 		Sessions:             sessions,
+		AvailableActions:     actionStrings(AvailablePeriodActions(st, now)),
 		CreatedAt:            e.ExamPeriodCreatedAt,
 		UpdatedAt:            e.ExamPeriodUpdatedAt,
+	}
+}
+
+// newPeriodState builds the guard state from an entity.
+func newPeriodState(e ExamPeriodEntity) PeriodState {
+	return PeriodState{
+		StoredStatus:         e.ExamPeriodStatus,
+		RegistrationStart:    e.ExamPeriodRegistrationStart,
+		RegistrationDeadline: e.ExamPeriodRegistrationDeadline,
+		StartDate:            e.ExamPeriodStartDate,
+		EndDate:              e.ExamPeriodEndDate,
 	}
 }

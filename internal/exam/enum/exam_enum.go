@@ -21,19 +21,24 @@ func (s ExamShift) Valid() bool {
 // String returns the string representation.
 func (s ExamShift) String() string { return string(s) }
 
-// ExamSessionStatus enumerates session lifecycle states.
+// ExamSessionStatus enumerates session lifecycle states:
+// draft -> scheduled -> open -> closed -> completed, plus the cancelled branch.
 type ExamSessionStatus string
 
 const (
+	SessionStatusDraft     ExamSessionStatus = "draft"
+	SessionStatusScheduled ExamSessionStatus = "scheduled"
 	SessionStatusOpen      ExamSessionStatus = "open"
 	SessionStatusClosed    ExamSessionStatus = "closed"
+	SessionStatusCompleted ExamSessionStatus = "completed"
 	SessionStatusCancelled ExamSessionStatus = "cancelled"
 )
 
 // Valid reports whether s is a recognised ExamSessionStatus.
 func (s ExamSessionStatus) Valid() bool {
 	switch s {
-	case SessionStatusOpen, SessionStatusClosed, SessionStatusCancelled:
+	case SessionStatusDraft, SessionStatusScheduled, SessionStatusOpen,
+		SessionStatusClosed, SessionStatusCompleted, SessionStatusCancelled:
 		return true
 	}
 	return false
@@ -42,26 +47,32 @@ func (s ExamSessionStatus) Valid() bool {
 // String returns the string representation.
 func (s ExamSessionStatus) String() string { return string(s) }
 
-// ExamSessionPublicationStatus controls when a session is visible to candidates.
-type ExamSessionPublicationStatus string
+// ExamSessionClosedReason explains why a session reached the `closed` state.
+// "Đã đóng" và "Đã hết hạn" chỉ là hai cách hiển thị của cùng một trạng thái closed.
+type ExamSessionClosedReason string
 
 const (
-	PublicationStatusPublished ExamSessionPublicationStatus = "published"
-	PublicationStatusDraft     ExamSessionPublicationStatus = "draft"
-	PublicationStatusScheduled ExamSessionPublicationStatus = "scheduled"
+	ClosedReasonManual       ExamSessionClosedReason = "manual"
+	ClosedReasonFull         ExamSessionClosedReason = "full"
+	ClosedReasonDeadline     ExamSessionClosedReason = "deadline"
+	ClosedReasonPeriodClosed ExamSessionClosedReason = "period_closed"
 )
 
-// Valid reports whether s is a recognised publication status.
-func (s ExamSessionPublicationStatus) Valid() bool {
-	switch s {
-	case PublicationStatusPublished, PublicationStatusDraft, PublicationStatusScheduled:
+// Valid reports whether r is a recognised ExamSessionClosedReason.
+// The empty value is valid and means "not closed".
+func (r ExamSessionClosedReason) Valid() bool {
+	switch r {
+	case "", ClosedReasonManual, ClosedReasonFull, ClosedReasonDeadline, ClosedReasonPeriodClosed:
 		return true
 	}
 	return false
 }
 
+// IsSet reports whether a concrete reason is recorded.
+func (r ExamSessionClosedReason) IsSet() bool { return r != "" }
+
 // String returns the string representation.
-func (s ExamSessionPublicationStatus) String() string { return string(s) }
+func (r ExamSessionClosedReason) String() string { return string(r) }
 
 // ExamSeatStatus enumerates seat availability states.
 type ExamSeatStatus string
@@ -84,7 +95,9 @@ func (s ExamSeatStatus) Valid() bool {
 // String returns the string representation.
 func (s ExamSeatStatus) String() string { return string(s) }
 
-// ExamPeriodStatus enumerates period lifecycle states.
+// ExamPeriodStatus enumerates period lifecycle states:
+// draft -> published -> registration_open -> registration_closed -> completed,
+// plus the cancelled branch. Rescheduling never changes the status.
 type ExamPeriodStatus string
 
 const (
@@ -92,7 +105,6 @@ const (
 	PeriodStatusPublished          ExamPeriodStatus = "published"
 	PeriodStatusRegistrationOpen   ExamPeriodStatus = "registration_open"
 	PeriodStatusRegistrationClosed ExamPeriodStatus = "registration_closed"
-	PeriodStatusRescheduled        ExamPeriodStatus = "rescheduled"
 	PeriodStatusCancelled          ExamPeriodStatus = "cancelled"
 	PeriodStatusCompleted          ExamPeriodStatus = "completed"
 )
@@ -101,12 +113,19 @@ const (
 func (s ExamPeriodStatus) Valid() bool {
 	switch s {
 	case PeriodStatusDraft, PeriodStatusPublished, PeriodStatusRegistrationOpen,
-		PeriodStatusRegistrationClosed, PeriodStatusRescheduled,
-		PeriodStatusCancelled, PeriodStatusCompleted:
+		PeriodStatusRegistrationClosed, PeriodStatusCancelled, PeriodStatusCompleted:
 		return true
 	}
 	return false
 }
+
+// IsFinal reports whether the status terminates the period lifecycle.
+func (s ExamPeriodStatus) IsFinal() bool {
+	return s == PeriodStatusCancelled || s == PeriodStatusCompleted
+}
+
+// AcceptsRegistration reports whether candidates may register while the period is in this state.
+func (s ExamPeriodStatus) AcceptsRegistration() bool { return s == PeriodStatusRegistrationOpen }
 
 // String returns the string representation.
 func (s ExamPeriodStatus) String() string { return string(s) }

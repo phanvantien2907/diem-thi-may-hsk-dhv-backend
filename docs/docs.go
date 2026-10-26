@@ -892,10 +892,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lấy danh sách các đợt thi (exam periods) với bộ lọc trạng thái và phân trang.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Lọc theo trạng thái hiệu lực, khoảng ngày bắt đầu/kết thúc.",
                 "produces": [
                     "application/json"
                 ],
@@ -906,42 +903,26 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Trạng thái (draft, published, scheduled, closed, cancelled)",
+                        "description": "Trạng thái hiệu lực (draft, published, registration_open, registration_closed, completed, cancelled)",
                         "name": "status",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "description": "Số lượng bản ghi mỗi trang (mặc định 20, tối đa 100)",
-                        "name": "limit",
+                        "type": "string",
+                        "description": "Từ ngày (YYYY-MM-DD)",
+                        "name": "from",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "description": "Vị trí bắt đầu",
-                        "name": "offset",
+                        "type": "string",
+                        "description": "Đến ngày (YYYY-MM-DD)",
+                        "name": "to",
                         "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
-                        "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/response.ExamPeriodResponseDTO"
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -962,20 +943,17 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tạo một đợt thi mới (ở trạng thái draft).",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Đợt thi mới luôn được tạo ở trạng thái nháp.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Exam Periods"
                 ],
-                "summary": "Tạo đợt thi mới (Admin)",
+                "summary": "Tạo đợt thi (Admin)",
                 "parameters": [
                     {
-                        "description": "Dữ liệu đợt thi",
+                        "description": "Thông tin đợt thi",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -986,34 +964,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "Tạo thành công",
+                        "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
                     "400": {
                         "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1029,10 +986,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lấy thông tin chi tiết một đợt thi kèm danh sách các ca thi trực thuộc.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Trả về đợt thi kèm danh sách ca thi con và trạng thái hiệu lực.",
                 "produces": [
                     "application/json"
                 ],
@@ -1051,41 +1005,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "ID không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "404": {
                         "description": "Không tìm thấy đợt thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1099,17 +1025,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cập nhật thông tin đợt thi. Khi ở draft, cập nhật exam_date/registration_deadline sẽ tự động áp dụng cho các ca thi con chưa có lịch.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Nháp và đã công bố cho sửa toàn bộ; đang mở/đã đóng đăng ký chỉ sửa mô tả và hướng dẫn.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Exam Periods"
                 ],
-                "summary": "Cập nhật đợt thi (Admin)",
+                "summary": "Chỉnh sửa đợt thi (Admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -1119,7 +1042,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Dữ liệu cập nhật",
+                        "description": "Thông tin cần cập nhật",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -1130,48 +1053,103 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Cập nhật thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy đợt thi",
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ xóa được đợt thi ở trạng thái nháp; ca nháp và ca hẹn giờ bị xóa theo.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Xóa bản nháp đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "409": {
-                        "description": "Không thể sửa ngày khi đợt thi không ở trạng thái draft",
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mọi ca con chuyển sang cancelled. Mỗi đăng ký phải chọn hoàn tiền hoặc chuyển ca.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Hủy đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
                     },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    {
+                        "description": "Lý do hủy và hình thức xử lý đăng ký",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.CancelPeriodRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1187,15 +1165,12 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Chủ động đóng cổng đăng ký cho toàn bộ các ca thi thuộc đợt thi trước hạn chót.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Ca con đang mở chuyển thành closed với lý do period_closed; ca hẹn giờ bị hủy hẹn.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Exam Periods"
+                    "Exam Period Status"
                 ],
                 "summary": "Đóng đăng ký đợt thi sớm (Admin)",
                 "parameters": [
@@ -1217,41 +1192,54 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Đóng đăng ký thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "ID không hợp lệ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ đợt đã đóng đăng ký mới được đánh dấu hoàn tất; ca con đang mở/đã đóng cũng chuyển sang completed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Đánh dấu hoàn tất đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy đợt thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1267,10 +1255,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tạo đợt thi mới từ một đợt thi cũ, sao chép cấu hình các ca thi nhưng reset trạng thái sang draft và đặt ngày thi/hạn đăng ký về NULL. Không sao chép thí sinh hay đăng ký.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Sao chép đợt thi và toàn bộ ca thi con sang trạng thái nháp trong một transaction.",
                 "produces": [
                     "application/json"
                 ],
@@ -1281,13 +1266,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "ID đợt thi nguồn",
+                        "description": "ID đợt thi",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Tên và mã tùy chọn cho đợt thi mới",
+                        "description": "Tên và mã mới",
                         "name": "request",
                         "in": "body",
                         "schema": {
@@ -1297,48 +1282,104 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "Nhân bản thành công",
+                        "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/response.DuplicateExamPeriodResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "ID hoặc dữ liệu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
                     "404": {
-                        "description": "Không tìm thấy đợt thi nguồn",
+                        "description": "Không tìm thấy đợt thi",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/publish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cần ít nhất một ca thi hợp lệ. Nháp -\u003e đã công bố.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Công bố đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
                     "409": {
-                        "description": "Mã đợt thi đã tồn tại",
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/reopen-registration": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Phải đặt hạn đăng ký mới trong tương lai. Chỉ ca đóng do period_closed quay về open.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Mở lại đăng ký đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
                     },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    {
+                        "description": "Hạn đăng ký mới",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.ReopenPeriodRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1354,17 +1395,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Đổi lịch ngày thi và hạn chót cho toàn bộ đợt thi và các ca thi con thuộc đợt.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Không đổi trạng thái. Ghi nhận ngày gốc, tăng số lần dời lịch, dời ngày các ca con và gửi thông báo.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Exam Periods"
                 ],
-                "summary": "Đổi lịch đợt thi (Admin)",
+                "summary": "Dời lịch đợt thi (Admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -1374,7 +1412,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Thông tin đổi lịch",
+                        "description": "Thông tin dời lịch",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -1385,41 +1423,54 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Đổi lịch thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.RescheduleExamPeriodResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
+                    }
+                }
+            }
+        },
+        "/admin/exam-periods/{id}/unpublish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Đã công bố thì luôn thu hồi được; đang mở đăng ký chỉ thu hồi được khi chưa có đăng ký.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Period Status"
+                ],
+                "summary": "Thu hồi công bố đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/response.ExamPeriodResponseDTO"
                         }
                     },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy đợt thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1435,10 +1486,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Admin xem các ca thi published, draft, scheduled và cancelled.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Trả về mọi ca thi chưa bị xóa, bao gồm cả nháp, hẹn giờ, đã hủy.",
                 "produces": [
                     "application/json"
                 ],
@@ -1446,6 +1494,26 @@ const docTemplate = `{
                     "Exam"
                 ],
                 "summary": "Danh sách toàn bộ ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID loại thi",
+                        "name": "exam_type_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Từ ngày (YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Đến ngày (YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
@@ -1456,72 +1524,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/exam-sessions/:id/cancel": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Admin hủy một ca thi (khi chưa có ai đăng ký).",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Exam"
-                ],
-                "summary": "Hủy ca thi (Admin)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "ID tham số định danh",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Thành công",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1610,87 +1612,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/exam-sessions/:id/publication-status": {
-            "patch": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Chuyển ca thi giữa draft, published và scheduled.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Exam"
-                ],
-                "summary": "Cập nhật trạng thái phát hành ca thi (Admin)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "ID ca thi",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Trạng thái phát hành mới",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/request.UpdatePublicationStatusRequestDTO"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/response.UpdatePublicationStatusResponseDTO"
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy ca thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/admin/exam-sessions/:id/roster": {
             "get": {
                 "security": [
@@ -1757,6 +1678,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/exam-sessions/batch-create": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tạo nhiều ca thi trong một transaction. Trạng thái cho phép: open, draft, scheduled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Tạo nhanh nhiều ca thi (Admin)",
+                "parameters": [
+                    {
+                        "description": "Danh sách ca thi",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.BatchCreateExamSessionsRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/exam-sessions/{id}": {
             "put": {
                 "security": [
@@ -1764,17 +1729,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Chỉnh sửa thông tin lịch thi, ca thi, lệ phí, số lượng chỗ ngồi hoặc hạn chót đăng ký cho một ca thi. Chỉ cho phép sửa lịch/lệ phí khi ca thi ở draft hoặc chưa có thí sinh đăng ký.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Ca thi đã có đăng ký thì khóa ngày, giờ, lệ phí và hạn đăng ký; ca đã đóng chỉ sửa được ghi chú.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Exam"
                 ],
-                "summary": "Cập nhật ca thi (Admin)",
+                "summary": "Chỉnh sửa ca thi (Admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -1784,7 +1746,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Dữ liệu ca thi cập nhật",
+                        "description": "Thông tin cần cập nhật",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -1795,48 +1757,105 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Cập nhật thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.ExamSessionResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "Dữ liệu không hợp lệ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy ca thi",
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ hủy được ca thi đang mở hoặc đã đóng. Ca nháp hoặc hẹn giờ phải dùng xóa bản nháp.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Hủy ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "409": {
-                        "description": "Không thể chỉnh sửa ca thi đã phát hành hoặc đã có thí sinh đăng ký",
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/capacity": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Không được giảm xuống dưới số thí sinh đã đăng ký. Nới sĩ số ca thi đã đầy sẽ tự mở lại đăng ký.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Đổi sĩ số ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
                     },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    {
+                        "description": "Sĩ số mới",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.UpdateCapacityRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1852,15 +1871,12 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Chủ động đóng cổng đăng ký cho một ca thi đơn lẻ trước hạn chót.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Lý do đóng quyết định điều kiện mở lại: manual, full, deadline, period_closed.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Exam"
+                    "Exam Session Status"
                 ],
                 "summary": "Đóng đăng ký ca thi sớm (Admin)",
                 "parameters": [
@@ -1882,41 +1898,55 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Đóng đăng ký ca thi thành công",
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.ExamSessionResponseDTO"
                         }
                     },
-                    "400": {
-                        "description": "ID không hợp lệ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/draft": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ xóa được ca thi nháp hoặc đang hẹn giờ.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Xóa bản nháp ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Không tìm thấy ca thi",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1932,10 +1962,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Nhân bản một ca thi thuộc cùng đợt thi. Sao chép loại thi, mô tả, phòng thi, lệ phí và phụ phí; đặt ngày thi, số lượng chỗ và hạn chót về NULL; trạng thái về draft; tên thêm hậu tố (Copy); ghi nhận lineage trong duplicated_from_id. Không sao chép thí sinh, đơn đăng ký hay ghế ngồi.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Bản sao luôn ở trạng thái nháp, không có ngày thi, sức chứa hay hạn đăng ký; đợt cha không được đã đóng/đã hủy/đã hoàn tất.",
                 "produces": [
                     "application/json"
                 ],
@@ -1946,13 +1973,13 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "ID ca thi nguồn",
+                        "description": "ID ca thi",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Tùy chọn tên cho ca thi mới",
+                        "description": "Tên mới (tùy chọn)",
                         "name": "request",
                         "in": "body",
                         "schema": {
@@ -1962,48 +1989,264 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "201": {
-                        "description": "Nhân bản ca thi thành công",
+                        "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/response.ExamSessionResponseDTO"
                         }
                     },
                     "400": {
-                        "description": "ID không hợp lệ hoặc dữ liệu sai",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
+                        "description": "Không thể nhân bản vào đợt thi đã đóng",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "404": {
-                        "description": "Không tìm thấy ca thi nguồn",
+                        "description": "Không tìm thấy ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/publish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Công khai ca thi nháp hoặc hẹn giờ ngay lập tức. Ca thi phải có ngày thi, sức chứa và hạn đăng ký.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Công khai ngay ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thời điểm công khai (bỏ trống để công khai ngay)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.PublishSessionRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.UpdateSessionStatusResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "409": {
-                        "description": "Đợt thi cha đã đóng hoặc đã hủy",
+                        "description": "Chuyển trạng thái không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/reopen-registration": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Đợt cha phải đang mở đăng ký. Ca đóng do full phải nới sĩ số trước; ca đóng do deadline phải đặt hạn mới; ca đóng do period_closed phải mở lại từ đợt.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Mở lại đăng ký ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Hạn đăng ký mới (bắt buộc khi đóng do deadline)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/request.ReopenSessionRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/schedule-publish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Đặt thời điểm công khai trong tương lai cho ca thi nháp hoặc hẹn giờ.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Lên lịch công khai ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Thời điểm công khai (RFC3339)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.PublishSessionRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.UpdateSessionStatusResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/seats/generate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sinh đủ số ghế theo sức chứa của ca thi; ghế đã tồn tại được giữ nguyên.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Sinh ghế cho ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/response.GenerateSeatsResponseDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/exam-sessions/{id}/unpublish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ca hẹn giờ sẽ bị hủy hẹn. Ca đang mở chỉ thu hồi được khi chưa có thí sinh đăng ký.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam Session Status"
+                ],
+                "summary": "Thu hồi công khai ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.UpdateSessionStatusResponseDTO"
+                        }
+                    },
+                    "409": {
+                        "description": "Chuyển trạng thái không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3950,112 +4193,37 @@ const docTemplate = `{
         },
         "/exam-sessions": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Xem các ca thi đang mở hoặc sắp diễn ra.",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Chỉ trả về ca thi đã công khai (kể cả ca hẹn giờ đã tới thời điểm công khai) và thuộc đợt thi không nháp/không hủy. Trường status là trạng thái hiệu lực tính theo thời gian thực.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Exam"
                 ],
-                "summary": "Danh sách ca thi",
-                "responses": {
-                    "200": {
-                        "description": "Thành công",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
-        "/exam-sessions/:id/seats": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Xem danh sách ghế và trạng thái (trống, đang giữ, đã đặt) của một ca thi.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Exam"
-                ],
-                "summary": "Sơ đồ ghế ngồi",
+                "summary": "Danh sách ca thi công khai",
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "ID tham số định danh",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
+                        "description": "ID loại thi",
+                        "name": "exam_type_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Từ ngày (YYYY-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Đến ngày (YYYY-MM-DD)",
+                        "name": "to",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4073,14 +4241,14 @@ const docTemplate = `{
         },
         "/exam-sessions/clear-cache": {
             "post": {
-                "description": "Xoá cache danh sách loại thi và ca thi trên Redis để phục vụ FE/Admin làm mới dữ liệu",
+                "description": "Xóa cache danh sách loại thi và ca thi trên Redis để làm mới dữ liệu.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Exam Sessions"
+                    "Exam"
                 ],
-                "summary": "Xoá bộ nhớ đệm Ca thi",
+                "summary": "Xóa bộ nhớ đệm ca thi",
                 "responses": {
                     "200": {
                         "description": "Thành công",
@@ -4092,17 +4260,82 @@ const docTemplate = `{
                 }
             }
         },
-        "/exam-types": {
+        "/exam-sessions/{id}": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Lấy danh sách các loại chứng chỉ/kỳ thi (HSK 1, HSK 2...).",
-                "consumes": [
+                "description": "Trả về ca thi đã công khai kèm trạng thái hiệu lực và các hành động được phép.",
+                "produces": [
                     "application/json"
                 ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Chi tiết ca thi",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/response.ExamSessionResponseDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/exam-sessions/{id}/seats": {
+            "get": {
+                "description": "Xem danh sách ghế và trạng thái (trống, đang giữ, đã đặt) của một ca thi đã công khai.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Exam"
+                ],
+                "summary": "Sơ đồ ghế ngồi",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/exam-types": {
+            "get": {
+                "description": "Lấy danh sách các loại chứng chỉ/kỳ thi (HSK 1, HSK 2...).",
                 "produces": [
                     "application/json"
                 ],
@@ -4113,27 +4346,6 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "Thành công",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6417,6 +6629,21 @@ const docTemplate = `{
                 }
             }
         },
+        "request.BatchCreateExamSessionsRequestDTO": {
+            "type": "object",
+            "required": [
+                "sessions"
+            ],
+            "properties": {
+                "sessions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/request.CreateExamSessionRequestDTO"
+                    }
+                }
+            }
+        },
         "request.BatchIssueRequestDTO": {
             "type": "object",
             "required": [
@@ -6431,6 +6658,30 @@ const docTemplate = `{
                 "issue_date": {
                     "description": "YYYY-MM-DD",
                     "type": "string"
+                }
+            }
+        },
+        "request.CancelPeriodRequestDTO": {
+            "type": "object",
+            "required": [
+                "reason",
+                "resolution"
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "resolution": {
+                    "type": "string",
+                    "enum": [
+                        "refund",
+                        "transfer"
+                    ]
+                },
+                "target_session_id": {
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -6454,8 +6705,18 @@ const docTemplate = `{
         "request.CloseRegistrationRequestDTO": {
             "type": "object",
             "properties": {
+                "closed_reason": {
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "full",
+                        "deadline",
+                        "period_closed"
+                    ]
+                },
                 "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 500
                 }
             }
         },
@@ -6513,6 +6774,62 @@ const docTemplate = `{
                 },
                 "start_date": {
                     "type": "string"
+                }
+            }
+        },
+        "request.CreateExamSessionRequestDTO": {
+            "type": "object",
+            "required": [
+                "capacity",
+                "date",
+                "exam_type_id",
+                "registration_deadline",
+                "shift"
+            ],
+            "properties": {
+                "capacity": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "check_in_at": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
+                "date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "exam_type_id": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "fee": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "publish_at": {
+                    "description": "RFC3339, required when status=scheduled",
+                    "type": "string"
+                },
+                "registration_deadline": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
+                "shift": {
+                    "type": "string",
+                    "enum": [
+                        "morning",
+                        "afternoon",
+                        "evening"
+                    ]
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "open",
+                        "draft",
+                        "scheduled"
+                    ]
                 }
             }
         },
@@ -6667,7 +6984,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "name": {
-                    "description": "Optional custom name; defaults to \"\u003csource_name\u003e (Copy)\"",
+                    "description": "Optional custom name; defaults to \"\u003csource_name\u003e (Bản sao)\"",
                     "type": "string",
                     "maxLength": 255
                 }
@@ -6914,6 +7231,15 @@ const docTemplate = `{
                 }
             }
         },
+        "request.PublishSessionRequestDTO": {
+            "type": "object",
+            "properties": {
+                "publish_at": {
+                    "description": "RFC3339",
+                    "type": "string"
+                }
+            }
+        },
         "request.RefreshTokenRequestDTO": {
             "type": "object",
             "required": [
@@ -6974,6 +7300,27 @@ const docTemplate = `{
                 "phone": {
                     "type": "string",
                     "maxLength": 20
+                }
+            }
+        },
+        "request.ReopenPeriodRegistrationRequestDTO": {
+            "type": "object",
+            "required": [
+                "registration_deadline"
+            ],
+            "properties": {
+                "registration_deadline": {
+                    "description": "RFC3339",
+                    "type": "string"
+                }
+            }
+        },
+        "request.ReopenSessionRegistrationRequestDTO": {
+            "type": "object",
+            "properties": {
+                "registration_deadline": {
+                    "description": "RFC3339",
+                    "type": "string"
                 }
             }
         },
@@ -7056,6 +7403,18 @@ const docTemplate = `{
                 }
             }
         },
+        "request.UpdateCapacityRequestDTO": {
+            "type": "object",
+            "required": [
+                "capacity"
+            ],
+            "properties": {
+                "capacity": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
         "request.UpdateExamPeriodRequestDTO": {
             "type": "object",
             "properties": {
@@ -7063,21 +7422,26 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "end_date": {
+                    "description": "YYYY-MM-DD",
                     "type": "string"
                 },
                 "instructions": {
                     "type": "string"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "registration_deadline": {
+                    "description": "RFC3339",
                     "type": "string"
                 },
                 "registration_start": {
+                    "description": "RFC3339",
                     "type": "string"
                 },
                 "start_date": {
+                    "description": "YYYY-MM-DD",
                     "type": "string"
                 }
             }
@@ -7089,17 +7453,24 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 1
                 },
+                "check_in_at": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
                 "date": {
                     "description": "YYYY-MM-DD",
                     "type": "string"
                 },
-                "exam_session_check_in_at": {
-                    "description": "RFC3339",
+                "description": {
                     "type": "string"
                 },
                 "fee": {
                     "type": "integer",
                     "minimum": 0
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "registration_deadline": {
                     "description": "RFC3339",
@@ -7112,25 +7483,6 @@ const docTemplate = `{
                         "afternoon",
                         "evening"
                     ]
-                }
-            }
-        },
-        "request.UpdatePublicationStatusRequestDTO": {
-            "type": "object",
-            "required": [
-                "exam_session_publication_status"
-            ],
-            "properties": {
-                "exam_session_publication_status": {
-                    "type": "string",
-                    "enum": [
-                        "draft",
-                        "published",
-                        "scheduled"
-                    ]
-                },
-                "exam_session_publish_at": {
-                    "type": "string"
                 }
             }
         },
@@ -7273,6 +7625,12 @@ const docTemplate = `{
         "response.ExamPeriodResponseDTO": {
             "type": "object",
             "properties": {
+                "available_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "code": {
                     "type": "string"
                 },
@@ -7294,11 +7652,17 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "original_date": {
+                    "type": "string"
+                },
                 "registration_deadline": {
                     "type": "string"
                 },
                 "registration_start": {
                     "type": "string"
+                },
+                "reschedule_count": {
+                    "type": "integer"
                 },
                 "session_count": {
                     "type": "integer"
@@ -7315,6 +7679,9 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "stored_status": {
+                    "type": "string"
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -7323,8 +7690,20 @@ const docTemplate = `{
         "response.ExamSessionResponseDTO": {
             "type": "object",
             "properties": {
+                "available_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "capacity": {
                     "type": "integer"
+                },
+                "check_in_at": {
+                    "type": "string"
+                },
+                "closed_reason": {
+                    "type": "string"
                 },
                 "date": {
                     "type": "string"
@@ -7334,15 +7713,6 @@ const docTemplate = `{
                 },
                 "duplicated_from_id": {
                     "type": "integer"
-                },
-                "exam_session_check_in_at": {
-                    "type": "string"
-                },
-                "exam_session_publication_status": {
-                    "type": "string"
-                },
-                "exam_session_publish_at": {
-                    "type": "string"
                 },
                 "exam_type_id": {
                     "type": "integer"
@@ -7359,6 +7729,9 @@ const docTemplate = `{
                 "period_id": {
                     "type": "integer"
                 },
+                "publish_at": {
+                    "type": "string"
+                },
                 "registration_deadline": {
                     "type": "string"
                 },
@@ -7367,6 +7740,20 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "stored_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "response.GenerateSeatsResponseDTO": {
+            "type": "object",
+            "properties": {
+                "created_seats": {
+                    "type": "integer"
+                },
+                "session_id": {
+                    "type": "integer"
                 }
             }
         },
@@ -7425,17 +7812,17 @@ const docTemplate = `{
                 }
             }
         },
-        "response.UpdatePublicationStatusResponseDTO": {
+        "response.UpdateSessionStatusResponseDTO": {
             "type": "object",
             "properties": {
-                "exam_session_publication_status": {
-                    "type": "string"
-                },
-                "exam_session_publish_at": {
-                    "type": "string"
-                },
                 "message": {
                     "type": "string"
+                },
+                "publish_at": {
+                    "type": "string"
+                },
+                "session": {
+                    "$ref": "#/definitions/response.ExamSessionResponseDTO"
                 }
             }
         }

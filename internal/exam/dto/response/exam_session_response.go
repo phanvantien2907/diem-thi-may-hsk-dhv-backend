@@ -5,6 +5,8 @@ import (
 )
 
 // ExamSessionResponseDTO is the public exam session representation.
+// `status` is always the effective, time-derived status; `stored_status` keeps the
+// persisted column for display/debugging only.
 type ExamSessionResponseDTO struct {
 	ID                   int64      `json:"id"`
 	PeriodID             *int64     `json:"period_id,omitempty"`
@@ -16,9 +18,19 @@ type ExamSessionResponseDTO struct {
 	Capacity             *int       `json:"capacity"`
 	Fee                  int64      `json:"fee"`
 	RegistrationDeadline *time.Time `json:"registration_deadline"`
-	Status               string          `json:"status"`
-	PublicationStatus    string          `json:"exam_session_publication_status"`
-	PublishAt            *time.Time      `json:"exam_session_publish_at,omitempty"`
-	CheckInAt            *time.Time      `json:"exam_session_check_in_at,omitempty"`
-	DuplicatedFromID     *int64          `json:"duplicated_from_id,omitempty"`
+	Status               string     `json:"status"`
+	StoredStatus         string     `json:"stored_status"`
+	ClosedReason         *string    `json:"closed_reason"`
+	PublishAt            *time.Time `json:"publish_at,omitempty"`
+	CheckInAt            *time.Time `json:"check_in_at,omitempty"`
+	DuplicatedFromID     *int64     `json:"duplicated_from_id,omitempty"`
+	AvailableActions     []string   `json:"available_actions"`
+}
+
+// UpdateSessionStatusResponseDTO is returned after publishing, scheduling,
+// unpublishing, closing, reopening, completing, or cancelling a session.
+type UpdateSessionStatusResponseDTO struct {
+	Message   string                 `json:"message"`
+	PublishAt *time.Time             `json:"publish_at,omitempty"`
+	Session   ExamSessionResponseDTO `json:"session"`
 }
