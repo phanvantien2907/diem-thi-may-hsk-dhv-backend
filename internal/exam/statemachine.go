@@ -386,6 +386,16 @@ func sessionDenial(a Action, eff enum.ExamSessionStatus, reason enum.ExamSession
 		return "Không thể chỉnh sửa ca thi đã hoàn tất hoặc đã hủy"
 
 	case ActionPublish:
+		if parent := st.EffectiveParent(now); parent != "" {
+			switch parent {
+			case enum.PeriodStatusDraft:
+				return "Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi"
+			case enum.PeriodStatusCancelled:
+				return "Đợt thi đã bị hủy; không thể công khai ca thi"
+			case enum.PeriodStatusCompleted:
+				return "Đợt thi đã hoàn tất; không thể công khai ca thi"
+			}
+		}
 		switch eff {
 		case enum.SessionStatusDraft, enum.SessionStatusScheduled:
 			return ""
@@ -393,6 +403,16 @@ func sessionDenial(a Action, eff enum.ExamSessionStatus, reason enum.ExamSession
 		return "Chỉ có thể công khai ca thi đang ở trạng thái nháp hoặc hẹn giờ"
 
 	case ActionSchedulePublish:
+		if parent := st.EffectiveParent(now); parent != "" {
+			switch parent {
+			case enum.PeriodStatusDraft:
+				return "Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi"
+			case enum.PeriodStatusCancelled:
+				return "Đợt thi đã bị hủy; không thể công khai ca thi"
+			case enum.PeriodStatusCompleted:
+				return "Đợt thi đã hoàn tất; không thể công khai ca thi"
+			}
+		}
 		switch eff {
 		case enum.SessionStatusDraft, enum.SessionStatusScheduled:
 			return ""

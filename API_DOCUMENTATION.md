@@ -1758,6 +1758,11 @@ Ca thi: `view`, `copy_code`, `edit`, `edit_notes`, `publish`, `schedule_publish`
 `unpublish`, `close_registration`, `reopen_registration`, `increase_capacity`,
 `decrease_capacity`, `participant_list`, `check_in`, `cancel`, `delete`.
 
+> **Ràng buộc công khai ca thi theo đợt cha:**
+> - Ca thi chỉ được công khai (`publish`) hoặc hẹn giờ công khai (`schedule_publish`) khi **đợt thi cha đã được công bố** (`published`, `registration_open`, hoặc `registration_closed`).
+> - Khi đợt thi cha có trạng thái **`draft`** (hoặc `cancelled`, `completed`), backend tự động **loại bỏ** `publish` và `schedule_publish` khỏi mảng `available_actions` của ca thi con.
+> - Nếu gửi request `POST /api/v1/admin/exam-sessions/:id/publish` hoặc `schedule-publish` khi đợt cha đang là `draft`, backend sẽ trả HTTP **409 Conflict** (`code: "INVALID_STATE_TRANSITION"`) với thông báo: *"Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi"*.
+
 > **Đã bỏ nhân bản ca thi.** `POST /api/v1/admin/exam-sessions/:id/duplicate` và
 > trường `duplicated_from_id` không còn tồn tại (migration
 > `000018_remove_exam_session_duplication` xóa cột `exam_session_duplicated_from_id`).
@@ -1918,8 +1923,10 @@ kèm mã lỗi `INVALID_STATE_TRANSITION` và lý do bằng tiếng Việt:
 
 **Request Body:** Không cần, hoặc `{}` (không truyền `publish_at`).
 
-**Điều kiện:** ca phải có `date` và đã sinh ghế (`capacity` > 0). Trạng thái phải là
-`draft` hoặc `scheduled`; ngược lại trả 409 `INVALID_STATE_TRANSITION`.
+**Điều kiện:**
+- Ca thi phải có `date`, `registration_deadline` và đã sinh ghế (`capacity` > 0).
+- Trạng thái ca thi phải là `draft` hoặc `scheduled`; ngược lại trả 409 `INVALID_STATE_TRANSITION`.
+- **Đợt thi cha phải được công bố trước:** Nếu đợt thi cha mang trạng thái `draft`, API trả 409 `INVALID_STATE_TRANSITION` (`"Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi"`). Mảng `available_actions` của ca thi sẽ không cung cấp `publish` khi đợt cha ở trạng thái `draft`.
 
 **Response (200 OK):**
 
@@ -1954,6 +1961,8 @@ kèm mã lỗi `INVALID_STATE_TRANSITION` và lý do bằng tiếng Việt:
 | Field | Kiểu | Bắt buộc | Validate | Mô tả |
 |---|---|---|---|---|
 | `publish_at` | `string` | ✅ | RFC 3339, **phải ở tương lai** | Thời điểm công khai |
+
+**Điều kiện:** Tương tự như công khai ngay, đợt thi cha phải không ở trạng thái `draft`. Nếu đợt cha đang là `draft`, API trả 409 `INVALID_STATE_TRANSITION` và `available_actions` của ca thi sẽ không cung cấp `schedule_publish`.
 
 Worker nền (`SyncStoredStatuses`) tự chuyển `scheduled` → `open` khi tới hạn **và**
 đợt cha đang ở `registration_open`, đồng thời xóa `publish_at`.

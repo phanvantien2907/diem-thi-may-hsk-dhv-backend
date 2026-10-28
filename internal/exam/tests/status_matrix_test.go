@@ -693,3 +693,49 @@ func assertTransitionDenied(t *testing.T, err error, action exam.Action, status 
 		t.Fatalf("%q on %q denial action = %q, want %q", action, status, transition.Action, action)
 	}
 }
+
+func TestSessionPublishDeniedWhenParentPeriodIsDraft(t *testing.T) {
+	st := exam.SessionState{
+		StoredStatus: enum.SessionStatusDraft,
+		Date:         day(10),
+		PeriodStatus: enum.PeriodStatusDraft,
+	}
+
+	actions := exam.AvailableSessionActions(st, fixedNow)
+	for _, a := range actions {
+		if a == exam.ActionPublish || a == exam.ActionSchedulePublish {
+			t.Fatalf("parent period in draft should not allow action %q in available_actions", a)
+		}
+	}
+
+	err := exam.GuardSessionAction(exam.ActionPublish, st, fixedNow)
+	assertTransitionDenied(t, err, exam.ActionPublish, string(enum.SessionStatusDraft))
+	var transErr *exam.InvalidStateTransitionError
+	if errors.As(err, &transErr) {
+		wantReason := "Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi"
+		if transErr.Reason != wantReason {
+			t.Fatalf("reason = %q, want %q", transErr.Reason, wantReason)
+		}
+	}
+
+	errSched := exam.GuardSessionAction(exam.ActionSchedulePublish, st, fixedNow)
+	assertTransitionDenied(t, errSched, exam.ActionSchedulePublish, string(enum.SessionStatusDraft))
+
+	// When parent period is published, publish and schedule_publish should be available
+	st.PeriodStatus = enum.PeriodStatusPublished
+	actionsPublished := exam.AvailableSessionActions(st, fixedNow)
+	hasPublish := false
+	hasSchedule := false
+	for _, a := range actionsPublished {
+		if a == exam.ActionPublish {
+			hasPublish = true
+		}
+		if a == exam.ActionSchedulePublish {
+			hasSchedule = true
+		}
+	}
+	if !hasPublish || !hasSchedule {
+		t.Fatalf("parent period in published should offer publish and schedule_publish, got %v", actionsPublished)
+	}
+}
+

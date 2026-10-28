@@ -133,8 +133,9 @@ func (s *Service) ListMyCertificates(ctx context.Context, accountID int64, page,
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM certificates c
 		JOIN exam_results er ON er.exam_result_id = c.certificate_exam_result_id
-		JOIN registrations  r  ON r.registration_id = er.exam_result_registration_id
-		WHERE r.registration_account_id = $1 AND c.certificate_is_deleted = FALSE`,
+		JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
+		JOIN candidates ca ON ca.candidate_id = r.exam_registration_candidate_id
+		WHERE ca.candidate_account_id = $1 AND c.certificate_is_deleted = FALSE`,
 		accountID,
 	).Scan(&total); err != nil {
 		return nil, utils.Meta{}, fmt.Errorf("certificate: count: %w", err)
@@ -146,8 +147,9 @@ func (s *Service) ListMyCertificates(ctx context.Context, accountID int64, page,
 		       c.certificate_status, c.certificate_created_at
 		FROM certificates c
 		JOIN exam_results er ON er.exam_result_id = c.certificate_exam_result_id
-		JOIN registrations  r  ON r.registration_id = er.exam_result_registration_id
-		WHERE r.registration_account_id = $1 AND c.certificate_is_deleted = FALSE
+		JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
+		JOIN candidates ca ON ca.candidate_id = r.exam_registration_candidate_id
+		WHERE ca.candidate_account_id = $1 AND c.certificate_is_deleted = FALSE
 		ORDER BY c.certificate_created_at DESC
 		LIMIT $2 OFFSET $3`,
 		accountID, limit, offset,
@@ -189,9 +191,10 @@ func (s *Service) GetMyCertificateByID(ctx context.Context, certID, accountID in
 		       c.certificate_status, c.certificate_created_at
 		FROM certificates c
 		JOIN exam_results er ON er.exam_result_id = c.certificate_exam_result_id
-		JOIN registrations  r  ON r.registration_id = er.exam_result_registration_id
+		JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
+		JOIN candidates ca ON ca.candidate_id = r.exam_registration_candidate_id
 		WHERE c.certificate_id = $1
-		  AND r.registration_account_id = $2
+		  AND ca.candidate_account_id = $2
 		  AND c.certificate_is_deleted = FALSE`,
 		certID, accountID,
 	), &e)
@@ -252,7 +255,7 @@ func (s *Service) ListCertificates(ctx context.Context, req request.ListCertific
 
 	if req.ExamSessionID != nil {
 		args = append(args, *req.ExamSessionID)
-		where += fmt.Sprintf(" AND er.exam_result_exam_session_id = $%d", idx)
+		where += fmt.Sprintf(" AND r.exam_registration_exam_session_id = $%d", idx)
 		idx++
 	}
 	if req.Status != "" {
@@ -278,6 +281,7 @@ func (s *Service) ListCertificates(ctx context.Context, req request.ListCertific
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM certificates c
 		 JOIN exam_results er ON er.exam_result_id = c.certificate_exam_result_id
+		 LEFT JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
 		 WHERE `+where,
 		countArgs...,
 	).Scan(&total); err != nil {
@@ -291,6 +295,7 @@ func (s *Service) ListCertificates(ctx context.Context, req request.ListCertific
 		       c.certificate_status, c.certificate_created_at
 		FROM certificates c
 		JOIN exam_results er ON er.exam_result_id = c.certificate_exam_result_id
+		LEFT JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
 		WHERE %s
 		ORDER BY c.certificate_created_at DESC
 		LIMIT $%d OFFSET $%d`, where, idx, idx+1),
@@ -442,8 +447,8 @@ func (s *Service) VerifyByNoAndDOB(ctx context.Context, certNo, dobStr string) (
 		       c.certificate_status, c.certificate_created_at
 		FROM certificates c
 		JOIN exam_results   er ON er.exam_result_id   = c.certificate_exam_result_id
-		JOIN registrations  r  ON r.registration_id   = er.exam_result_registration_id
-		JOIN candidates     ca ON ca.candidate_account_id = r.registration_account_id
+		JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
+		JOIN candidates     ca ON ca.candidate_id     = r.exam_registration_candidate_id
 		WHERE c.certificate_no = $1
 		  AND ca.candidate_dob = $2
 		  AND c.certificate_status = 'issued'
@@ -545,10 +550,11 @@ func (s *Service) UpdateDeliveryAddress(ctx context.Context, deliveryID, account
 		    certificate_delivery_address_detail = $2
 		FROM certificates c
 		JOIN exam_results  er ON er.exam_result_id  = c.certificate_exam_result_id
-		JOIN registrations r  ON r.registration_id  = er.exam_result_registration_id
+		JOIN exam_registrations r ON r.exam_registration_id = er.exam_result_exam_registration_id
+		JOIN candidates ca ON ca.candidate_id = r.exam_registration_candidate_id
 		WHERE d.certificate_delivery_id = $3
 		  AND d.certificate_delivery_certificate_id = c.certificate_id
-		  AND r.registration_account_id = $4
+		  AND ca.candidate_account_id = $4
 		  AND d.certificate_delivery_status = 'requested'
 		  AND d.certificate_delivery_is_deleted = FALSE
 		RETURNING d.certificate_delivery_id, d.certificate_delivery_certificate_id,

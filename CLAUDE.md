@@ -221,6 +221,9 @@ For any new feature touching `exam_seats`, `exam_registrations`, or `payments` t
 - `updated_at` is maintained by the shared `fn_touch_updated_at()` trigger
 - All column names are prefixed with the table name (e.g., `account_username`, `exam_seat_status`)
 - **All queries must include `AND <table>_is_deleted = FALSE`** when soft-delete applies — omitting this leaks deleted records
+- **Raw SQL & PostgreSQL clause rules**:
+  - In `INSERT INTO ... RETURNING` and `UPDATE ... RETURNING`, PostgreSQL disallows references to table aliases in `RETURNING` unless the target table is explicitly aliased in the statement (`INSERT INTO table AS t ...` or `UPDATE table t ...`). Always ensure target table alias matches or use unaliased bare column names in `RETURNING` to prevent `missing FROM-clause entry for table "<alias>"` errors.
+  - Table name integrity: The registration table is strictly named `exam_registrations` (never `registrations`). Relations follow: `certificates` → `exam_results` (`exam_result_exam_registration_id`) → `exam_registrations` (`exam_registration_candidate_id`) → `candidates` (`candidate_account_id`).
 - Payment reconciliation stores the gateway-reported amount in nullable `payment_amount_received`; webhook underpayment uses `partial_paid` and overpayment uses `amount_mismatch` without confirming the registration.
 - Migrations are managed by `golang-migrate` using `*.<up/down>.sql` files
 
@@ -928,7 +931,11 @@ publish requires ≥ 1 valid child session; unpublish from `registration_open` i
 allowed only with 0 registrations; reschedule is allowed for `published`/
 `registration_open`/`registration_closed`; delete is `draft`-only.
 
-Session-level rules: `publish`/`schedule_publish` only from `draft`/`scheduled`;
+Session-level rules: `publish`/`schedule_publish` only from `draft`/`scheduled`
+**and only when the parent period is not in `draft`** (parent must be `published`,
+`registration_open`, or `registration_closed`; if the parent period is `draft`,
+`publish` and `schedule_publish` are omitted from `available_actions` and denied with
+409 "Đợt thi đang ở trạng thái nháp; phải công bố đợt thi trước khi công khai ca thi");
 `unpublish` from `scheduled`, or from `open` with 0 registrations;
 `reopen_registration` from `closed` only when the parent period is effectively
 `registration_open`, the exam day has not passed, and `closed_reason` is
@@ -1326,6 +1333,7 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 - `scheduled` bắt buộc có `exam_session_publish_at` là thời điểm trong tương lai.
 - Worker nền của module `exam` chỉ đồng bộ cột trạng thái đã lưu để hiển thị (`SyncStoredStatuses`): `scheduled` đến hạn (và đợt cha đang mở đăng ký) → `open` + `exam_session_publish_at = NULL`.
 - `closed` là trạng thái duy nhất cho cả “đã đóng” và “đã hết hạn”; FE phân biệt bằng `closed_reason` (`manual`, `full`, `deadline`, `period_closed`) và ẩn/hiện nút hành động theo `available_actions`.
+- `available_actions` đồng bộ chặt chẽ với trạng thái đợt thi cha: khi đợt thi cha mang trạng thái `draft` (hoặc `cancelled`, `completed`), backend tự động loại bỏ `publish` và `schedule_publish` khỏi `available_actions` của ca thi con, ngăn FE hiển thị các nút thao tác không hợp lệ.
 - Mọi hành động không hợp lệ trả HTTP 409 kèm `code: "INVALID_STATE_TRANSITION"` và `msg` giải thích lý do bằng tiếng Việt.
 - `exam_session_check_in_at` là thời điểm có mặt dạng RFC 3339 và có thể để trống.
 - API `exam` không còn endpoint hoặc field response về phòng máy; dữ liệu `exam_rooms` và khóa DB cũ chỉ được giữ nội bộ để tương thích registration.
