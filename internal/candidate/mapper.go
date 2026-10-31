@@ -1,9 +1,39 @@
 package candidate
 
 import (
+	"strings"
+
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/entities"
 )
+
+// MaskPII masks a sensitive identifier (CCCD, Passport, or Phone number) in accordance
+// with Decree 13/2023/ND-CP, preserving at most the first 3 and last 3 characters (e.g., "040***060").
+func MaskPII(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	n := len(runes)
+	if n > 6 {
+		return string(runes[:3]) + "***" + string(runes[n-3:])
+	}
+	if n > 2 {
+		return string(runes[:1]) + "***" + string(runes[n-1:])
+	}
+	return "***"
+}
+
+// MaskDocumentNumber masks a Citizen ID (CCCD) or Passport number for list endpoints (e.g., "040***060").
+func MaskDocumentNumber(docNumber string) string {
+	return MaskPII(docNumber)
+}
+
+// MaskPhoneNumber masks a phone number for list endpoints (e.g., "090***567").
+func MaskPhoneNumber(phone string) string {
+	return MaskPII(phone)
+}
 
 // ToCandidateResponseDTO maps a CandidateEntity to its public DTO.
 func ToCandidateResponseDTO(e entities.CandidateEntity) response.CandidateResponseDTO {
@@ -53,6 +83,13 @@ func ToAdminDocumentResponseDTO(e entities.CandidateDocumentEntity) response.Adm
 		WardID:             e.CandidateDocumentWardID, ProvinceID: e.CandidateDocumentProvinceID,
 		AddressDetail: e.CandidateDocumentAddressDetail,
 	}
+}
+
+// ToAdminMaskedDocumentResponseDTO maps a CandidateDocumentEntity for list endpoints with DocNumber masked (Decree 13/2023).
+func ToAdminMaskedDocumentResponseDTO(e entities.CandidateDocumentEntity) response.AdminDocumentResponseDTO {
+	dto := ToAdminDocumentResponseDTO(e)
+	dto.DocNumber = MaskDocumentNumber(dto.DocNumber)
+	return dto
 }
 
 // ToDocumentResponseDTO maps a CandidateDocumentEntity to its public DTO.

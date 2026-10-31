@@ -4,15 +4,16 @@ package enum
 type AccountStatus string
 
 const (
-	AccountStatusActive  AccountStatus = "active"
-	AccountStatusLocked  AccountStatus = "locked"
-	AccountStatusPending AccountStatus = "pending"
+	AccountStatusActive   AccountStatus = "active"
+	AccountStatusLocked   AccountStatus = "locked"
+	AccountStatusPending  AccountStatus = "pending"
+	AccountStatusDisabled AccountStatus = "disabled"
 )
 
 // Valid reports whether s is a recognised AccountStatus.
 func (s AccountStatus) Valid() bool {
 	switch s {
-	case AccountStatusActive, AccountStatusLocked, AccountStatusPending:
+	case AccountStatusActive, AccountStatusLocked, AccountStatusPending, AccountStatusDisabled:
 		return true
 	}
 	return false

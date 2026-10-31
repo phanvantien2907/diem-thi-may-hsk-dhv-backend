@@ -28,16 +28,20 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	adminG := r.Group("/admin")
 	adminG.Use(auth, admin)
 	{
-		// /admin/candidates/duplicates and clear-cache must be registered before /admin/candidates/:id
-		// to prevent Gin from treating "duplicates" or "clear-cache" as an :id param.
+		// /admin/candidates/duplicates, merge, and clear-cache must be registered before /admin/candidates/:id
+		// to prevent Gin from treating static segments as an :id param.
 		adminG.GET("/candidates/duplicates", h.AdminListDuplicates)
+		adminG.POST("/candidates/merge", h.AdminMergeCandidates)
 		adminG.GET("/candidates/metrics", h.AdminCandidateMetrics)
 		adminG.GET("/candidates/export", h.AdminExportCandidates)
 		adminG.POST("/candidates/clear-cache", h.AdminClearCache)
 		adminG.GET("/candidates", h.AdminListCandidates)
 		adminG.GET("/candidates/:id", h.AdminGetCandidate)
+		adminG.DELETE("/candidates/:id/lock", h.AdminReleaseCandidateLock)
 		adminG.POST("/candidates/:id/approve", h.AdminApproveDocument)
 		adminG.POST("/candidates/:id/reject", h.AdminRejectDocument)
+		adminG.POST("/candidates/:id/revoke-approval", h.AdminRevokeApproval)
+		adminG.POST("/candidates/:id/reopen-review", h.AdminReopenReview)
 		adminG.GET("/exam-sessions/:id/roster", h.AdminGetRoster)
 	}
 }

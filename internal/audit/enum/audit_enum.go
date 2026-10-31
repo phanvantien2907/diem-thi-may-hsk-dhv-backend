@@ -20,6 +20,12 @@ const (
 	AuditActionRecheck              AuditAction = "RECHECK"
 	AuditActionCancelSuccessPayment AuditAction = "CANCEL_SUCCESS_PAYMENT"
 	AuditActionDuplicate            AuditAction = "DUPLICATE"
+	AuditActionRevokeApproval       AuditAction = "REVOKE_APPROVAL"
+	AuditActionReopenReview         AuditAction = "REOPEN_REVIEW"
+	AuditActionMerge                AuditAction = "MERGE"
+	AuditActionViewPII              AuditAction = "VIEW_PII"
+	AuditActionDeactivateAccount    AuditAction = "DEACTIVATE_ACCOUNT"
+	AuditActionReactivateAccount    AuditAction = "REACTIVATE_ACCOUNT"
 )
 
 // Valid reports whether a is a recognised AuditAction.
@@ -30,7 +36,9 @@ func (a AuditAction) Valid() bool {
 		AuditActionLogin, AuditActionLogout, AuditActionPasswordChange,
 		AuditActionPayment, AuditActionRefund, AuditActionExport,
 		AuditActionApprove, AuditActionReject, AuditActionRecheck,
-		AuditActionCancelSuccessPayment, AuditActionDuplicate:
+		AuditActionCancelSuccessPayment, AuditActionDuplicate,
+		AuditActionRevokeApproval, AuditActionReopenReview, AuditActionMerge,
+		AuditActionViewPII, AuditActionDeactivateAccount, AuditActionReactivateAccount:
 		return true
 	}
 	return false

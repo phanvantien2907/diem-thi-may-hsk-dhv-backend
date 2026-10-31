@@ -351,12 +351,32 @@ func (h *Handler) AdminGetCandidate(c *gin.Context) {
 		utils.BadRequest(c, "ID không hợp lệ")
 		return
 	}
-	cand, err := h.svc.AdminGetCandidate(c.Request.Context(), id)
+	var adminID int64
+	if raw, exists := c.Get("user_id"); exists {
+		if v, ok := raw.(int64); ok {
+			adminID = v
+		}
+	}
+	cand, err := h.svc.AdminGetCandidate(c.Request.Context(), id, adminID)
 	if err != nil {
 		utils.NotFound(c, err.Error())
 		return
 	}
 	utils.OK(c, cand)
+}
+
+// AdminReleaseCandidateLock DELETE /admin/candidates/:id/lock
+func (h *Handler) AdminReleaseCandidateLock(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID không hợp lệ")
+		return
+	}
+	if err := h.svc.AdminReleaseCandidateLock(c.Request.Context(), id, utils.MustAccountID(c)); err != nil {
+		utils.Conflict(c, err.Error())
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã giải phóng khóa xem hồ sơ"})
 }
 
 // AdminApproveDocument POST /admin/candidates/:id/approve
@@ -407,6 +427,78 @@ func (h *Handler) AdminRejectDocument(c *gin.Context) {
 		return
 	}
 	utils.OK(c, gin.H{"message": "Hồ sơ đã bị từ chối"})
+}
+
+// AdminRevokeApproval POST /admin/candidates/:id/revoke-approval
+func (h *Handler) AdminRevokeApproval(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID không hợp lệ")
+		return
+	}
+	var req request.AdminRevokeApprovalRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.AdminRevokeApproval(c.Request.Context(), utils.MustAccountID(c), id, req); err != nil {
+		utils.Conflict(c, err.Error())
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã thu hồi phê duyệt hồ sơ"})
+}
+
+// AdminReopenReview POST /admin/candidates/:id/reopen-review
+func (h *Handler) AdminReopenReview(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID không hợp lệ")
+		return
+	}
+	var req request.AdminReopenReviewRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.AdminReopenReview(c.Request.Context(), utils.MustAccountID(c), id, req); err != nil {
+		utils.Conflict(c, err.Error())
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã mở lại xét duyệt hồ sơ"})
+}
+
+// AdminMergeCandidates POST /admin/candidates/merge
+func (h *Handler) AdminMergeCandidates(c *gin.Context) {
+	var req request.AdminMergeCandidatesRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	res, err := h.svc.AdminMergeCandidates(c.Request.Context(), utils.MustAccountID(c), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidMergeTargets):
+			utils.BadRequest(c, err.Error())
+		case errors.Is(err, ErrCandidateNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			utils.Conflict(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, res)
 }
 
 // AdminGetRoster GET /admin/exam-sessions/:id/roster

@@ -254,6 +254,8 @@ All API routes are mounted under `/api/v1`.
 | auth | GET | `/me/sessions` | JWT |
 | auth | DELETE | `/me/sessions/:id` | JWT |
 | auth | DELETE | `/admin/delete-account/:id` | JWT + admin |
+| auth | POST | `/admin/accounts/:id/deactivate` | JWT + admin |
+| auth | POST | `/admin/accounts/:id/reactivate` | JWT + admin |
 | auth | POST | `/admin/staff-accounts` | JWT + admin |
 | candidate | POST | `/me/candidate-profile` | JWT |
 | candidate | GET | `/me/candidate-profile` | JWT |
@@ -262,13 +264,19 @@ All API routes are mounted under `/api/v1`.
 | candidate | GET | `/me/candidate-profile/documents` | JWT |
 | candidate | GET | `/me/candidate-profile/upload-signature` | JWT |
 | candidate | POST | `/me/candidate-profile/validate-portrait` | JWT |
+| candidate | POST | `/me/candidate-profile/clear-cache` | JWT |
 | candidate | GET | `/admin/candidates` | JWT + admin |
 | candidate | GET | `/admin/candidates/metrics` | JWT + admin |
 | candidate | GET | `/admin/candidates/export` | JWT + admin |
 | candidate | GET | `/admin/candidates/duplicates` | JWT + admin |
+| candidate | POST | `/admin/candidates/merge` | JWT + admin |
+| candidate | POST | `/admin/candidates/clear-cache` | JWT + admin |
 | candidate | GET | `/admin/candidates/:id` | JWT + admin |
+| candidate | DELETE | `/admin/candidates/:id/lock` | JWT + admin |
 | candidate | POST | `/admin/candidates/:id/approve` | JWT + admin |
 | candidate | POST | `/admin/candidates/:id/reject` | JWT + admin |
+| candidate | POST | `/admin/candidates/:id/revoke-approval` | JWT + admin |
+| candidate | POST | `/admin/candidates/:id/reopen-review` | JWT + admin |
 | candidate | GET | `/admin/exam-sessions/:id/roster` | JWT + admin |
 | exam | GET | `/exam-types` | public |
 | exam | GET | `/exam-sessions` | public |

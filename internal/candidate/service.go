@@ -11,6 +11,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-pdf/fpdf"
@@ -22,13 +23,18 @@ import (
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/entities"
 	"github.com/hskvinh/backend/internal/candidate/enum"
+	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 	"github.com/lib/pq"
 )
 
 const (
-	cachePrefixCandidateProfile = "hsk:cand:prof:acc:"
-	cachePrefixCandidateDocs    = "hsk:cand:docs:acc:"
+	cachePrefixCandidateProfile  = "hsk:cand:prof:acc:"
+	cachePrefixCandidateDocs     = "hsk:cand:docs:acc:"
+	cachePrefixCandidateSoftLock = "hsk:cand:softlock:"
+	cachePrefixCandidateViewed   = "hsk:cand:viewed:"
+	softLockTTL                  = 5 * time.Minute
+	proofOfViewTTL               = 15 * time.Minute
 )
 
 type adminCandidateExportRow struct {
@@ -110,11 +116,18 @@ type MediaService interface {
 
 // Service handles candidate profiles and documents.
 type Service struct {
-	db        *sql.DB
-	auditSvc  audit.Service
-	mediaSvc  MediaService
-	visionSvc VisionService
-	cacheSvc  *cache.Service
+	db            *sql.DB
+	auditSvc      audit.Service
+	mediaSvc      MediaService
+	visionSvc     VisionService
+	cacheSvc      *cache.Service
+	reviewLocks   sync.Map // map[int64]softLockEntry (in-memory fallback when Redis is disabled)
+	viewedByAdmin sync.Map // map[string]time.Time    (key: "<candidateID>:<adminID>")
+}
+
+type softLockEntry struct {
+	AdminID     int64     `json:"admin_id"`
+	LockedUntil time.Time `json:"locked_until"`
 }
 
 // SetCache injects the Redis cache service.
@@ -180,6 +193,36 @@ var ErrDuplicateDocumentNumber = errors.New("Số giấy tờ này (CCCD/Hộ ch
 
 // ErrCandidateProfileAlreadyExists is returned when attempting to create a profile for an account that already has one.
 var ErrCandidateProfileAlreadyExists = errors.New("Hồ sơ thí sinh cho tài khoản này đã tồn tại")
+
+// ErrCandidateNotFound is returned when a candidate profile cannot be found.
+var ErrCandidateNotFound = errors.New("không tìm thấy hồ sơ")
+
+// ErrDocumentStateConflict is returned when optimistic locking detects a concurrent state change (0 rows affected).
+var ErrDocumentStateConflict = errors.New("không có hồ sơ ở trạng thái hợp lệ hoặc hồ sơ đã được quản trị viên khác xử lý")
+
+// ErrRejectToApproveForbidden is returned when an admin attempts to directly approve a rejected profile without re-opening review.
+var ErrRejectToApproveForbidden = errors.New("hồ sơ đang ở trạng thái từ chối; không thể phê duyệt trực tiếp — thí sinh phải nộp lại hoặc quản trị viên phải mở lại xét duyệt")
+
+// ErrApprovalRequiresDetailInspection is returned when an admin attempts to approve from the list view without opening the detail view first.
+var ErrApprovalRequiresDetailInspection = errors.New("vui lòng mở xem chi tiết hồ sơ và kiểm tra ảnh giấy tờ tùy thân trước khi phê duyệt")
+
+// ErrMissingIdentityPhotos is returned when a candidate document lacks required identity images.
+var ErrMissingIdentityPhotos = errors.New("hồ sơ thiếu ảnh giấy tờ tùy thân hoặc ảnh chân dung bắt buộc")
+
+// ErrDuplicateDocumentBlocker is returned when approving a document whose number collides with another active candidate.
+var ErrDuplicateDocumentBlocker = errors.New("số giấy tờ tùy thân bị trùng với hồ sơ thí sinh khác; vui lòng xử lý gộp hồ sơ trùng lặp trước khi phê duyệt")
+
+// ErrProfileLockedByAnotherAdmin is returned when another admin holds an active 5-minute soft lock on the candidate profile.
+var ErrProfileLockedByAnotherAdmin = errors.New("hồ sơ đang được quản trị viên khác xem và xử lý")
+
+// ErrRevokeBlockedByPaidRegistration is returned when revoking approval for a candidate who has a confirmed (paid) exam registration.
+var ErrRevokeBlockedByPaidRegistration = errors.New("không thể thu hồi phê duyệt vì thí sinh đang có đơn đăng ký thi đã thanh toán; vui lòng chọn phương án hoàn tiền (paid_resolution=refund) nếu muốn tiếp tục")
+
+// ErrInvalidMergeTargets is returned when primary and duplicate candidate IDs are invalid or identical.
+var ErrInvalidMergeTargets = errors.New("ID hồ sơ chính và hồ sơ trùng lặp không hợp lệ hoặc trùng nhau")
+
+// ErrMergeConflictConfirmedSameSession is returned when both candidates have paid registrations in the same exam session.
+var ErrMergeConflictConfirmedSameSession = errors.New("không thể gộp tự động vì cả 2 hồ sơ đều có đơn đăng ký đã thanh toán trong cùng một ca thi")
 
 // PortraitRejectedError is returned when the portrait image violates the photo
 // rules. The upload is blocked and nothing is persisted.
@@ -668,7 +711,7 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 	if req.Limit < 1 || req.Limit > 100 {
 		req.Limit = 20
 	}
-	cacheKey := fmt.Sprintf("hsk:cand:admin:list:%d:%d:%s:%s:%s:%s",
+	cacheKey := fmt.Sprintf("hsk:cand:admin:list:v2:%d:%d:%s:%s:%s:%s",
 		req.Page, req.Limit, req.Status, req.Level, req.ExamDate, req.Search)
 	if s.cacheSvc != nil {
 		var cached struct {
@@ -774,7 +817,8 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 		}
 		dto := ToAdminCandidateResponseDTO(c)
 		if phone.Valid {
-			dto.Phone = &phone.String
+			maskedPhone := MaskPhoneNumber(phone.String)
+			dto.Phone = &maskedPhone
 		}
 		if email.Valid {
 			dto.Email = &email.String
@@ -810,7 +854,7 @@ func (s *Service) AdminListCandidatesFiltered(ctx context.Context, req request.A
 			if rejectionReason.Valid {
 				doc.CandidateDocumentRejectionReason = &rejectionReason.String
 			}
-			docDTO := ToAdminDocumentResponseDTO(doc)
+			docDTO := ToAdminMaskedDocumentResponseDTO(doc)
 			dto.LatestDocument = &docDTO
 		}
 		items = append(items, dto)
@@ -1015,8 +1059,141 @@ func fitPDFText(pdf *fpdf.Fpdf, value string, maxWidth float64) string {
 	return suffix
 }
 
-// AdminGetCandidate returns the full candidate detail including latest document.
-func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (response.AdminCandidateResponseDTO, error) {
+// acquireOrInspectSoftLock acquires or extends a 5-minute soft lock for adminID on candidateID,
+// or returns the existing lock held by another admin.
+func (s *Service) acquireOrInspectSoftLock(ctx context.Context, candidateID, adminID int64) *response.CandidateReviewLockDTO {
+	if adminID <= 0 || candidateID <= 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	lockKey := fmt.Sprintf("%s%d", cachePrefixCandidateSoftLock, candidateID)
+
+	// 1. Check Redis first if enabled
+	if s.cacheSvc != nil && s.cacheSvc.Enabled() {
+		var existing softLockEntry
+		if hit, _ := s.cacheSvc.Get(ctx, lockKey, &existing); hit && existing.LockedUntil.After(now) {
+			if existing.AdminID != adminID {
+				return &response.CandidateReviewLockDTO{
+					LockedByAccountID: existing.AdminID,
+					LockedUntil:       existing.LockedUntil,
+					IsLockedByOther:   true,
+				}
+			}
+		}
+		newEntry := softLockEntry{
+			AdminID:     adminID,
+			LockedUntil: now.Add(softLockTTL),
+		}
+		_ = s.cacheSvc.SetWithJitter(ctx, lockKey, newEntry, softLockTTL, 0.01)
+		s.reviewLocks.Store(candidateID, newEntry)
+		return &response.CandidateReviewLockDTO{
+			LockedByAccountID: adminID,
+			LockedUntil:       newEntry.LockedUntil,
+			IsLockedByOther:   false,
+		}
+	}
+
+	// 2. Fallback to in-memory lock tracker
+	if raw, ok := s.reviewLocks.Load(candidateID); ok {
+		existing := raw.(softLockEntry)
+		if existing.LockedUntil.After(now) && existing.AdminID != adminID {
+			return &response.CandidateReviewLockDTO{
+				LockedByAccountID: existing.AdminID,
+				LockedUntil:       existing.LockedUntil,
+				IsLockedByOther:   true,
+			}
+		}
+	}
+	newEntry := softLockEntry{
+		AdminID:     adminID,
+		LockedUntil: now.Add(softLockTTL),
+	}
+	s.reviewLocks.Store(candidateID, newEntry)
+	return &response.CandidateReviewLockDTO{
+		LockedByAccountID: adminID,
+		LockedUntil:       newEntry.LockedUntil,
+		IsLockedByOther:   false,
+	}
+}
+
+// checkSoftLock verifies that candidateID is not currently soft-locked by another admin.
+func (s *Service) checkSoftLock(ctx context.Context, candidateID, adminID int64) error {
+	if candidateID <= 0 || adminID <= 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	lockKey := fmt.Sprintf("%s%d", cachePrefixCandidateSoftLock, candidateID)
+
+	if s.cacheSvc != nil && s.cacheSvc.Enabled() {
+		var existing softLockEntry
+		if hit, _ := s.cacheSvc.Get(ctx, lockKey, &existing); hit && existing.LockedUntil.After(now) && existing.AdminID != adminID {
+			return ErrProfileLockedByAnotherAdmin
+		}
+	}
+	if raw, ok := s.reviewLocks.Load(candidateID); ok {
+		existing := raw.(softLockEntry)
+		if existing.LockedUntil.After(now) && existing.AdminID != adminID {
+			return ErrProfileLockedByAnotherAdmin
+		}
+	}
+	return nil
+}
+
+// AdminReleaseCandidateLock releases the soft lock on candidateID if held by adminID.
+func (s *Service) AdminReleaseCandidateLock(ctx context.Context, candidateID, adminID int64) error {
+	if err := s.checkSoftLock(ctx, candidateID, adminID); err != nil {
+		return err
+	}
+	lockKey := fmt.Sprintf("%s%d", cachePrefixCandidateSoftLock, candidateID)
+	if s.cacheSvc != nil && s.cacheSvc.Enabled() {
+		_ = s.cacheSvc.Delete(ctx, lockKey)
+	}
+	s.reviewLocks.Delete(candidateID)
+	return nil
+}
+
+// recordProofOfView marks that adminID has opened and inspected the candidate detail and identity photos.
+func (s *Service) recordProofOfView(ctx context.Context, candidateID, adminID int64) {
+	if candidateID <= 0 || adminID <= 0 {
+		return
+	}
+	exp := time.Now().UTC().Add(proofOfViewTTL)
+	viewKey := fmt.Sprintf("%s%d:%d", cachePrefixCandidateViewed, candidateID, adminID)
+	if s.cacheSvc != nil && s.cacheSvc.Enabled() {
+		_ = s.cacheSvc.SetWithJitter(ctx, viewKey, exp, proofOfViewTTL, 0.01)
+	}
+	s.viewedByAdmin.Store(fmt.Sprintf("%d:%d", candidateID, adminID), exp)
+}
+
+// hasAdminViewedCandidate returns true if adminID inspected candidateID within the proof-of-view window.
+func (s *Service) hasAdminViewedCandidate(ctx context.Context, candidateID, adminID int64) bool {
+	if candidateID <= 0 || adminID <= 0 {
+		return false
+	}
+	now := time.Now().UTC()
+	if raw, ok := s.viewedByAdmin.Load(fmt.Sprintf("%d:%d", candidateID, adminID)); ok {
+		if exp, valid := raw.(time.Time); valid && exp.After(now) {
+			return true
+		}
+	}
+	if s.cacheSvc != nil && s.cacheSvc.Enabled() {
+		viewKey := fmt.Sprintf("%s%d:%d", cachePrefixCandidateViewed, candidateID, adminID)
+		var exp time.Time
+		if hit, _ := s.cacheSvc.Get(ctx, viewKey, &exp); hit && exp.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// AdminGetCandidate returns the full unmasked candidate detail including latest document,
+// acquires a 5-minute soft lock, records proof-of-view for approval gatekeeping, and writes a mandatory VIEW_PII audit log (Decree 13/2023).
+func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64, adminID ...int64) (response.AdminCandidateResponseDTO, error) {
+	var actorID int64
+	if len(adminID) > 0 {
+		actorID = adminID[0]
+	}
+
 	var c entities.CandidateEntity
 	var phone, email, examLevel sql.NullString
 	err := s.db.QueryRowContext(ctx, `
@@ -1044,7 +1221,7 @@ func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (res
 		&c.CandidateChineseStudyYears, &phone, &email, &examLevel,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return response.AdminCandidateResponseDTO{}, errors.New("không tìm thấy hồ sơ")
+		return response.AdminCandidateResponseDTO{}, ErrCandidateNotFound
 	}
 	if err != nil {
 		return response.AdminCandidateResponseDTO{}, fmt.Errorf("candidate: admin get: %w", err)
@@ -1062,7 +1239,7 @@ func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (res
 		dto.TargetExamLevel = &examLevel.String
 	}
 
-	// Fetch latest document
+	// Fetch latest document (unmasked for detail view)
 	var d entities.CandidateDocumentEntity
 	err = scanDocument(s.db.QueryRowContext(ctx, `
 		SELECT `+docSelectCols+`
@@ -1079,56 +1256,175 @@ func (s *Service) AdminGetCandidate(ctx context.Context, candidateID int64) (res
 		return response.AdminCandidateResponseDTO{}, fmt.Errorf("candidate: admin get doc: %w", err)
 	}
 
+	if actorID > 0 {
+		dto.ReviewLock = s.acquireOrInspectSoftLock(ctx, candidateID, actorID)
+		if dto.LatestDocument != nil &&
+			strings.TrimSpace(dto.LatestDocument.FrontImageURL) != "" &&
+			strings.TrimSpace(dto.LatestDocument.PortraitImageURL) != "" {
+			s.recordProofOfView(ctx, candidateID, actorID)
+		}
+
+		// Decree 13/2023 Compliance: Mandatory Audit Trail for every unmasked PII access
+		if s.auditSvc != nil {
+			accessedFields := []string{"full_name", "dob", "phone", "email"}
+			if dto.LatestDocument != nil {
+				accessedFields = append(accessedFields, "doc_number", "front_image_url", "back_image_url", "portrait_image_url")
+			}
+			newVal, _ := json.Marshal(map[string]any{
+				"accessed_fields": accessedFields,
+			})
+			_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+				ActorAccountID: &actorID,
+				Action:         auditenum.AuditActionViewPII.String(),
+				EntityTable:    auditenum.AuditEntityCandidate.String(),
+				EntityID:       candidateID,
+				NewValue:       newVal,
+			})
+		}
+	}
+
 	return dto, nil
 }
 
 // AdminApproveDocument sets the latest pending document status to 'verified'.
+// Enforces:
+//  1. 5-minute Soft-Lock ownership check (prevents concurrent admin collisions).
+//  2. Approval Gatekeeping (Proof-of-View: admin must have inspected the detail view and photos first).
+//  3. Strict State Machine (only 'pending' -> 'verified'; 'rejected' -> 'verified' is forbidden).
+//  4. Hard-Blocker Duplicate ID Validation (fails with 409 if another active candidate holds the same document number).
+//  5. Conditional Optimistic Locking (WHERE id = $1 AND status = 'pending').
 func (s *Service) AdminApproveDocument(ctx context.Context, adminID, candidateID int64) error {
+	if err := s.checkSoftLock(ctx, candidateID, adminID); err != nil {
+		return err
+	}
+	if !s.hasAdminViewedCandidate(ctx, candidateID, adminID) {
+		return ErrApprovalRequiresDetailInspection
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("candidate: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// 1. Lock and inspect the latest active document
+	var (
+		docID       int64
+		docType     string
+		docNumber   string
+		frontURL    string
+		backURL     sql.NullString
+		portraitURL string
+		status      string
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT candidate_document_id,
+		       candidate_document_type,
+		       candidate_document_number,
+		       candidate_document_front_image_url,
+		       candidate_document_back_image_url,
+		       candidate_document_portrait_image_url,
+		       candidate_document_verification_status
+		FROM candidate_documents
+		WHERE candidate_document_candidate_id = $1
+		  AND candidate_document_is_deleted = FALSE
+		ORDER BY candidate_document_created_at DESC, candidate_document_id DESC
+		LIMIT 1
+		FOR UPDATE`,
+		candidateID,
+	).Scan(&docID, &docType, &docNumber, &frontURL, &backURL, &portraitURL, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDocumentStateConflict
+	}
+	if err != nil {
+		return fmt.Errorf("candidate: lock document for approve: %w", err)
+	}
+
+	if status == string(enum.DocVerificationRejected) {
+		return ErrRejectToApproveForbidden
+	}
+	if status != string(enum.DocVerificationPending) {
+		return ErrDocumentStateConflict
+	}
+	if strings.TrimSpace(frontURL) == "" || strings.TrimSpace(portraitURL) == "" {
+		return ErrMissingIdentityPhotos
+	}
+
+	// 2. Hard-Blocker Duplicate ID Validation (Step 3)
+	var hasDuplicate bool
+	err = tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM candidate_documents cd
+			JOIN candidates c ON c.candidate_id = cd.candidate_document_candidate_id
+			WHERE cd.candidate_document_number = $1
+			  AND cd.candidate_document_candidate_id <> $2
+			  AND cd.candidate_document_is_deleted = FALSE
+			  AND c.candidate_is_deleted = FALSE
+			UNION ALL
+			SELECT 1
+			FROM accounts a
+			JOIN candidates c ON c.candidate_account_id = a.account_id
+			WHERE a.account_username = $1
+			  AND c.candidate_id <> $2
+			  AND a.account_is_deleted = FALSE
+			  AND c.candidate_is_deleted = FALSE
+		)`,
+		docNumber, candidateID,
+	).Scan(&hasDuplicate)
+	if err != nil {
+		return fmt.Errorf("candidate: check duplicate before approve: %w", err)
+	}
+	if hasDuplicate {
+		return ErrDuplicateDocumentBlocker
+	}
+
+	// 3. Optimistic Lock Conditional Update
 	res, err := tx.ExecContext(ctx, `
 		UPDATE candidate_documents
 		SET candidate_document_verification_status = 'verified',
 		    candidate_document_rejection_reason    = NULL
-		WHERE candidate_document_candidate_id = $1
+		WHERE candidate_document_id = $1
+		  AND candidate_document_candidate_id = $2
 		  AND candidate_document_is_deleted   = FALSE
-		  AND candidate_document_verification_status = 'pending'
-		  AND candidate_document_id = (
-		      SELECT candidate_document_id FROM candidate_documents
-		      WHERE candidate_document_candidate_id = $1
-		        AND candidate_document_is_deleted = FALSE
-		      ORDER BY candidate_document_created_at DESC
-		      LIMIT 1
-		  )`,
-		candidateID,
+		  AND candidate_document_verification_status = 'pending'`,
+		docID, candidateID,
 	)
 	if err != nil {
 		return fmt.Errorf("candidate: approve document: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("không có hồ sơ đang chờ duyệt hoặc đã được xử lý")
+		return ErrDocumentStateConflict
 	}
 
-	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &adminID,
-		Action:         auditenum.AuditActionApprove.String(),
-		EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
-		EntityID:       candidateID,
-	})
+	if s.auditSvc != nil {
+		newVal, _ := json.Marshal(map[string]any{
+			"document_id":         docID,
+			"verification_status": "verified",
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionApprove.String(),
+			EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+			EntityID:       candidateID,
+			NewValue:       newVal,
+		})
+	}
 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
 	return nil
 }
 
 // AdminRejectDocument sets the latest pending document status to 'rejected' with a reason.
 func (s *Service) AdminRejectDocument(ctx context.Context, adminID, candidateID int64, req request.AdminRejectDocumentRequestDTO) error {
+	if err := s.checkSoftLock(ctx, candidateID, adminID); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("candidate: begin tx: %w", err)
@@ -1146,7 +1442,7 @@ func (s *Service) AdminRejectDocument(ctx context.Context, adminID, candidateID 
 		      SELECT candidate_document_id FROM candidate_documents
 		      WHERE candidate_document_candidate_id = $1
 		        AND candidate_document_is_deleted = FALSE
-		      ORDER BY candidate_document_created_at DESC
+		      ORDER BY candidate_document_created_at DESC, candidate_document_id DESC
 		      LIMIT 1
 		  )`,
 		candidateID, req.Reason,
@@ -1155,23 +1451,313 @@ func (s *Service) AdminRejectDocument(ctx context.Context, adminID, candidateID 
 		return fmt.Errorf("candidate: reject document: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("không có hồ sơ đang chờ duyệt hoặc đã được xử lý")
+		return ErrDocumentStateConflict
 	}
 
-	newVal, _ := json.Marshal(map[string]any{"reason": req.Reason})
-	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &adminID,
-		Action:         auditenum.AuditActionReject.String(),
-		EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
-		EntityID:       candidateID,
-		NewValue:       newVal,
-	})
+	if s.auditSvc != nil {
+		newVal, _ := json.Marshal(map[string]any{"reason": req.Reason})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionReject.String(),
+			EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+			EntityID:       candidateID,
+			NewValue:       newVal,
+		})
+	}
 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
 	return nil
+}
+
+// AdminRevokeApproval revokes a previously verified candidate profile ('verified' -> 'rejected')
+// and cascades to active exam registrations so no unpaid or paid seats are left orphaned.
+func (s *Service) AdminRevokeApproval(ctx context.Context, adminID, candidateID int64, req request.AdminRevokeApprovalRequestDTO) error {
+	if err := s.checkSoftLock(ctx, candidateID, adminID); err != nil {
+		return err
+	}
+	paidResolution := strings.TrimSpace(req.PaidResolution)
+	if paidResolution == "" {
+		paidResolution = "block"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("candidate: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Optimistic Lock: only transition 'verified' -> 'rejected'
+	res, err := tx.ExecContext(ctx, `
+		UPDATE candidate_documents
+		SET candidate_document_verification_status = 'rejected',
+		    candidate_document_rejection_reason    = $2
+		WHERE candidate_document_candidate_id = $1
+		  AND candidate_document_is_deleted   = FALSE
+		  AND candidate_document_verification_status = 'verified'
+		  AND candidate_document_id = (
+		      SELECT candidate_document_id FROM candidate_documents
+		      WHERE candidate_document_candidate_id = $1
+		        AND candidate_document_is_deleted = FALSE
+		      ORDER BY candidate_document_created_at DESC, candidate_document_id DESC
+		      LIMIT 1
+		  )`,
+		candidateID, req.Reason,
+	)
+	if err != nil {
+		return fmt.Errorf("candidate: revoke approval update: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDocumentStateConflict
+	}
+
+	// 2. Inspect and cascade active registrations (holding unpaid/paid seats)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT er.exam_registration_id, er.exam_registration_exam_seat_id, er.exam_registration_status
+		FROM exam_registrations er
+		JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+		WHERE er.exam_registration_candidate_id = $1
+		  AND er.exam_registration_status IN ('pending_payment', 'confirmed')
+		  AND er.exam_registration_is_deleted = FALSE
+		  AND es.exam_session_status NOT IN ('completed', 'cancelled')
+		ORDER BY er.exam_registration_id ASC
+		FOR UPDATE OF er`,
+		candidateID,
+	)
+	if err != nil {
+		return fmt.Errorf("candidate: query active registrations on revoke: %w", err)
+	}
+
+	type activeReg struct {
+		regID  int64
+		seatID int64
+		status string
+	}
+	var activeRegs []activeReg
+	for rows.Next() {
+		var ar activeReg
+		if err := rows.Scan(&ar.regID, &ar.seatID, &ar.status); err != nil {
+			rows.Close()
+			return fmt.Errorf("candidate: scan active registration: %w", err)
+		}
+		activeRegs = append(activeRegs, ar)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("candidate: active registrations rows: %w", err)
+	}
+	rows.Close()
+
+	var cancelledUnpaidIDs []int64
+	var refundedPaidIDs []int64
+
+	for _, ar := range activeRegs {
+		if ar.status == "confirmed" && paidResolution != "refund" {
+			return ErrRevokeBlockedByPaidRegistration
+		}
+	}
+
+	note := "Thu hồi phê duyệt hồ sơ: " + req.Reason
+	for _, ar := range activeRegs {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE exam_registrations
+			SET exam_registration_status = 'cancelled',
+			    exam_registration_updated_at = NOW()
+			WHERE exam_registration_id = $1`,
+			ar.regID,
+		); err != nil {
+			return fmt.Errorf("candidate: cancel registration %d: %w", ar.regID, err)
+		}
+
+		if ar.status == "pending_payment" {
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE payments
+				SET payment_status = 'cancelled',
+				    payment_admin_note = $2,
+				    payment_updated_at = NOW()
+				WHERE payment_exam_registration_id = $1
+				  AND payment_status = 'pending'
+				  AND payment_is_deleted = FALSE`,
+				ar.regID, note,
+			)
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE exam_seats
+				SET exam_seat_status = 'available',
+				    exam_seat_held_until = NULL,
+				    exam_seat_updated_at = NOW()
+				WHERE exam_seat_id = $1
+				  AND exam_seat_status = 'held'`,
+				ar.seatID,
+			)
+			cancelledUnpaidIDs = append(cancelledUnpaidIDs, ar.regID)
+		} else if ar.status == "confirmed" {
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE payments
+				SET payment_status = 'pending_refund',
+				    payment_refund_reason = $2,
+				    payment_updated_at = NOW()
+				WHERE payment_exam_registration_id = $1
+				  AND payment_status = 'success'
+				  AND payment_is_deleted = FALSE`,
+				ar.regID, note,
+			)
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE exam_seats
+				SET exam_seat_status = 'available',
+				    exam_seat_held_until = NULL,
+				    exam_seat_updated_at = NOW()
+				WHERE exam_seat_id = $1
+				  AND exam_seat_status IN ('booked', 'held')`,
+				ar.seatID,
+			)
+			refundedPaidIDs = append(refundedPaidIDs, ar.regID)
+		}
+	}
+
+	if s.auditSvc != nil {
+		oldVal, _ := json.Marshal(map[string]any{"verification_status": "verified"})
+		newVal, _ := json.Marshal(map[string]any{
+			"verification_status":               "rejected",
+			"reason":                            req.Reason,
+			"paid_resolution":                   paidResolution,
+			"cancelled_unpaid_registration_ids": cancelledUnpaidIDs,
+			"refunded_paid_registration_ids":    refundedPaidIDs,
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionRevokeApproval.String(),
+			EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+			EntityID:       candidateID,
+			OldValue:       oldVal,
+			NewValue:       newVal,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
+	s.invalidateCandidateDocs(ctx, candidateID)
+	return nil
+}
+
+// AdminReopenReview transitions a rejected candidate profile back to 'pending' ("Mở lại xét duyệt"),
+// requiring an explicit reason and writing to the audit log.
+func (s *Service) AdminReopenReview(ctx context.Context, adminID, candidateID int64, req request.AdminReopenReviewRequestDTO) error {
+	if err := s.checkSoftLock(ctx, candidateID, adminID); err != nil {
+		return err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("candidate: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE candidate_documents
+		SET candidate_document_verification_status = 'pending',
+		    candidate_document_rejection_reason    = NULL
+		WHERE candidate_document_candidate_id = $1
+		  AND candidate_document_is_deleted   = FALSE
+		  AND candidate_document_verification_status = 'rejected'
+		  AND candidate_document_id = (
+		      SELECT candidate_document_id FROM candidate_documents
+		      WHERE candidate_document_candidate_id = $1
+		        AND candidate_document_is_deleted = FALSE
+		      ORDER BY candidate_document_created_at DESC, candidate_document_id DESC
+		      LIMIT 1
+		  )`,
+		candidateID,
+	)
+	if err != nil {
+		return fmt.Errorf("candidate: reopen review update: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDocumentStateConflict
+	}
+
+	if s.auditSvc != nil {
+		oldVal, _ := json.Marshal(map[string]any{"verification_status": "rejected"})
+		newVal, _ := json.Marshal(map[string]any{
+			"verification_status": "pending",
+			"reason":              req.Reason,
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionReopenReview.String(),
+			EntityTable:    auditenum.AuditEntityCandidateDocument.String(),
+			EntityID:       candidateID,
+			OldValue:       oldVal,
+			NewValue:       newVal,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
+	s.invalidateCandidateDocs(ctx, candidateID)
+	return nil
+}
+
+// AdminMergeCandidates invokes fn_merge_candidate_profiles to atomically merge a duplicate candidate
+// into a primary candidate profile.
+func (s *Service) AdminMergeCandidates(ctx context.Context, adminID int64, req request.AdminMergeCandidatesRequestDTO) (response.AdminMergeCandidatesResponseDTO, error) {
+	if req.PrimaryCandidateID <= 0 || req.DuplicateCandidateID <= 0 || req.PrimaryCandidateID == req.DuplicateCandidateID {
+		return response.AdminMergeCandidatesResponseDTO{}, ErrInvalidMergeTargets
+	}
+	if err := s.checkSoftLock(ctx, req.PrimaryCandidateID, adminID); err != nil {
+		return response.AdminMergeCandidatesResponseDTO{}, err
+	}
+	if err := s.checkSoftLock(ctx, req.DuplicateCandidateID, adminID); err != nil {
+		return response.AdminMergeCandidatesResponseDTO{}, err
+	}
+
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "Gộp hồ sơ thí sinh trùng lặp"
+	}
+
+	var rawJSON []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT fn_merge_candidate_profiles($1, $2, $3, $4)`,
+		req.PrimaryCandidateID, req.DuplicateCandidateID, adminID, reason,
+	).Scan(&rawJSON)
+	if err != nil {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "INVALID_MERGE_TARGETS"):
+			return response.AdminMergeCandidatesResponseDTO{}, ErrInvalidMergeTargets
+		case strings.Contains(msg, "PRIMARY_CANDIDATE_NOT_FOUND"),
+			strings.Contains(msg, "DUPLICATE_CANDIDATE_NOT_FOUND"),
+			strings.Contains(msg, "CANDIDATE_NOT_FOUND"):
+			return response.AdminMergeCandidatesResponseDTO{}, ErrCandidateNotFound
+		case strings.Contains(msg, "MERGE_CONFLICT_BOTH_CONFIRMED_SAME_SESSION"):
+			return response.AdminMergeCandidatesResponseDTO{}, ErrMergeConflictConfirmedSameSession
+		default:
+			return response.AdminMergeCandidatesResponseDTO{}, fmt.Errorf("candidate: merge profiles: %w", err)
+		}
+	}
+
+	var result response.AdminMergeCandidatesResponseDTO
+	if err := json.Unmarshal(rawJSON, &result); err != nil {
+		return response.AdminMergeCandidatesResponseDTO{}, fmt.Errorf("candidate: unmarshal merge result: %w", err)
+	}
+
+	// Revoke active JWT tokens of the merged duplicate account in memory and Redis
+	if result.DuplicateAccountID > 0 {
+		middleware.RevokeAccountTokens(ctx, result.DuplicateAccountID, 24*time.Hour)
+	}
+
+	_ = s.AdminReleaseCandidateLock(ctx, req.PrimaryCandidateID, adminID)
+	_ = s.AdminReleaseCandidateLock(ctx, req.DuplicateCandidateID, adminID)
+	s.InvalidateCandidateCache(ctx, req.PrimaryCandidateID)
+	s.InvalidateCandidateCache(ctx, req.DuplicateCandidateID)
+	return result, nil
 }
 
 // AdminListDuplicates returns groups of candidates sharing the same active document number.

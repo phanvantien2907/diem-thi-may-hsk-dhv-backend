@@ -21,6 +21,8 @@ import (
 	"github.com/hskvinh/backend/internal/auth/dto/request"
 	"github.com/hskvinh/backend/internal/auth/dto/response"
 	"github.com/hskvinh/backend/internal/auth/entities"
+	"github.com/hskvinh/backend/internal/auth/enum"
+	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/ws"
 
 	"github.com/hskvinh/backend/internal/utils"
@@ -36,6 +38,21 @@ var ErrDuplicateCCCD = errors.New("Số CMND/CCCD này đã được đăng ký 
 
 // ErrDuplicateEmail is returned when the email is already registered to an account.
 var ErrDuplicateEmail = errors.New("Địa chỉ email này đã được sử dụng bởi một tài khoản khác")
+
+// ErrAccountDisabled is returned when attempting to authenticate or use a deactivated account.
+var ErrAccountDisabled = errors.New("tài khoản đã bị vô hiệu hóa")
+
+// ErrAccountNotFound is returned when the target account does not exist.
+var ErrAccountNotFound = errors.New("không tìm thấy tài khoản")
+
+// ErrDeactivationConfirmationMismatch is returned when deactivation confirmation fields do not match the account.
+var ErrDeactivationConfirmationMismatch = errors.New("thông tin xác nhận vô hiệu hóa tài khoản không khớp (ID hoặc họ tên/CCCD/email)")
+
+// ErrDeactivationBlockedByPaidRegistration is returned when deactivating an account that holds a paid exam registration.
+var ErrDeactivationBlockedByPaidRegistration = errors.New("không thể vô hiệu hóa tài khoản vì thí sinh đang có đơn đăng ký thi đã thanh toán; vui lòng chọn phương án hoàn tiền (paid_resolution=refund) nếu muốn tiếp tục")
+
+// ErrInvalidPassword is returned when password confirmation fails.
+var ErrInvalidPassword = errors.New("mật khẩu xác nhận không chính xác")
 
 // Service handles account management and JWT issuance.
 type Service struct {
@@ -197,6 +214,10 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: login query: %w", err)
 	}
 
+	if e.AccountStatus == enum.AccountStatusDisabled {
+		return response.TokenPairResponseDTO{}, ErrAccountDisabled
+	}
+
 	// Check lockout
 	if e.AccountLockedUntil != nil && time.Now().Before(*e.AccountLockedUntil) {
 		remaining := time.Until(*e.AccountLockedUntil).Round(time.Second)
@@ -296,11 +317,14 @@ func (s *Service) RefreshToken(ctx context.Context, req request.RefreshTokenRequ
 	var sessionID, accountID int64
 	var expiresAt time.Time
 	err := s.db.QueryRowContext(ctx, `
-		SELECT auth_session_id, auth_session_account_id, auth_session_expires_at
-		FROM auth_sessions
-		WHERE auth_session_refresh_token_hash = $1
-		  AND auth_session_revoked_at IS NULL
-		  AND auth_session_expires_at > NOW()`,
+		SELECT s.auth_session_id, s.auth_session_account_id, s.auth_session_expires_at
+		FROM auth_sessions s
+		JOIN accounts a ON a.account_id = s.auth_session_account_id
+		WHERE s.auth_session_refresh_token_hash = $1
+		  AND s.auth_session_revoked_at IS NULL
+		  AND s.auth_session_expires_at > NOW()
+		  AND a.account_is_deleted = FALSE
+		  AND a.account_status != 'disabled'`,
 		refreshHash,
 	).Scan(&sessionID, &accountID, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -643,36 +667,341 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	return ToAccountResponseDTO(e), nil
 }
 
-// SoftDeleteAccountMe soft-deletes the caller's own account.
-func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64) error {
+func matchesConfirmIdentity(confirm string, candidates ...string) bool {
+	trimmed := strings.TrimSpace(confirm)
+	if trimmed == "" {
+		return false
+	}
+	for _, c := range candidates {
+		cTrim := strings.TrimSpace(c)
+		if cTrim != "" && strings.EqualFold(trimmed, cTrim) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) cascadeDeactivateCandidateRegistrations(ctx context.Context, tx *sql.Tx, candidateID int64, paidResolution, note string) ([]int64, []int64, error) {
+	if candidateID <= 0 {
+		return nil, nil, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT er.exam_registration_id, er.exam_registration_exam_seat_id, er.exam_registration_status
+		FROM exam_registrations er
+		JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+		WHERE er.exam_registration_candidate_id = $1
+		  AND er.exam_registration_status IN ('pending_payment', 'confirmed')
+		  AND er.exam_registration_is_deleted = FALSE
+		  AND es.exam_session_status NOT IN ('completed', 'cancelled')
+		ORDER BY er.exam_registration_id ASC
+		FOR UPDATE OF er`,
+		candidateID,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("auth: query active registrations on deactivate: %w", err)
+	}
+
+	type activeReg struct {
+		regID  int64
+		seatID int64
+		status string
+	}
+	var activeRegs []activeReg
+	for rows.Next() {
+		var ar activeReg
+		if err := rows.Scan(&ar.regID, &ar.seatID, &ar.status); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("auth: scan active registration: %w", err)
+		}
+		activeRegs = append(activeRegs, ar)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, fmt.Errorf("auth: active registrations rows: %w", err)
+	}
+	rows.Close()
+
+	for _, ar := range activeRegs {
+		if ar.status == "confirmed" && paidResolution != "refund" {
+			return nil, nil, ErrDeactivationBlockedByPaidRegistration
+		}
+	}
+
+	var cancelledUnpaidIDs []int64
+	var refundedPaidIDs []int64
+
+	for _, ar := range activeRegs {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE exam_registrations
+			SET exam_registration_status = 'cancelled',
+			    exam_registration_updated_at = NOW()
+			WHERE exam_registration_id = $1`,
+			ar.regID,
+		); err != nil {
+			return nil, nil, fmt.Errorf("auth: cancel registration %d: %w", ar.regID, err)
+		}
+
+		if ar.status == "pending_payment" {
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE payments
+				SET payment_status = 'cancelled',
+				    payment_admin_note = $2,
+				    payment_updated_at = NOW()
+				WHERE payment_exam_registration_id = $1
+				  AND payment_status = 'pending'
+				  AND payment_is_deleted = FALSE`,
+				ar.regID, note,
+			)
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE exam_seats
+				SET exam_seat_status = 'available',
+				    exam_seat_held_until = NULL,
+				    exam_seat_updated_at = NOW()
+				WHERE exam_seat_id = $1
+				  AND exam_seat_status = 'held'`,
+				ar.seatID,
+			)
+			cancelledUnpaidIDs = append(cancelledUnpaidIDs, ar.regID)
+		} else if ar.status == "confirmed" {
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE payments
+				SET payment_status = 'pending_refund',
+				    payment_refund_reason = $2,
+				    payment_updated_at = NOW()
+				WHERE payment_exam_registration_id = $1
+				  AND payment_status = 'success'
+				  AND payment_is_deleted = FALSE`,
+				ar.regID, note,
+			)
+			_, _ = tx.ExecContext(ctx, `
+				UPDATE exam_seats
+				SET exam_seat_status = 'available',
+				    exam_seat_held_until = NULL,
+				    exam_seat_updated_at = NOW()
+				WHERE exam_seat_id = $1
+				  AND exam_seat_status IN ('booked', 'held')`,
+				ar.seatID,
+			)
+			refundedPaidIDs = append(refundedPaidIDs, ar.regID)
+		}
+	}
+
+	return cancelledUnpaidIDs, refundedPaidIDs, nil
+}
+
+// SoftDeleteAccountMe deactivates the caller's own account with explicit identity + password confirmation,
+// revokes all active sessions & JWTs, and cascades active unpaid registrations.
+func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64, req ...request.DeactivateMyAccountRequestDTO) error {
+	if len(req) == 0 || strings.TrimSpace(req[0].ConfirmIdentity) == "" || req[0].Password == "" {
+		return ErrDeactivationConfirmationMismatch
+	}
+	payload := req[0]
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("auth: begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	var (
+		username, email, passwordHash string
+		accFullName, candFullName     sql.NullString
+		candidateID                   sql.NullInt64
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT a.account_username, a.account_email, a.account_password_hash,
+		       a.account_full_name, c.candidate_id, c.candidate_full_name
+		FROM accounts a
+		LEFT JOIN candidates c ON c.candidate_account_id = a.account_id AND c.candidate_is_deleted = FALSE
+		WHERE a.account_id = $1 AND a.account_is_deleted = FALSE
+		FOR UPDATE OF a`,
+		accountID,
+	).Scan(&username, &email, &passwordHash, &accFullName, &candidateID, &candFullName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("auth: lookup account for self-deactivation: %w", err)
+	}
+
+	if err := utils.CheckPassword(passwordHash, payload.Password); err != nil {
+		return ErrInvalidPassword
+	}
+	if !matchesConfirmIdentity(payload.ConfirmIdentity, username, email, accFullName.String, candFullName.String) {
+		return ErrDeactivationConfirmationMismatch
+	}
+
+	reason := strings.TrimSpace(payload.Reason)
+	if reason == "" {
+		reason = "Người dùng tự yêu cầu vô hiệu hóa tài khoản"
+	}
+
+	cancelledUnpaidIDs, _, err := s.cascadeDeactivateCandidateRegistrations(ctx, tx, candidateID.Int64, "block", "Tài khoản tự vô hiệu hóa: "+reason)
+	if err != nil {
+		return err
+	}
+
 	res, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET account_is_deleted = TRUE, account_deleted_at = NOW()
+		SET account_status = 'disabled',
+		    account_is_deleted = TRUE,
+		    account_deleted_at = NOW()
 		WHERE account_id = $1 AND account_is_deleted = FALSE`, accountID)
 	if err != nil {
 		return fmt.Errorf("auth: soft delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("không tìm thấy tài khoản")
+		return ErrAccountNotFound
 	}
 
-	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &accountID,
-		Action:         auditenum.AuditActionSoftDelete.String(),
-		EntityTable:    auditenum.AuditEntityAccount.String(),
-		EntityID:       accountID,
-	})
-	return tx.Commit()
+	if candidateID.Valid {
+		_, _ = tx.ExecContext(ctx, `
+			UPDATE candidates
+			SET candidate_is_deleted = TRUE,
+			    candidate_deleted_at = NOW()
+			WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`,
+			candidateID.Int64,
+		)
+	}
+
+	_, _ = tx.ExecContext(ctx, `
+		UPDATE auth_sessions
+		SET auth_session_revoked_at = NOW()
+		WHERE auth_session_account_id = $1
+		  AND auth_session_revoked_at IS NULL`,
+		accountID,
+	)
+
+	if s.auditSvc != nil {
+		newVal := mustMarshal(map[string]any{
+			"status":                            "disabled",
+			"reason":                            reason,
+			"cancelled_unpaid_registration_ids": cancelledUnpaidIDs,
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &accountID,
+			Action:         auditenum.AuditActionDeactivateAccount.String(),
+			EntityTable:    auditenum.AuditEntityAccount.String(),
+			EntityID:       accountID,
+			NewValue:       newVal,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	middleware.RevokeAccountTokens(ctx, accountID, s.accessTTL)
+	return nil
 }
 
-// SoftDeleteAccountByAdmin soft-deletes a target account on behalf of an admin.
-func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetID int64) error {
+// SoftDeleteAccountByAdmin deactivates a target account on behalf of an admin.
+// Requires explicit confirmation matching targetID and identity (username/email/full_name),
+// immediately revokes all active sessions & JWTs, and cascades exam registrations.
+func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetID int64, req ...request.DeactivateAccountByAdminRequestDTO) error {
+	if len(req) == 0 || req[0].ConfirmAccountID != targetID || strings.TrimSpace(req[0].ConfirmIdentity) == "" || strings.TrimSpace(req[0].Reason) == "" {
+		return ErrDeactivationConfirmationMismatch
+	}
+	payload := req[0]
+	paidResolution := strings.TrimSpace(payload.PaidResolution)
+	if paidResolution == "" {
+		paidResolution = "block"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("auth: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var (
+		username, email           string
+		accFullName, candFullName sql.NullString
+		candidateID               sql.NullInt64
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT a.account_username, a.account_email, a.account_full_name,
+		       c.candidate_id, c.candidate_full_name
+		FROM accounts a
+		LEFT JOIN candidates c ON c.candidate_account_id = a.account_id AND c.candidate_is_deleted = FALSE
+		WHERE a.account_id = $1 AND a.account_is_deleted = FALSE
+		FOR UPDATE OF a`,
+		targetID,
+	).Scan(&username, &email, &accFullName, &candidateID, &candFullName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("auth: lookup account for admin deactivation: %w", err)
+	}
+
+	if !matchesConfirmIdentity(payload.ConfirmIdentity, username, email, accFullName.String, candFullName.String) {
+		return ErrDeactivationConfirmationMismatch
+	}
+
+	cancelledUnpaidIDs, refundedPaidIDs, err := s.cascadeDeactivateCandidateRegistrations(
+		ctx, tx, candidateID.Int64, paidResolution, "Vô hiệu hóa tài khoản: "+payload.Reason,
+	)
+	if err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE accounts
+		SET account_status = 'disabled',
+		    account_is_deleted = TRUE,
+		    account_deleted_at = NOW()
+		WHERE account_id = $1 AND account_is_deleted = FALSE`, targetID)
+	if err != nil {
+		return fmt.Errorf("auth: soft delete: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAccountNotFound
+	}
+
+	if candidateID.Valid {
+		_, _ = tx.ExecContext(ctx, `
+			UPDATE candidates
+			SET candidate_is_deleted = TRUE,
+			    candidate_deleted_at = NOW()
+			WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`,
+			candidateID.Int64,
+		)
+	}
+
+	_, _ = tx.ExecContext(ctx, `
+		UPDATE auth_sessions
+		SET auth_session_revoked_at = NOW()
+		WHERE auth_session_account_id = $1
+		  AND auth_session_revoked_at IS NULL`,
+		targetID,
+	)
+
+	if s.auditSvc != nil {
+		newVal := mustMarshal(map[string]any{
+			"status":                            "disabled",
+			"reason":                            payload.Reason,
+			"paid_resolution":                   paidResolution,
+			"cancelled_unpaid_registration_ids": cancelledUnpaidIDs,
+			"refunded_paid_registration_ids":    refundedPaidIDs,
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionDeactivateAccount.String(),
+			EntityTable:    auditenum.AuditEntityAccount.String(),
+			EntityID:       targetID,
+			NewValue:       newVal,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	middleware.RevokeAccountTokens(ctx, targetID, s.accessTTL)
+	return nil
+}
+
+// ReactivateAccountByAdmin restores a previously deactivated/soft-deleted account and its candidate profile.
+func (s *Service) ReactivateAccountByAdmin(ctx context.Context, adminID, targetID int64, req request.ReactivateAccountByAdminRequestDTO) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("auth: begin tx: %w", err)
@@ -681,22 +1010,49 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE accounts
-		SET account_is_deleted = TRUE, account_deleted_at = NOW()
-		WHERE account_id = $1 AND account_is_deleted = FALSE`, targetID)
+		SET account_status = 'active',
+		    account_is_deleted = FALSE,
+		    account_deleted_at = NULL,
+		    account_failed_login_count = 0,
+		    account_locked_until = NULL
+		WHERE account_id = $1
+		  AND (account_is_deleted = TRUE OR account_status = 'disabled')`,
+		targetID,
+	)
 	if err != nil {
-		return fmt.Errorf("auth: soft delete: %w", err)
+		return fmt.Errorf("auth: reactivate account: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return errors.New("không tìm thấy tài khoản")
+		return ErrAccountNotFound
 	}
 
-	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
-		ActorAccountID: &adminID,
-		Action:         auditenum.AuditActionSoftDelete.String(),
-		EntityTable:    auditenum.AuditEntityAccount.String(),
-		EntityID:       targetID,
-	})
-	return tx.Commit()
+	_, _ = tx.ExecContext(ctx, `
+		UPDATE candidates
+		SET candidate_is_deleted = FALSE,
+		    candidate_deleted_at = NULL
+		WHERE candidate_account_id = $1`,
+		targetID,
+	)
+
+	if s.auditSvc != nil {
+		newVal := mustMarshal(map[string]any{
+			"status": "active",
+			"reason": req.Reason,
+		})
+		_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionReactivateAccount.String(),
+			EntityTable:    auditenum.AuditEntityAccount.String(),
+			EntityID:       targetID,
+			NewValue:       newVal,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	middleware.RestoreAccountTokens(ctx, targetID)
+	return nil
 }
 
 // issueAccessToken signs an access token with sub + role claims.

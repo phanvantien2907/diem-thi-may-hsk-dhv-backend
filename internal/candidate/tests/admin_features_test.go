@@ -63,10 +63,11 @@ func TestService_AdminListCandidatesFiltered(t *testing.T) {
 		items[0].FullNameCN == nil || *items[0].FullNameCN != "潘文进" {
 		t.Fatalf("unexpected items: %+v", items)
 	}
-	if items[0].Phone == nil || *items[0].Phone != "0901234567" ||
+	if items[0].Phone == nil || *items[0].Phone != "090***567" ||
 		items[0].ExamLevel == nil || *items[0].ExamLevel != "HSK 3" ||
 		items[0].TargetExamLevel == nil || *items[0].TargetExamLevel != "HSK 3" ||
-		items[0].LatestDocument == nil || items[0].LatestDocument.BackImageURL != nil {
+		items[0].LatestDocument == nil || items[0].LatestDocument.DocNumber != "012***901" ||
+		items[0].LatestDocument.BackImageURL != nil {
 		t.Fatalf("unexpected enriched candidate fields: %+v", items[0])
 	}
 	payload, err := json.Marshal(items[0])

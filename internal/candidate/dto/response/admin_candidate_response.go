@@ -21,4 +21,13 @@ type AdminCandidateResponseDTO struct {
 	ExamLevel         *string                   `json:"exam_level"`
 	TargetExamLevel   *string                   `json:"target_exam_level"`
 	LatestDocument    *AdminDocumentResponseDTO `json:"latest_document"`
+	ReviewLock        *CandidateReviewLockDTO   `json:"review_lock,omitempty"`
+}
+
+// CandidateReviewLockDTO represents a temporary 5-minute soft lock held by an admin reviewing a candidate profile.
+type CandidateReviewLockDTO struct {
+	LockedByAccountID int64     `json:"locked_by_account_id"`
+	LockedByEmail     string    `json:"locked_by_email,omitempty"`
+	LockedUntil       time.Time `json:"locked_until"`
+	IsLockedByOther   bool      `json:"is_locked_by_other"`
 }

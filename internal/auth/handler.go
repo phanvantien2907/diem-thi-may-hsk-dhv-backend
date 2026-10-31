@@ -326,37 +326,100 @@ func (h *Handler) UpdateMe(c *gin.Context) {
 
 // DeleteMe DELETE /me
 // @Summary Xóa tài khoản cá nhân
-// @Description Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình.
+// @Description Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình (yêu cầu xác nhận danh tính và mật khẩu).
 // @Tags Auth
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param request body request.DeactivateMyAccountRequestDTO true "Dữ liệu xác nhận"
 // @Success 200 {object} map[string]interface{} "Thành công"
 // @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
 // @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
 // @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
+// @Failure 409 {object} map[string]interface{} "Đang có đăng ký ca thi đã thanh toán"
 // @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
 // @Router /me [delete]
 func (h *Handler) DeleteMe(c *gin.Context) {
-	if err := h.svc.SoftDeleteAccountMe(c.Request.Context(), utils.MustAccountID(c)); err != nil {
+	var req request.DeactivateMyAccountRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Vui lòng cung cấp thông tin xác nhận vô hiệu hóa tài khoản (confirm_identity, password)")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	utils.OK(c, gin.H{"message": "Đã xóa tài khoản"})
+	if err := h.svc.SoftDeleteAccountMe(c.Request.Context(), utils.MustAccountID(c), req); err != nil {
+		switch {
+		case errors.Is(err, ErrDeactivationBlockedByPaidRegistration):
+			utils.Conflict(c, err.Error())
+		case errors.Is(err, ErrAccountNotFound):
+			utils.NotFound(c, err.Error())
+		case errors.Is(err, ErrInvalidPassword):
+			utils.Unauthorized(c, err.Error())
+		default:
+			utils.BadRequest(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã vô hiệu hóa tài khoản và thu hồi toàn bộ phiên đăng nhập"})
 }
 
-// AdminDeleteAccount DELETE /admin/delete-account/:id
+// AdminDeleteAccount DELETE /admin/delete-account/:id (and POST /admin/accounts/:id/deactivate)
 func (h *Handler) AdminDeleteAccount(c *gin.Context) {
 	targetID, ok := utils.ParamID(c, "id")
 	if !ok {
 		utils.BadRequest(c, "ID tài khoản không hợp lệ")
 		return
 	}
-	if err := h.svc.SoftDeleteAccountByAdmin(c.Request.Context(), utils.MustAccountID(c), targetID); err != nil {
+	var req request.DeactivateAccountByAdminRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Vui lòng cung cấp thông tin xác nhận vô hiệu hóa tài khoản (confirm_account_id, confirm_identity, reason)")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	utils.OK(c, gin.H{"message": "Đã xóa tài khoản"})
+	if err := h.svc.SoftDeleteAccountByAdmin(c.Request.Context(), utils.MustAccountID(c), targetID, req); err != nil {
+		switch {
+		case errors.Is(err, ErrDeactivationBlockedByPaidRegistration):
+			utils.Conflict(c, err.Error())
+		case errors.Is(err, ErrAccountNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			utils.BadRequest(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã vô hiệu hóa tài khoản và thu hồi toàn bộ phiên đăng nhập"})
+}
+
+// AdminReactivateAccount POST /admin/accounts/:id/reactivate
+func (h *Handler) AdminReactivateAccount(c *gin.Context) {
+	targetID, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID tài khoản không hợp lệ")
+		return
+	}
+	var req request.ReactivateAccountByAdminRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.ReactivateAccountByAdmin(c.Request.Context(), utils.MustAccountID(c), targetID, req); err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã kích hoạt lại tài khoản thành công"})
 }
 
 // CreateStaffAccount POST /admin/staff-accounts

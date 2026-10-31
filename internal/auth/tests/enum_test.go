@@ -15,6 +15,7 @@ func TestAccountStatusValid(t *testing.T) {
 		{"valid active", enum.AccountStatusActive, true},
 		{"valid locked", enum.AccountStatusLocked, true},
 		{"valid pending", enum.AccountStatusPending, true},
+		{"valid disabled", enum.AccountStatusDisabled, true},
 		{"invalid empty", enum.AccountStatus(""), false},
 		{"invalid unknown", enum.AccountStatus("unknown"), false},
 	}
