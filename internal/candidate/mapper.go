@@ -1,38 +1,25 @@
 package candidate
 
 import (
-	"strings"
-
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/entities"
+	"github.com/hskvinh/backend/internal/utils"
 )
 
 // MaskPII masks a sensitive identifier (CCCD, Passport, or Phone number) in accordance
 // with Decree 13/2023/ND-CP, preserving at most the first 3 and last 3 characters (e.g., "040***060").
 func MaskPII(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	runes := []rune(trimmed)
-	n := len(runes)
-	if n > 6 {
-		return string(runes[:3]) + "***" + string(runes[n-3:])
-	}
-	if n > 2 {
-		return string(runes[:1]) + "***" + string(runes[n-1:])
-	}
-	return "***"
+	return utils.MaskPII(raw)
 }
 
 // MaskDocumentNumber masks a Citizen ID (CCCD) or Passport number for list endpoints (e.g., "040***060").
 func MaskDocumentNumber(docNumber string) string {
-	return MaskPII(docNumber)
+	return utils.MaskDocumentNumber(docNumber)
 }
 
 // MaskPhoneNumber masks a phone number for list endpoints (e.g., "090***567").
 func MaskPhoneNumber(phone string) string {
-	return MaskPII(phone)
+	return utils.MaskPhoneNumber(phone)
 }
 
 // ToCandidateResponseDTO maps a CandidateEntity to its public DTO.

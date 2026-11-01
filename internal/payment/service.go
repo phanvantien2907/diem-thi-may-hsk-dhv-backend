@@ -360,16 +360,17 @@ func (s *Service) ProcessWebhook(ctx context.Context, payload request.PayOSWebho
 
 		// Broadcast real-time event if successful
 		if isSuccess && s.hub != nil {
-			var regID, seatID int64
+			var regID, seatID, sessionID int64
 			err := s.db.QueryRowContext(ctx, `
-				SELECT p.payment_exam_registration_id, r.exam_registration_exam_seat_id
+				SELECT p.payment_exam_registration_id, r.exam_registration_exam_seat_id, r.exam_registration_exam_session_id
 				FROM payments p
 				JOIN exam_registrations r ON r.exam_registration_id = p.payment_exam_registration_id
 				WHERE p.payment_id = $1
-			`, resultID).Scan(&regID, &seatID)
+			`, resultID).Scan(&regID, &seatID, &sessionID)
 			if err == nil {
 				s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
 					"registration_id": regID,
+					"session_id":      sessionID,
 					"seat_id":         seatID,
 					"status":          "confirmed",
 				})
@@ -891,11 +892,11 @@ func (s *Service) AdminConfirmRefund(ctx context.Context, paymentID, actorID int
 
 	oldVal, _ := json.Marshal(map[string]any{"status": status})
 	newVal, _ := json.Marshal(map[string]any{
-		"status":                "refunded",
-		"action":                "confirm_refund",
-		"refund_bank_ref":       req.BankRef,
+		"status":               "refunded",
+		"action":               "confirm_refund",
+		"refund_bank_ref":      req.BankRef,
 		"refund_evidence_urls": req.EvidenceURLs,
-		"note":                  req.Note,
+		"note":                 req.Note,
 	})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &actorID, Action: auditenum.AuditActionRefund.String(),
@@ -1078,6 +1079,15 @@ func (s *Service) AdminCancelPaymentAs(ctx context.Context, paymentID, actorID i
 	}
 	if err := tx.Commit(); err != nil {
 		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: cancel commit: %w", err)
+	}
+	if s.hub != nil {
+		s.hub.Broadcast(ws.EventRegistrationCancelled, map[string]interface{}{
+			"registration_id": regID,
+			"seat_id":         seatID,
+			"payment_id":      paymentID,
+			"payment_status":  newStatus,
+			"status":          "cancelled",
+		})
 	}
 	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
 	if err != nil {
@@ -2368,5 +2378,3 @@ func (s *Service) AdminImportSuspense(ctx context.Context, actorID int64, req re
 		Message:          fmt.Sprintf("Xử lý sao kê hoàn tất: %d đã import vào tài khoản treo, %d bỏ qua/trùng", importedCount, skippedCount),
 	}, nil
 }
-
-

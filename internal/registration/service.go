@@ -11,6 +11,8 @@ import (
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	payreq "github.com/hskvinh/backend/internal/payment/dto/request"
+	payresp "github.com/hskvinh/backend/internal/payment/dto/response"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
 	"github.com/hskvinh/backend/internal/registration/dto/response"
 	"github.com/hskvinh/backend/internal/registration/entities"
@@ -18,11 +20,18 @@ import (
 	"github.com/hskvinh/backend/internal/ws"
 )
 
+// PaymentCanceller defines the contract for delegating payment cancellation and refund workflow
+// to the existing payment Service without duplicating logic.
+type PaymentCanceller interface {
+	AdminCancelPaymentAs(ctx context.Context, paymentID, actorID int64, req payreq.AdminCancelPaymentRequestDTO) (payresp.AdminPaymentResponseDTO, error)
+}
+
 // Service handles seat reservation and registration lifecycle.
 type Service struct {
-	db       *sql.DB
-	auditSvc audit.Service
-	hub      *ws.Hub // optional, nil-safe
+	db         *sql.DB
+	auditSvc   audit.Service
+	hub        *ws.Hub          // optional, nil-safe
+	paymentSvc PaymentCanceller // optional, delegates payment cancellation/refund workflow
 }
 
 // NewService creates a registration Service.
@@ -32,6 +41,9 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 
 // SetHub attaches a WebSocket hub for broadcasting real-time events.
 func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
+
+// SetPaymentCanceller attaches the payment service for delegating payment cancellation and refunds.
+func (s *Service) SetPaymentCanceller(p PaymentCanceller) { s.paymentSvc = p }
 
 // mapBookingError translates the plpgsql RAISE EXCEPTION names raised by
 // fn_assert_session_accepts_registration (used by fn_book_exam_seat and
@@ -161,7 +173,7 @@ func (s *Service) CancelRegistrationByCandidate(ctx context.Context, registratio
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	var seatID int64
+	var seatID, sessionID int64
 	var status regenum.ExamRegistrationStatus
 	var ownerID int64
 	if err := tx.QueryRowContext(ctx, `
@@ -215,8 +227,10 @@ func (s *Service) CancelRegistrationByCandidate(ctx context.Context, registratio
 
 	// Broadcast real-time event
 	if s.hub != nil {
+		_ = s.db.QueryRowContext(ctx, `SELECT exam_registration_exam_session_id FROM exam_registrations WHERE exam_registration_id = $1`, registrationID).Scan(&sessionID)
 		s.hub.Broadcast(ws.EventRegistrationCancelled, map[string]interface{}{
 			"registration_id": registrationID,
+			"session_id":      sessionID,
 			"seat_id":         seatID,
 			"status":          "cancelled",
 		})
@@ -587,8 +601,11 @@ func (s *Service) ConfirmRegistration(ctx context.Context, registrationID int64)
 
 	// Broadcast real-time event
 	if s.hub != nil {
+		var sessionID int64
+		_ = s.db.QueryRowContext(ctx, `SELECT exam_registration_exam_session_id FROM exam_registrations WHERE exam_registration_id = $1`, registrationID).Scan(&sessionID)
 		s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
 			"registration_id": registrationID,
+			"session_id":      sessionID,
 			"seat_id":         seatID,
 			"status":          "confirmed",
 		})

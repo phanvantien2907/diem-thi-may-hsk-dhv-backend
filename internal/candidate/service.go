@@ -52,6 +52,13 @@ type adminCandidateExportRow struct {
 //go:embed assets/NotoSerifSC.ttf
 var candidatePDFUnicodeFont []byte
 
+// PDFUnicodeFont returns the embedded NotoSerifSC TrueType font bytes so other
+// packages (such as internal/registration) can render UTF-8 Vietnamese/Chinese
+// PDFs without duplicating the 25MB font in the compiled binary.
+func PDFUnicodeFont() []byte {
+	return candidatePDFUnicodeFont
+}
+
 func adminCandidateWhere(req request.AdminListCandidatesRequestDTO, startArg int) (string, []any) {
 	conditions := []string{"c.candidate_is_deleted = FALSE"}
 	args := make([]any, 0, 4)
@@ -1790,7 +1797,7 @@ func (s *Service) AdminListDuplicates(ctx context.Context) ([]response.Duplicate
 		}
 		result = append(result, response.DuplicateDocResponseDTO{
 			DocType:      docType,
-			DocNumber:    docNumber,
+			DocNumber:    utils.MaskDocumentNumber(docNumber),
 			CandidateIDs: candidateIDs,
 			Count:        cnt,
 		})
@@ -1858,7 +1865,7 @@ func (s *Service) AdminGetRoster(ctx context.Context, examSessionID int64) ([]re
 		); err != nil {
 			return nil, fmt.Errorf("candidate: roster scan: %w", err)
 		}
-		item.DocNumber = docNumber.String
+		item.DocNumber = utils.MaskDocumentNumber(docNumber.String)
 		item.DocType = docType.String
 		item.PortraitImageURL = portraitURL.String
 		items = append(items, item)

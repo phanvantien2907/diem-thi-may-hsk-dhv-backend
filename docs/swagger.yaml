@@ -14,6 +14,18 @@ definitions:
     - evidence_urls
     - reason
     type: object
+  request.AdminCancelRegistrationRequestDTO:
+    properties:
+      evidence_urls:
+        items:
+          type: string
+        type: array
+      reason:
+        minLength: 3
+        type: string
+    required:
+    - reason
+    type: object
   request.AdminConfirmPaymentRequestDTO:
     properties:
       evidence_urls:
@@ -214,6 +226,16 @@ definitions:
         type: string
     required:
     - evidence_urls
+    type: object
+  request.AdminTransferRegistrationRequestDTO:
+    properties:
+      new_exam_session_id:
+        minimum: 1
+        type: integer
+      reason:
+        type: string
+    required:
+    - new_exam_session_id
     type: object
   request.AdminUpdateDeliveryRequestDTO:
     properties:
@@ -470,6 +492,21 @@ definitions:
     - email
     - full_name
     - role_code
+    type: object
+  request.DeactivateMyAccountRequestDTO:
+    properties:
+      confirm_identity:
+        maxLength: 150
+        minLength: 2
+        type: string
+      password:
+        type: string
+      reason:
+        maxLength: 500
+        type: string
+    required:
+    - confirm_identity
+    - password
     type: object
   request.DuplicateExamPeriodRequestDTO:
     properties:
@@ -3275,6 +3312,436 @@ paths:
       summary: '[Admin] Import sao kê ngân hàng vào tài khoản treo'
       tags:
       - Payment
+  /admin/registration-results/discrepancies:
+    get:
+      consumes:
+      - application/json
+      description: Phát hiện các ca thi có số đơn confirmed không khớp số ghế booked,
+        đơn pending_payment không khớp ghế held, hoặc đơn confirmed chưa thanh toán.
+      parameters:
+      - description: Lọc theo ID đợt thi
+        in: query
+        name: period_id
+        type: integer
+      - description: Lọc theo ID ca thi
+        in: query
+        name: session_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Tham số không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Kiểm tra sai lệch dữ liệu đăng ký và số ghế (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/export:
+    get:
+      description: Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng
+        đủ điều kiện sang tệp PDF hoặc Excel (CSV UTF-8 BOM).
+      parameters:
+      - description: ID đợt thi
+        in: query
+        name: period_id
+        type: integer
+      - description: ID ca thi
+        in: query
+        name: session_id
+        type: integer
+      - description: 'Định dạng xuất: pdf, excel, csv'
+        in: query
+        name: format
+        required: true
+        type: string
+      - description: 'Lọc điều kiện: eligible, ineligible, pending_review, all'
+        in: query
+        name: eligibility
+        type: string
+      - description: 'Lọc trạng thái ĐK: confirmed, pending_payment, cancelled, all'
+        in: query
+        name: registration_status
+        type: string
+      - description: 'Lọc số ca đăng ký: single, multiple, all'
+        in: query
+        name: slot_scope
+        type: string
+      - description: Tìm theo tên, CCCD, SĐT, email
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: Tệp PDF hoặc CSV
+          schema:
+            type: file
+        "400":
+          description: Tham số không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xuất danh sách kết quả đăng ký ra PDF hoặc Excel/CSV (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/periods:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách các đợt thi (batch) kèm thống kê các ca thi, số lượng
+        đăng ký, cảnh báo vận hành và đối soát lệch ghế.
+      parameters:
+      - description: Trang (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng mỗi trang (mặc định 20, tối đa 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Lọc theo trạng thái đợt thi
+        in: query
+        name: status
+        type: string
+      - description: Tìm theo mã hoặc tên đợt thi
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách kết quả đăng ký theo đợt thi (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/periods/{period_id}:
+    get:
+      consumes:
+      - application/json
+      description: Xem chi tiết đợt thi cùng toàn bộ các ca thi thuộc đợt, thống kê
+        số lượng, cảnh báo và kiểm tra sai lệch dữ liệu.
+      parameters:
+      - description: ID đợt thi
+        in: path
+        name: period_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: ID đợt thi không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy đợt thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Chi tiết kết quả đăng ký của một đợt thi (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/sessions/{session_id}/registrations:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách thí sinh của ca thi (có phân trang, che PII theo
+        Nghị định 13/2023, nhận diện đăng ký 1 hay nhiều ca, lọc đủ/không đủ điều
+        kiện và cung cấp shortcut duyệt hồ sơ).
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: session_id
+        required: true
+        type: integer
+      - description: Trang (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng mỗi trang (mặc định 20, tối đa 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Tìm theo họ tên, email, SĐT, CCCD, số ghế
+        in: query
+        name: search
+        type: string
+      - description: 'Lọc trạng thái ĐK: pending_payment, confirmed, cancelled, all'
+        in: query
+        name: registration_status
+        type: string
+      - description: 'Lọc trạng thái hồ sơ: pending, verified, rejected, missing,
+          all'
+        in: query
+        name: verification_status
+        type: string
+      - description: 'Lọc điều kiện: eligible, ineligible, pending_review, all'
+        in: query
+        name: eligibility
+        type: string
+      - description: 'Lọc số ca đăng ký: single (1 ca), multiple (nhiều ca), all'
+        in: query
+        name: slot_scope
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Tham số lọc không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Danh sách thí sinh đăng ký trong ca thi (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/sessions/{session_id}/summary:
+    get:
+      consumes:
+      - application/json
+      description: Xem số lượng đăng ký thời gian thực, tỷ lệ lấp đầy, phân loại đủ
+        điều kiện, cảnh báo vận hành và kiểm tra lệch số ghế của ca thi.
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: session_id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: ID ca thi không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy ca thi
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Thống kê thời gian thực và cảnh báo của một ca thi (Admin)
+      tags:
+      - Registration
+  /admin/registration-results/sessions/{session_id}/waitlist:
+    get:
+      consumes:
+      - application/json
+      description: Xem danh sách thí sinh đang chờ chỗ trống trong ca thi và vị trí
+        xếp hàng (queue_position).
+      parameters:
+      - description: ID ca thi
+        in: path
+        name: session_id
+        required: true
+        type: integer
+      - description: Trang (mặc định 1)
+        in: query
+        name: page
+        type: integer
+      - description: Số lượng mỗi trang (mặc định 20, tối đa 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: ID ca thi không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Lỗi hệ thống nội bộ
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xem danh sách chờ của ca thi (Admin)
+      tags:
+      - Registration
+  /admin/registrations/{id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Hủy phiếu đăng ký thi của thí sinh, giải phóng ghế về available
+        và tự động chuyển giao dịch đã thanh toán sang luồng hoàn tiền (pending_refund).
+      parameters:
+      - description: ID phiếu đăng ký
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lý do hủy và ảnh bằng chứng (nếu có)
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminCancelRegistrationRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy phiếu đăng ký
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Không thể hủy phiếu đăng ký
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Admin hủy đăng ký thi (nhả ghế & kích hoạt hoàn tiền)
+      tags:
+      - Registration
+  /admin/registrations/{id}/transfer:
+    post:
+      consumes:
+      - application/json
+      description: Chuyển thí sinh sang ca thi khác bằng hàm fn_transfer_registration
+        hiện có (giữ nguyên trạng thái thanh toán, nhả ghế cũ và cấp ghế mới).
+      parameters:
+      - description: ID phiếu đăng ký
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: ID ca thi đích và lý do chuyển
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.AdminTransferRegistrationRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Dữ liệu yêu cầu không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy phiếu đăng ký
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Không thể chuyển ca thi
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Admin chuyển ca thi cho thí sinh
+      tags:
+      - Registration
   /admin/results:
     post:
       consumes:
@@ -4011,7 +4478,15 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình.
+      description: Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình (yêu
+        cầu xác nhận danh tính và mật khẩu).
+      parameters:
+      - description: Dữ liệu xác nhận
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.DeactivateMyAccountRequestDTO'
       produces:
       - application/json
       responses:
@@ -4032,6 +4507,11 @@ paths:
             type: object
         "403":
           description: Không có quyền truy cập
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Đang có đăng ký ca thi đã thanh toán
           schema:
             additionalProperties: true
             type: object

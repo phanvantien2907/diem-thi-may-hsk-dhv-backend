@@ -51,5 +51,21 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	{
 		admin.GET("/exam-sessions/:id/dashboard", h.GetSessionDashboard)
 		admin.GET("/payments/reconcile", h.GetPaymentReconcile)
+
+		// Registration Results module (Kết quả Đăng ký theo Đợt thi & Ca thi)
+		results := admin.Group("/registration-results")
+		{
+			results.GET("/periods", h.ListPeriodRegistrationResults)
+			results.GET("/periods/:period_id", h.GetPeriodRegistrationResults)
+			results.GET("/sessions/:session_id/summary", h.GetSlotRegistrationSummary)
+			results.GET("/sessions/:session_id/registrations", h.ListSlotRegistrations)
+			results.GET("/sessions/:session_id/waitlist", h.AdminListWaitlist)
+			results.GET("/discrepancies", h.AdminCheckDiscrepancies)
+			results.GET("/export", h.AdminExportRegistrations)
+		}
+
+		// Admin registration lifecycle actions (cancel + refund workflow, slot transfer)
+		admin.POST("/registrations/:id/cancel", h.AdminCancelRegistration)
+		admin.POST("/registrations/:id/transfer", h.AdminTransferRegistration)
 	}
 }

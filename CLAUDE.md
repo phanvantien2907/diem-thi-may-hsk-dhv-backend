@@ -1378,7 +1378,10 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
    - Thread-safe registration, unregistration, and broadcast mechanisms using Go channels and goroutines.
 
 2. **Supported Events:**
-   - `payment_confirmed`: Triggered when an admin manually approves a transaction (`POST /admin/payments/:id/manual-approve`).
+   - `payment_confirmed`: Triggered when a payment succeeds (webhook or manual approve), includes `session_id`.
+   - `registration_created`: Triggered when a candidate reserves a seat (`pending_payment`), includes `session_id`.
+   - `registration_cancelled`: Triggered when a registration is cancelled (by candidate or admin), includes `session_id`.
+   - `registration_transferred`: Triggered when a registration is moved between exam sessions (`from_session_id`, `to_session_id`).
    - `dashboard_metrics_updated`: Triggered when background workers sync and expire stale payments or release held seats, alerting connected clients to refresh view.
 
 3. **Client Integration:**
@@ -1408,3 +1411,18 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
   ```
   This runs `swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal` to recompile Swagger specifications.
 - Swagger UI is served at `/swagger/index.html`.
+
+---
+
+## 36. Registration Results Module (Kết quả Đăng ký — `internal/registration`)
+
+1. **Batch & Slot Hierarchy (`exam_periods` → `exam_sessions`):**
+   - `GET /api/v1/admin/registration-results/periods` & `GET /api/v1/admin/registration-results/periods/:period_id` aggregate seat, registration, eligibility, waitlist, and multi-slot metrics using a **single grouped SQL query** (`slotStatsGroupQuery` with CTE pre-aggregations `seat_agg`, `reg_agg`, `waitlist_agg`, `latest_docs`, `latest_payments`, `candidate_slot_counts`) to prevent N+1 queries and Cartesian fan-out.
+2. **Paginated Slot Roster & PII Masking (Decree 13/2023):**
+   - `GET /api/v1/admin/registration-results/sessions/:session_id/registrations` always enforces `LIMIT`/`OFFSET` pagination and masks `masked_phone` (`091***678`) and `masked_doc_number` (`040***234`).
+   - Full unmasked PII and identity photos are accessed exclusively via `profile_shortcuts.detail_and_acquire_lock_url` (`GET /api/v1/admin/candidates/:id`), which logs `VIEW_PII`, acquires the 5-minute soft lock, and records Proof-of-View.
+   - Document approval/rejection shortcuts point directly to existing Candidate Profile endpoints (`POST /api/v1/admin/candidates/:id/approve`, `/reject`, `/revoke-approval`, `/reopen-review`).
+3. **Reuse of Existing Workflows (Zero Redundant Columns/States):**
+   - `POST /api/v1/admin/registrations/:id/cancel` delegates paid/pending-payment transactions to `payment.Service.AdminCancelPaymentAs` (releasing the seat to `available` and transitioning paid transactions to `pending_refund`), or cancels unpaid registrations atomically when no payment row exists yet.
+   - `POST /api/v1/admin/registrations/:id/transfer` reuses PostgreSQL `fn_transfer_registration` to switch slots atomically while preserving payment status.
+   - `GET /api/v1/admin/registration-results/export` reuses `candidate.PDFUnicodeFont()` (`NotoSerifSC.ttf`) for PDF exports so the 25MB font is never embedded twice in the binary.

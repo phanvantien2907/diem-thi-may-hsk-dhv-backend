@@ -14,6 +14,7 @@ const (
 	EventSeatUpdated             EventType = "seat_updated"              // Ghế thay đổi trạng thái (held/available/booked)
 	EventRegistrationCreated     EventType = "registration_created"      // Thí sinh vừa đăng ký (giữ ghế)
 	EventRegistrationCancelled   EventType = "registration_cancelled"    // Đơn đăng ký bị hủy (hết hạn / thí sinh hủy)
+	EventRegistrationTransferred EventType = "registration_transferred"  // Đơn đăng ký chuyển ca thi
 	EventPaymentConfirmed        EventType = "payment_confirmed"         // Thanh toán thành công → ghế chốt
 	EventSeatsReleased           EventType = "seats_released"            // CronJob vừa giải phóng ghế quá hạn
 	EventAccountUpdated          EventType = "account_updated"           // Thông tin tài khoản (profile/password) vừa cập nhật

@@ -124,6 +124,7 @@ func main() {
 
 	// Attach hub to services that need real-time broadcasting
 	regSvc.SetHub(hub)
+	regSvc.SetPaymentCanceller(paySvc)
 	paySvc.SetHub(hub)
 	authSvc.SetHub(hub)
 

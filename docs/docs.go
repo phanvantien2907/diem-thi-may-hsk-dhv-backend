@@ -3356,6 +3356,642 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/registration-results/discrepancies": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Phát hiện các ca thi có số đơn confirmed không khớp số ghế booked, đơn pending_payment không khớp ghế held, hoặc đơn confirmed chưa thanh toán.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Kiểm tra sai lệch dữ liệu đăng ký và số ghế (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Lọc theo ID đợt thi",
+                        "name": "period_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Lọc theo ID ca thi",
+                        "name": "session_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Tham số không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng đủ điều kiện sang tệp PDF hoặc Excel (CSV UTF-8 BOM).",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Xuất danh sách kết quả đăng ký ra PDF hoặc Excel/CSV (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "period_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "session_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Định dạng xuất: pdf, excel, csv",
+                        "name": "format",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc điều kiện: eligible, ineligible, pending_review, all",
+                        "name": "eligibility",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc trạng thái ĐK: confirmed, pending_payment, cancelled, all",
+                        "name": "registration_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc số ca đăng ký: single, multiple, all",
+                        "name": "slot_scope",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tìm theo tên, CCCD, SĐT, email",
+                        "name": "search",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Tệp PDF hoặc CSV",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Tham số không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/periods": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách các đợt thi (batch) kèm thống kê các ca thi, số lượng đăng ký, cảnh báo vận hành và đối soát lệch ghế.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Danh sách kết quả đăng ký theo đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Trang (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng mỗi trang (mặc định 20, tối đa 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc theo trạng thái đợt thi",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tìm theo mã hoặc tên đợt thi",
+                        "name": "search",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/periods/{period_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem chi tiết đợt thi cùng toàn bộ các ca thi thuộc đợt, thống kê số lượng, cảnh báo và kiểm tra sai lệch dữ liệu.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Chi tiết kết quả đăng ký của một đợt thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID đợt thi",
+                        "name": "period_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "ID đợt thi không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy đợt thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/sessions/{session_id}/registrations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách thí sinh của ca thi (có phân trang, che PII theo Nghị định 13/2023, nhận diện đăng ký 1 hay nhiều ca, lọc đủ/không đủ điều kiện và cung cấp shortcut duyệt hồ sơ).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Danh sách thí sinh đăng ký trong ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Trang (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng mỗi trang (mặc định 20, tối đa 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tìm theo họ tên, email, SĐT, CCCD, số ghế",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc trạng thái ĐK: pending_payment, confirmed, cancelled, all",
+                        "name": "registration_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc trạng thái hồ sơ: pending, verified, rejected, missing, all",
+                        "name": "verification_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc điều kiện: eligible, ineligible, pending_review, all",
+                        "name": "eligibility",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lọc số ca đăng ký: single (1 ca), multiple (nhiều ca), all",
+                        "name": "slot_scope",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Tham số lọc không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/sessions/{session_id}/summary": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem số lượng đăng ký thời gian thực, tỷ lệ lấp đầy, phân loại đủ điều kiện, cảnh báo vận hành và kiểm tra lệch số ghế của ca thi.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Thống kê thời gian thực và cảnh báo của một ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "ID ca thi không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registration-results/sessions/{session_id}/waitlist": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Xem danh sách thí sinh đang chờ chỗ trống trong ca thi và vị trí xếp hàng (queue_position).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Xem danh sách chờ của ca thi (Admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID ca thi",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Trang (mặc định 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Số lượng mỗi trang (mặc định 20, tối đa 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "ID ca thi không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registrations/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hủy phiếu đăng ký thi của thí sinh, giải phóng ghế về available và tự động chuyển giao dịch đã thanh toán sang luồng hoàn tiền (pending_refund).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Admin hủy đăng ký thi (nhả ghế \u0026 kích hoạt hoàn tiền)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID phiếu đăng ký",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Lý do hủy và ảnh bằng chứng (nếu có)",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminCancelRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy phiếu đăng ký",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Không thể hủy phiếu đăng ký",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/registrations/{id}/transfer": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chuyển thí sinh sang ca thi khác bằng hàm fn_transfer_registration hiện có (giữ nguyên trạng thái thanh toán, nhả ghế cũ và cấp ghế mới).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Registration"
+                ],
+                "summary": "Admin chuyển ca thi cho thí sinh",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID phiếu đăng ký",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "ID ca thi đích và lý do chuyển",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.AdminTransferRegistrationRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy phiếu đăng ký",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Không thể chuyển ca thi",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/results": {
             "post": {
                 "security": [
@@ -4563,7 +5199,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình.",
+                "description": "Yêu cầu vô hiệu hóa (soft-delete) tài khoản của chính mình (yêu cầu xác nhận danh tính và mật khẩu).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4574,6 +5210,17 @@ const docTemplate = `{
                     "Auth"
                 ],
                 "summary": "Xóa tài khoản cá nhân",
+                "parameters": [
+                    {
+                        "description": "Dữ liệu xác nhận",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.DeactivateMyAccountRequestDTO"
+                        }
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
@@ -4598,6 +5245,13 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Không có quyền truy cập",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Đang có đăng ký ca thi đã thanh toán",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6270,6 +6924,24 @@ const docTemplate = `{
                 }
             }
         },
+        "request.AdminCancelRegistrationRequestDTO": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "evidence_urls": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "reason": {
+                    "type": "string",
+                    "minLength": 3
+                }
+            }
+        },
         "request.AdminConfirmPaymentRequestDTO": {
             "type": "object",
             "required": [
@@ -6552,6 +7224,21 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "return_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "request.AdminTransferRegistrationRequestDTO": {
+            "type": "object",
+            "required": [
+                "new_exam_session_id"
+            ],
+            "properties": {
+                "new_exam_session_id": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "reason": {
                     "type": "string"
                 }
             }
@@ -6908,6 +7595,27 @@ const docTemplate = `{
                 },
                 "role_code": {
                     "type": "string"
+                }
+            }
+        },
+        "request.DeactivateMyAccountRequestDTO": {
+            "type": "object",
+            "required": [
+                "confirm_identity",
+                "password"
+            ],
+            "properties": {
+                "confirm_identity": {
+                    "type": "string",
+                    "maxLength": 150,
+                    "minLength": 2
+                },
+                "password": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500
                 }
             }
         },

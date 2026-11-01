@@ -182,6 +182,8 @@ func (h *Handler) AdminExportPayments(c *gin.Context) {
 		utils.InternalServerError(c, "Xuất danh sách giao dịch thất bại")
 		return
 	}
+	filename := fmt.Sprintf("doi_soat_thanh_toan_%s.csv", time.Now().Format("2006-01-02"))
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
 	c.Data(200, "text/csv; charset=utf-8", data)
 }
 

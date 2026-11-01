@@ -2824,6 +2824,76 @@ ngược lại 409.
 
 ---
 
+### 5.11. [Admin] Kết quả Đăng ký theo Đợt thi (Batch) & Ca thi (Slot)
+
+Phân hệ **Kết quả Đăng ký (Registration Results)** cho phép Admin theo dõi dữ liệu đăng ký theo từng đợt thi (`exam_periods`) và từng ca thi (`exam_sessions`), lọc thí sinh đủ/chưa đủ điều kiện, nhận diện thí sinh đăng ký 1 hay nhiều ca, xem danh sách chờ, kiểm tra lệch dữ liệu ghế/đơn đăng ký, xuất PDF/Excel và thao tác hủy/chuyển ca/duyệt hồ sơ (qua shortcut tới module Candidate Profile).
+
+#### 5.11.1. Danh sách kết quả đăng ký theo đợt thi
+- **Endpoint:** `GET /api/v1/admin/registration-results/periods`
+- **Auth:** 🔐 JWT + Admin
+- **Query Params:** `page` (mặc định `1`), `limit` (mặc định `20`, tối đa `100`), `status` (`draft`, `published`, `registration_open`, `registration_closed`, `completed`, `cancelled`, `all`), `search` (mã hoặc tên đợt thi).
+- **Response (200 OK):** Mảng `PeriodRegistrationSummaryDTO` kèm `meta` phân trang. Mỗi đợt thi chứa danh sách `slots` (`SlotRegistrationStatsDTO`), danh sách cảnh báo `alerts` (`SessionAlertDTO`) và số ca bị lệch dữ liệu (`discrepancy_count`).
+
+#### 5.11.2. Chi tiết kết quả đăng ký của một đợt thi
+- **Endpoint:** `GET /api/v1/admin/registration-results/periods/:period_id`
+- **Auth:** 🔐 JWT + Admin
+- **Response (200 OK):** `PeriodRegistrationSummaryDTO` (sử dụng 1 truy vấn gom nhóm duy nhất `slotStatsGroupQuery` cho toàn bộ các ca thi thuộc đợt).
+
+#### 5.11.3. Thống kê thời gian thực & cảnh báo của một ca thi
+- **Endpoint:** `GET /api/v1/admin/registration-results/sessions/:session_id/summary`
+- **Auth:** 🔐 JWT + Admin
+- **Response (200 OK):** `SlotRegistrationStatsDTO` gồm số lượng `confirmed_count`, `pending_payment_count`, `booked_seats`, `held_seats`, `available_seats`, `waitlist_count`, `single_slot_count`, `multi_slot_count`, `eligible_count`, `ineligible_count`, `pending_review_count`, `has_discrepancy`, `discrepancy` và `alerts` (`nearly_full`, `too_few_registrants`, `ineligible_docs_near_exam`, `seat_discrepancy`).
+
+#### 5.11.4. Danh sách thí sinh đăng ký trong ca thi (Phân trang + Che PII + Shortcut duyệt hồ sơ)
+- **Endpoint:** `GET /api/v1/admin/registration-results/sessions/:session_id/registrations`
+- **Auth:** 🔐 JWT + Admin
+- **Query Params:**
+  - `page`, `limit`: Phân trang (không tải toàn bộ ca thi cùng lúc).
+  - `search`: Tìm theo họ tên, tên tiếng Trung, email, SĐT, CCCD, số ghế.
+  - `registration_status`: `pending_payment` | `confirmed` | `cancelled` | `all`.
+  - `verification_status`: `pending` | `verified` | `rejected` | `missing` | `all`.
+  - `eligibility`: `eligible` (đủ điều kiện) | `ineligible` (không đạt/thiếu hồ sơ/lệch thanh toán) | `pending_review` (chờ duyệt/chờ thanh toán) | `all`.
+  - `slot_scope`: `single` (đăng ký 1 ca) | `multiple` (đăng ký nhiều ca) | `all`.
+- **Bảo mật PII (Nghị định 13/2023):** Trường `masked_phone` (`091***678`) và `masked_doc_number` (`040***234`) luôn được che trong danh sách. Để xem toàn bộ thông tin gốc + ảnh giấy tờ và phê duyệt/từ chối hồ sơ, FE gọi trực tiếp các đường dẫn trong `profile_shortcuts`:
+  - `detail_and_acquire_lock_url`: `GET /api/v1/admin/candidates/:id` (ghi log `VIEW_PII`, cấp khóa mềm 5 phút và ghi nhận Proof-of-View).
+  - `approve_document_url`: `POST /api/v1/admin/candidates/:id/approve`
+  - `reject_document_url`: `POST /api/v1/admin/candidates/:id/reject`
+  - `revoke_approval_url`: `POST /api/v1/admin/candidates/:id/revoke-approval`
+  - `reopen_review_url`: `POST /api/v1/admin/candidates/:id/reopen-review`
+  - `release_lock_url`: `DELETE /api/v1/admin/candidates/:id/lock`
+
+#### 5.11.5. Danh sách chờ (Waitlist) của ca thi
+- **Endpoint:** `GET /api/v1/admin/registration-results/sessions/:session_id/waitlist`
+- **Auth:** 🔐 JWT + Admin
+- **Query Params:** `page`, `limit`.
+- **Response (200 OK):** Mảng `AdminWaitlistItemDTO` có `queue_position` (vị trí xếp hàng tính bằng `ROW_NUMBER() OVER (... ORDER BY joined_at ASC)`), thông tin thí sinh đã che PII và `profile_shortcuts`.
+
+#### 5.11.6. Kiểm tra sai lệch dữ liệu (Discrepancy Check)
+- **Endpoint:** `GET /api/v1/admin/registration-results/discrepancies`
+- **Auth:** 🔐 JWT + Admin
+- **Query Params:** `period_id` (tùy chọn), `session_id` (tùy chọn).
+- **Response (200 OK):** Mảng `SlotDiscrepancyDTO` liệt kê các ca thi có `confirmed_registrations != booked_seats`, `pending_payment_registrations != held_seats`, hoặc `unpaid_confirmed_registrations > 0`.
+
+#### 5.11.7. Xuất danh sách đăng ký (PDF / Excel CSV)
+- **Endpoint:** `GET /api/v1/admin/registration-results/export`
+- **Auth:** 🔐 JWT + Admin
+- **Query Params:** `period_id` hoặc `session_id` (bắt buộc ít nhất 1), `format` (`pdf` | `excel` | `csv`), `eligibility`, `registration_status`, `slot_scope`, `search`.
+- **Response (200 OK):** File binary `.pdf` (font Unicode Việt-Trung `NotoSerifSC`) hoặc `.csv` (có UTF-8 BOM mở trực tiếp bằng Microsoft Excel), đồng thời ghi nhận `EXPORT` trong `audit_logs`.
+
+#### 5.11.8. Admin hủy đăng ký thi (Nhả ghế & kích hoạt hoàn tiền)
+- **Endpoint:** `POST /api/v1/admin/registrations/:id/cancel`
+- **Auth:** 🔐 JWT + Admin
+- **Request Body:** `{ "reason": "Lý do hủy (tối thiểu 3 ký tự)", "evidence_urls": ["https://..."] }`
+- **Hành vi:** Tái sử dụng `payment.Service.AdminCancelPaymentAs` nếu đơn đã có giao dịch (`success` → `pending_refund`, `pending` → `cancelled`, nhả ghế về `available`), hoặc hủy trực tiếp trong transaction ACID nếu đơn chưa phát sinh giao dịch, và phát sự kiện WebSocket `registration_cancelled`.
+
+#### 5.11.9. Admin chuyển ca thi cho thí sinh
+- **Endpoint:** `POST /api/v1/admin/registrations/:id/transfer`
+- **Auth:** 🔐 JWT + Admin
+- **Request Body:** `{ "new_exam_session_id": 102, "reason": "Lý do chuyển ca" }`
+- **Hành vi:** Tái sử dụng hàm PostgreSQL `fn_transfer_registration` để giữ ghế mới, nhả ghế cũ, bảo toàn trạng thái thanh toán, ghi `audit_logs` và phát sự kiện WebSocket `registration_transferred`.
+
+---
+
 ## 6. Module Payment (Thanh toán)
 
 > **Cơ chế bảo vệ tích hợp (Idempotency & Zero-Trust):**

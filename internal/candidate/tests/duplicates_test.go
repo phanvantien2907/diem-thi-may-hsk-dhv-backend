@@ -40,14 +40,14 @@ func TestService_AdminListDuplicates_WithDuplicates(t *testing.T) {
 		t.Fatalf("expected 2 duplicate groups, got %d", len(duplicates))
 	}
 
-	if duplicates[0].DocType != "cccd" || duplicates[0].DocNumber != "038200001234" || duplicates[0].Count != 2 {
+	if duplicates[0].DocType != "cccd" || duplicates[0].DocNumber != "038***234" || duplicates[0].Count != 2 {
 		t.Errorf("unexpected first duplicate: %+v", duplicates[0])
 	}
 	if len(duplicates[0].CandidateIDs) != 2 || duplicates[0].CandidateIDs[0] != 10 || duplicates[0].CandidateIDs[1] != 25 {
 		t.Errorf("unexpected candidate IDs for first item: %v", duplicates[0].CandidateIDs)
 	}
 
-	if duplicates[1].DocType != "passport" || duplicates[1].DocNumber != "B1234567" || duplicates[1].Count != 3 {
+	if duplicates[1].DocType != "passport" || duplicates[1].DocNumber != "B12***567" || duplicates[1].Count != 3 {
 		t.Errorf("unexpected second duplicate: %+v", duplicates[1])
 	}
 	if len(duplicates[1].CandidateIDs) != 3 || duplicates[1].CandidateIDs[0] != 5 || duplicates[1].CandidateIDs[2] != 99 {
@@ -122,7 +122,7 @@ func TestHandler_AdminListDuplicates(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if !resp.Success || len(resp.Data) != 1 || resp.Data[0].DocNumber != "038200001234" {
+	if !resp.Success || len(resp.Data) != 1 || resp.Data[0].DocNumber != "038***234" {
 		t.Fatalf("unexpected response body: %s", w.Body.String())
 	}
 
