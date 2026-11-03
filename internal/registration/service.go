@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
+	"github.com/hskvinh/backend/internal/cache"
 	payreq "github.com/hskvinh/backend/internal/payment/dto/request"
 	payresp "github.com/hskvinh/backend/internal/payment/dto/response"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
@@ -32,6 +34,7 @@ type Service struct {
 	auditSvc   audit.Service
 	hub        *ws.Hub          // optional, nil-safe
 	paymentSvc PaymentCanceller // optional, delegates payment cancellation/refund workflow
+	cache      *cache.Service   // optional, nil-safe idempotency and fast-path cache
 }
 
 // NewService creates a registration Service.
@@ -44,6 +47,9 @@ func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
 
 // SetPaymentCanceller attaches the payment service for delegating payment cancellation and refunds.
 func (s *Service) SetPaymentCanceller(p PaymentCanceller) { s.paymentSvc = p }
+
+// SetCache attaches a Redis cache service for idempotency and fast-path caching.
+func (s *Service) SetCache(c *cache.Service) { s.cache = c }
 
 // mapBookingError translates the plpgsql RAISE EXCEPTION names raised by
 // fn_assert_session_accepts_registration (used by fn_book_exam_seat and
@@ -86,10 +92,54 @@ func (s *Service) GetCandidateID(ctx context.Context, accountID int64) (int64, e
 
 // ReserveSeat atomically books a seat via fn_book_exam_seat (FOR UPDATE SKIP LOCKED).
 // candidateID comes from the JWT — never from the request body.
-func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatRequestDTO, candidateID int64) (response.ExamRegistrationResponseDTO, error) {
+// If an idempotencyKey is provided, it leverages Redis caching and graceful duplicate resolution.
+func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatRequestDTO, candidateID int64, idempotencyKey ...string) (response.ExamRegistrationResponseDTO, error) {
+	var idempKey string
+	if len(idempotencyKey) > 0 {
+		idempKey = strings.TrimSpace(idempotencyKey[0])
+	}
+
+	var cacheKey string
+	if idempKey != "" {
+		cacheKey = fmt.Sprintf("hsk:idemp:reg:%d:%s", candidateID, idempKey)
+		if s.cache != nil && s.cache.Enabled() {
+			var cached response.ExamRegistrationResponseDTO
+			if hit, _ := s.cache.Get(ctx, cacheKey, &cached); hit {
+				return cached, nil
+			}
+		}
+	}
+
 	var regID int64
 	err := s.db.QueryRowContext(ctx, "SELECT fn_book_exam_seat($1, $2, 15)", candidateID, req.ExamSessionID).Scan(&regID)
 	if err != nil {
+		if strings.Contains(err.Error(), "DUPLICATE_REGISTRATION") {
+			// Graceful State Resolution: Check if candidate already has an active pending_payment registration for this session
+			var existing entities.ExamRegistrationEntity
+			lookupErr := s.db.QueryRowContext(ctx, `
+				SELECT exam_registration_id, exam_registration_candidate_id,
+				       exam_registration_exam_session_id, exam_registration_exam_seat_id,
+				       exam_registration_status, exam_registration_registered_at
+				FROM exam_registrations
+				WHERE exam_registration_candidate_id = $1
+				  AND exam_registration_exam_session_id = $2
+				  AND exam_registration_status = 'pending_payment'
+				  AND exam_registration_is_deleted = FALSE
+				ORDER BY exam_registration_registered_at DESC
+				LIMIT 1`, candidateID, req.ExamSessionID,
+			).Scan(
+				&existing.ExamRegistrationID, &existing.ExamRegistrationCandidateID,
+				&existing.ExamRegistrationExamSessionID, &existing.ExamRegistrationExamSeatID,
+				&existing.ExamRegistrationStatus, &existing.ExamRegistrationRegisteredAt,
+			)
+			if lookupErr == nil {
+				resolved := ToRegistrationResponseDTO(existing)
+				if cacheKey != "" && s.cache != nil && s.cache.Enabled() {
+					_ = s.cache.Set(ctx, cacheKey, resolved, 5*time.Minute)
+				}
+				return resolved, nil
+			}
+		}
 		if mapped := mapBookingError(err, "Bạn đã đăng ký ca thi này rồi"); mapped != nil {
 			return response.ExamRegistrationResponseDTO{}, mapped
 		}
@@ -131,6 +181,10 @@ func (s *Service) ReserveSeat(ctx context.Context, req request.ReserveSeatReques
 			"seat_id":         result.SeatID,
 			"status":          result.Status,
 		})
+	}
+
+	if cacheKey != "" && s.cache != nil && s.cache.Enabled() {
+		_ = s.cache.Set(ctx, cacheKey, result, 5*time.Minute)
 	}
 
 	return result, nil

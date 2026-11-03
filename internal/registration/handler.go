@@ -34,17 +34,19 @@ func (h *Handler) getCandidateID(c *gin.Context) (int64, bool) {
 
 // ReserveSeat POST /me/registrations
 // @Summary Giữ chỗ / Đăng ký thi
-// @Description Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái chờ thanh toán.
+// @Description Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái chờ thanh toán. Hỗ trợ Idempotency-Key và Graceful Duplicate Resolution.
 // @Tags Registration
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Khóa Idempotency chống trùng lặp request (UUID)"
 // @Param request body request.ReserveSeatRequestDTO true "Dữ liệu yêu cầu"
-// @Success 200 {object} map[string]interface{} "Thành công"
+// @Success 200 {object} map[string]interface{} "Thành công (trả về bản ghi đã giữ ghế hoặc hit idempotency)"
+// @Success 201 {object} map[string]interface{} "Tạo mới thành công"
 // @Failure 400 {object} map[string]interface{} "Dữ liệu yêu cầu không hợp lệ"
 // @Failure 401 {object} map[string]interface{} "Chưa xác thực (Thiếu token hoặc token hết hạn)"
 // @Failure 403 {object} map[string]interface{} "Không có quyền truy cập"
-// @Failure 409 {object} map[string]interface{} "Ghế đã có người giữ/đặt"
+// @Failure 409 {object} map[string]interface{} "Ghế đã có người giữ/đặt hoặc đã đăng ký xong"
 // @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
 // @Router /me/registrations [post]
 func (h *Handler) ReserveSeat(c *gin.Context) {
@@ -61,7 +63,8 @@ func (h *Handler) ReserveSeat(c *gin.Context) {
 	if !ok {
 		return
 	}
-	reg, err := h.svc.ReserveSeat(c.Request.Context(), req, candidateID)
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	reg, err := h.svc.ReserveSeat(c.Request.Context(), req, candidateID, idempotencyKey)
 	if err != nil {
 		utils.Conflict(c, err.Error())
 		return
@@ -560,21 +563,22 @@ func (h *Handler) AdminCheckDiscrepancies(c *gin.Context) {
 }
 
 // AdminExportRegistrations GET /admin/registration-results/export
-// @Summary Xuất danh sách kết quả đăng ký ra PDF hoặc Excel/CSV (Admin)
-// @Description Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng đủ điều kiện sang tệp PDF hoặc Excel (CSV UTF-8 BOM).
+// @Summary Xuất danh sách kết quả đăng ký thi HSK (Native Excel .xlsx, PDF, JSON .txt) (Admin)
+// @Description Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng đủ điều kiện sang tệp Native Excel (.xlsx), PDF hoặc Raw JSON (.txt) qua chunked streaming pipeline (O(1) RAM, phát hiện sớm 0 dòng, timeout 30s).
 // @Tags Registration
-// @Produce application/octet-stream
+// @Produce application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,text/plain,application/octet-stream
 // @Security BearerAuth
 // @Param period_id query int false "ID đợt thi"
 // @Param session_id query int false "ID ca thi"
-// @Param format query string true "Định dạng xuất: pdf, excel, csv"
+// @Param format query string true "Định dạng xuất: excel, xlsx, pdf, json, txt, csv"
 // @Param eligibility query string false "Lọc điều kiện: eligible, ineligible, pending_review, all"
 // @Param registration_status query string false "Lọc trạng thái ĐK: confirmed, pending_payment, cancelled, all"
 // @Param slot_scope query string false "Lọc số ca đăng ký: single, multiple, all"
 // @Param search query string false "Tìm theo tên, CCCD, SĐT, email"
-// @Success 200 {file} binary "Tệp PDF hoặc CSV"
-// @Failure 400 {object} map[string]interface{} "Tham số không hợp lệ"
-// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ"
+// @Param search_query query string false "Bí danh tìm kiếm (đồng bộ với bảng dữ liệu)"
+// @Success 200 {file} binary "Tệp xuất dữ liệu kết quả đăng ký (ket-qua-dang-ky-DD-MM-YYYY.<ext>)"
+// @Failure 400 {object} map[string]interface{} "Tham số không hợp lệ hoặc không có dữ liệu phù hợp"
+// @Failure 500 {object} map[string]interface{} "Lỗi hệ thống nội bộ hoặc quá thời gian chờ"
 // @Router /admin/registration-results/export [get]
 func (h *Handler) AdminExportRegistrations(c *gin.Context) {
 	var req request.AdminExportRegistrationsRequestDTO

@@ -959,6 +959,9 @@ cascade path. Any change to a denial rule must update those tables.
 
 ### Exam period ↔ session cascade (single transaction)
 
+- **Publish period** — child sessions in `draft` with valid schedule (`date`, `capacity > 0`,
+  `registration_deadline`) automatically cascade to `open` (or `scheduled` if `publish_at > NOW()`).
+  Eliminates the circular deadlock between parent period and child sessions.
 - **Close period registration** — child sessions with effective `open` become
   `closed` + `period_closed`; children already closed for another reason keep
   their reason; `scheduled` children are cancelled back to `draft` with
@@ -1426,3 +1429,11 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
    - `POST /api/v1/admin/registrations/:id/cancel` delegates paid/pending-payment transactions to `payment.Service.AdminCancelPaymentAs` (releasing the seat to `available` and transitioning paid transactions to `pending_refund`), or cancels unpaid registrations atomically when no payment row exists yet.
    - `POST /api/v1/admin/registrations/:id/transfer` reuses PostgreSQL `fn_transfer_registration` to switch slots atomically while preserving payment status.
    - `GET /api/v1/admin/registration-results/export` reuses `candidate.PDFUnicodeFont()` (`NotoSerifSC.ttf`) for PDF exports so the 25MB font is never embedded twice in the binary.
+4. **High-Performance Export Pipeline & Data Privacy:**
+   - `GET /api/v1/admin/registration-results/export` generates **Native Excel (`.xlsx`)** via `excelize.StreamWriter` (bypassing heavy in-memory cell trees), **PDF (`.pdf`)** via `fpdf` page streaming, or **Raw JSON (`.txt`)** via chunked pretty-printed streaming with periodic `http.Flusher.Flush()` calls.
+   - Dynamic filename format: `ket-qua-dang-ky-DD-MM-YYYY.<ext>` derived from the exam slot date or current execution date, removing legacy hardcoded batch suffixes (`-dot-x`).
+   - Early zero-row detection: If filters match 0 candidates, returns HTTP 400 Bad Request with `{"statusCode": 400, "message": "Không có dữ liệu đăng ký phù hợp với bộ lọc đã chọn", "error": "Bad Request"}` without generating corrupted or empty files.
+   - Timeout and cancellation: Wrapped in `context.WithTimeout(ctx, 30*time.Second)` and actively checks `select { case <-ctx.Done(): return ctx.Err() }` in row iteration loop to cleanly cancel queries and abort streaming upon network drop or client disconnect.
+5. **Registration Idempotency & Race Condition (Double-Click Prevention):**
+   - `POST /api/v1/me/registrations` supports the `Idempotency-Key: <uuid>` header. When provided, the first successful booking result is stored in Redis under `hsk:idemp:reg:<candidate_id>:<idempotency_key>` for 5 minutes. Subsequent duplicate requests bypass DB calls and return the cached registration.
+   - Graceful Duplicate Fallback: If `fn_book_exam_seat` throws `DUPLICATE_REGISTRATION` (e.g. concurrent race condition or missing header), the service verifies whether the candidate already has an active `pending_payment` registration for this session; if found, it returns that registration with HTTP 200/201 instead of surfacing a 409 Conflict.

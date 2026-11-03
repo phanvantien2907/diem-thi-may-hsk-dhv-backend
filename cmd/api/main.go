@@ -112,6 +112,7 @@ func main() {
 	examSvc.SetCache(cacheSvc)
 	resSvc.SetCache(cacheSvc)
 	candSvc.SetCache(cacheSvc)
+	regSvc.SetCache(cacheSvc)
 	middleware.SetAuthCache(cacheSvc)
 
 	// ── WebSocket Hub ────────────────────────────────────────────────────

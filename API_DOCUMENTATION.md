@@ -8,6 +8,12 @@
 
 ## Changelog
 
+### v1.2.5 (2026-11-03)
+- ⚡ **Giải quyết Deadlock State Machine & Top-Down Transactional Cascade**:
+  - Triệt tiêu hoàn toàn vòng lặp bế tắc (circular deadlock) giữa Đợt thi cha (`exam_periods`) và Ca thi con (`exam_sessions`):
+    - Sửa định nghĩa `valid_session_count` trong `periodMetrics`: tính các ca thi con đang ở trạng thái `draft` nhưng đã hoàn thiện cấu hình (`date`, `capacity > 0`, `registration_deadline`) là ca thi hợp lệ để công bố đợt thi cha.
+    - Triển khai **Top-Down Transactional Cascade (ACID)** trong `POST /api/v1/admin/exam-periods/:id/publish`: Trong duy nhất một transaction, khi công bố đợt thi cha, tự động cascade cập nhật toàn bộ các ca thi con hợp lệ thuộc đợt từ `draft` sang `open` (hoặc `scheduled` nếu có hẹn giờ `publish_at` trong tương lai), xóa cache Redis đồng bộ.
+
 ### v1.2.4 (2026-10-28)
 - 🔄 **Viết lại toàn bộ State Machine của module Exam** theo chuẩn nghiệp vụ mới:
   - **Đợt thi:** `draft → published → registration_open → registration_closed → completed`, nhánh `cancelled`. Loại bỏ trạng thái `rescheduled` — dời lịch **không** đổi trạng thái mà chỉ ghi `original_date`, tăng `reschedule_count` và cascade ngày của ca con.
@@ -2368,7 +2374,12 @@ Các trạng thái khác trả 409.
 
 **Request Body:** Không cần.
 
-**Điều kiện:** cần **≥ 1 ca thi hợp lệ** trong đợt; ngược lại 409.
+**Điều kiện:** Cần **≥ 1 ca thi hợp lệ** trong đợt (đã cấu hình ngày thi `date`, sức chứa `capacity > 0`, hạn đăng ký `registration_deadline`); ngược lại trả HTTP 409 `INVALID_STATE_TRANSITION`.
+
+**Transactional Cascade (ACID):**
+- Trong **cùng một database transaction**, khi đợt thi cha chuyển sang `published`, hệ thống tự động cascade cập nhật toàn bộ các ca thi con hợp lệ thuộc đợt đang ở trạng thái `draft` sang `open` (hoặc `scheduled` nếu có thời điểm hẹn giờ `publish_at` trong tương lai).
+- Triệt tiêu hoàn toàn vòng lặp bế tắc (circular deadlock) giữa thực thể cha và thực thể con.
+- Tự động xóa bộ nhớ đệm (Redis Cache Invalidation) cho danh sách đợt thi và ca thi liên quan.
 
 **Response (200 OK):** `ExamPeriodResponseDTO` với `status = "published"`.
 
@@ -2522,9 +2533,14 @@ ngược lại 409.
 |---|---|
 | **Endpoint** | `POST /api/v1/me/registrations` |
 | **Auth** | 🔐 JWT |
+| **Headers** | `Idempotency-Key`: string (Tùy chọn — UUID duy nhất từ client để kích hoạt bộ nhớ đệm Idempotency) |
 | **Use-case** | Thí sinh chọn ca thi → hệ thống tự động giữ ghế 15 phút → tạo đơn đăng ký `pending_payment` |
 
 > **⚠️ Quan trọng:** Ghế được giữ tối đa **15 phút**. Nếu không thanh toán trong thời gian này, ghế tự động được trả lại.
+
+**Cơ chế Idempotency & Race Condition (Double-click Safe):**
+1. **Khóa Idempotency (Redis Cache)**: Khi client đính kèm header `Idempotency-Key`, phản hồi thành công đầu tiên được cache tại Redis (TTL 5 phút). Bất kỳ request nào gửi lại cùng `Idempotency-Key` sẽ trả về ngay kết quả đã lưu mà không ghi lại DB.
+2. **Graceful Duplicate Resolution**: Khi xảy ra xung đột đăng ký trùng (`DUPLICATE_REGISTRATION`), nếu thí sinh đã có phiếu đăng ký ở trạng thái `pending_payment` cho ca thi đó, hệ thống sẽ tự động trả về phiếu đăng ký đó với HTTP 200/201 thay vì ném lỗi 409 Conflict.
 
 **Request Body:**
 
@@ -2538,7 +2554,7 @@ ngược lại 409.
 |---|---|---|---|---|
 | `exam_session_id` | `integer` | ✅ | Min 1 | ID ca thi muốn đăng ký |
 
-**Response (201 Created):**
+**Response (201 Created / 200 OK):**
 
 ```json
 {
@@ -2572,7 +2588,7 @@ ngược lại 409.
 | Code | Thông báo | Nguyên nhân |
 |---|---|---|
 | `409` | `"Không còn ghế trống"` | Hết chỗ |
-| `409` | `"Bạn đã đăng ký ca thi này"` | Đăng ký trùng |
+| `409` | `"Bạn đã đăng ký ca thi này rồi"` | Đã đăng ký và đã hoàn tất thanh toán (`confirmed`) từ trước |
 
 ---
 
@@ -2874,11 +2890,42 @@ Phân hệ **Kết quả Đăng ký (Registration Results)** cho phép Admin the
 - **Query Params:** `period_id` (tùy chọn), `session_id` (tùy chọn).
 - **Response (200 OK):** Mảng `SlotDiscrepancyDTO` liệt kê các ca thi có `confirmed_registrations != booked_seats`, `pending_payment_registrations != held_seats`, hoặc `unpaid_confirmed_registrations > 0`.
 
-#### 5.11.7. Xuất danh sách đăng ký (PDF / Excel CSV)
+#### 5.11.7. Xuất danh sách đăng ký thi HSK (Native Excel .xlsx / PDF / JSON .txt)
 - **Endpoint:** `GET /api/v1/admin/registration-results/export`
 - **Auth:** 🔐 JWT + Admin
-- **Query Params:** `period_id` hoặc `session_id` (bắt buộc ít nhất 1), `format` (`pdf` | `excel` | `csv`), `eligibility`, `registration_status`, `slot_scope`, `search`.
-- **Response (200 OK):** File binary `.pdf` (font Unicode Việt-Trung `NotoSerifSC`) hoặc `.csv` (có UTF-8 BOM mở trực tiếp bằng Microsoft Excel), đồng thời ghi nhận `EXPORT` trong `audit_logs`.
+- **Query Params:**
+  - `period_id` (int, tùy chọn): Lọc theo ID đợt thi.
+  - `session_id` (int, tùy chọn): Lọc theo ID ca thi (Bắt buộc ít nhất một trong hai: `period_id` hoặc `session_id`).
+  - `format` (string, bắt buộc): Định dạng xuất, chấp nhận: `excel` hoặc `xlsx` (Native OpenXML spreadsheet), `pdf` (Tài liệu in ấn A4), `json` hoặc `txt` (Dữ liệu JSON thô dạng văn bản), `csv` (tương thích ngược định dạng text/json).
+  - `eligibility` (string, tùy chọn): Lọc điều kiện dự thi (`eligible`, `ineligible`, `pending_review`, `all`).
+  - `registration_status` (string, tùy chọn): Lọc trạng thái đăng ký (`confirmed`, `pending_payment`, `cancelled`, `all`).
+  - `slot_scope` (string, tùy chọn): Lọc theo phạm vi đăng ký (`single`, `multiple`, `all`).
+  - `search` hoặc `search_query` (string, tùy chọn): Tìm kiếm từ khóa theo Tên thí sinh, CCCD, Số điện thoại hoặc Email.
+- **Header phản hồi:**
+  - `Content-Disposition: attachment; filename="ket-qua-dang-ky-DD-MM-YYYY.<ext>"` (Đặt tên động theo định dạng ngày thi của ca hoặc ngày hiện tại, loại bỏ hậu tố cứng `-dot-x`).
+  - `Content-Type`: 
+    - `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (cho `.xlsx`)
+    - `application/pdf` (cho `.pdf`)
+    - `text/plain; charset=utf-8` (cho `.txt`)
+- **Kiến trúc High-Performance Streaming & Chống OOM**:
+  - Không nạp toàn bộ danh sách kết quả vào slice RAM. Pipeline sử dụng database cursor đọc từng dòng dữ liệu và stream trực tiếp ra socket qua `http.ResponseWriter`.
+  - **Excel (`.xlsx`)**: Sinh tệp OpenXML chuẩn bằng `excelize.StreamWriter`, thiết lập độ rộng cột trước khi stream từng dòng dữ liệu, giải phóng toàn bộ DOM cây cell khỏi RAM.
+  - **JSON (`.txt`)**: Ghi mảng JSON `[\n`, định dạng pretty-print từng bản ghi và định kỳ gọi `http.Flusher.Flush()` (mỗi 50 bản ghi) để giảm thiểu tối đa Time-To-First-Byte (TTFB).
+  - **PDF (`.pdf`)**: Phân trang động (22 dòng/trang) trực tiếp từ cursor và nhúng font Unicode `NotoSerifSC`.
+- **Bảo mật Dữ liệu (Decree 13/2023 Compliance)**:
+  - Tất cả danh sách xuất hàng loạt đều được che giấu PII tự động (`091***678`, `040***234`). Dữ liệu thô nguyên bản chỉ xem được qua endpoint chi tiết cá nhân có kiểm toán.
+- **Xử lý Ngoại lệ & Chống Treo Hệ thống**:
+  - **Phát hiện sớm 0 dòng**: Nếu bộ lọc trả về 0 bản ghi, hệ thống không xuất tệp rỗng mà trả về ngay HTTP 400 Bad Request:
+    ```json
+    {
+      "statusCode": 400,
+      "message": "Không có dữ liệu đăng ký phù hợp với bộ lọc đã chọn",
+      "error": "Bad Request"
+    }
+    ```
+  - **Timeout 30s**: Truy vấn được bọc bởi `context.WithTimeout(ctx, 30*time.Second)` tránh việc query phân tích treo connection pool.
+  - **Hủy tác vụ khi mất kết nối**: Chủ động bắt `ctx.Done()`, ngắt ngay lập tức truy vấn PostgreSQL và đóng cursor giải phóng tài nguyên server khi client ngắt kết nối giữa chừng.
+- **Ghi nhận Audit Log**: Tự động ghi nhật ký `EXPORT` với số lượng bản ghi thực tế được xuất vào bảng `audit_logs`.
 
 #### 5.11.8. Admin hủy đăng ký thi (Nhả ghế & kích hoạt hoàn tiền)
 - **Endpoint:** `POST /api/v1/admin/registrations/:id/cancel`

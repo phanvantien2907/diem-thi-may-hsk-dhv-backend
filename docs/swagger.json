@@ -3414,14 +3414,17 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng đủ điều kiện sang tệp PDF hoặc Excel (CSV UTF-8 BOM).",
+                "description": "Xuất danh sách thí sinh lọc theo đợt thi hoặc ca thi và tình trạng đủ điều kiện sang tệp Native Excel (.xlsx), PDF hoặc Raw JSON (.txt) qua chunked streaming pipeline (O(1) RAM, phát hiện sớm 0 dòng, timeout 30s).",
                 "produces": [
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/pdf",
+                    "text/plain",
                     "application/octet-stream"
                 ],
                 "tags": [
                     "Registration"
                 ],
-                "summary": "Xuất danh sách kết quả đăng ký ra PDF hoặc Excel/CSV (Admin)",
+                "summary": "Xuất danh sách kết quả đăng ký thi HSK (Native Excel .xlsx, PDF, JSON .txt) (Admin)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -3437,7 +3440,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Định dạng xuất: pdf, excel, csv",
+                        "description": "Định dạng xuất: excel, xlsx, pdf, json, txt, csv",
                         "name": "format",
                         "in": "query",
                         "required": true
@@ -3465,24 +3468,30 @@
                         "description": "Tìm theo tên, CCCD, SĐT, email",
                         "name": "search",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bí danh tìm kiếm (đồng bộ với bảng dữ liệu)",
+                        "name": "search_query",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Tệp PDF hoặc CSV",
+                        "description": "Tệp xuất dữ liệu kết quả đăng ký (ket-qua-dang-ky-DD-MM-YYYY.\u003cext\u003e)",
                         "schema": {
                             "type": "file"
                         }
                     },
                     "400": {
-                        "description": "Tham số không hợp lệ",
+                        "description": "Tham số không hợp lệ hoặc không có dữ liệu phù hợp",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                        "description": "Lỗi hệ thống nội bộ hoặc quá thời gian chờ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6088,7 +6097,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái chờ thanh toán.",
+                "description": "Chọn ca thi, giữ ghế (15 phút) và tạo đơn đăng ký thi trạng thái chờ thanh toán. Hỗ trợ Idempotency-Key và Graceful Duplicate Resolution.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6101,6 +6110,12 @@
                 "summary": "Giữ chỗ / Đăng ký thi",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Khóa Idempotency chống trùng lặp request (UUID)",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Dữ liệu yêu cầu",
                         "name": "request",
                         "in": "body",
@@ -6112,7 +6127,14 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Thành công",
+                        "description": "Thành công (trả về bản ghi đã giữ ghế hoặc hit idempotency)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "201": {
+                        "description": "Tạo mới thành công",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6140,7 +6162,7 @@
                         }
                     },
                     "409": {
-                        "description": "Ghế đã có người giữ/đặt",
+                        "description": "Ghế đã có người giữ/đặt hoặc đã đăng ký xong",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

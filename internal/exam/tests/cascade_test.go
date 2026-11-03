@@ -384,3 +384,89 @@ func TestAdminCloseRegistration_RejectsClosedPeriod(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestAdminPublishExamPeriod_CascadesToValidDraftSessions covers draft → published
+// plus the automatic top-down cascade transitioning valid draft child sessions to open/scheduled.
+func TestAdminPublishExamPeriod_CascadesToValidDraftSessions(t *testing.T) {
+	svc, mock := newMockService(t)
+	now := time.Now()
+	start := now.Add(96 * time.Hour)
+	end := now.Add(120 * time.Hour)
+	regStart := now.Add(24 * time.Hour)
+	deadline := now.Add(72 * time.Hour)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(lockPeriodSQL).
+		WithArgs(int64(11)).
+		WillReturnRows(cascadePeriodRow(11, enum.PeriodStatusDraft, &start, &end, &regStart, &deadline, 2, 0))
+	mock.ExpectQuery(`UPDATE exam_periods(?: ep)?\s+SET exam_period_status = 'published'`).
+		WithArgs(int64(11)).
+		WillReturnRows(cascadePeriodOnlyRow(11, enum.PeriodStatusPublished, &start, &end, &regStart, &deadline))
+	mock.ExpectExec(`UPDATE exam_sessions\s+SET exam_session_status = CASE`).
+		WithArgs(int64(11)).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	got, err := svc.AdminPublishExamPeriod(context.Background(), 11, 42)
+	if err != nil {
+		t.Fatalf("AdminPublishExamPeriod() error = %v", err)
+	}
+	if got.Status != string(enum.PeriodStatusPublished) {
+		t.Fatalf("status = %q, want published", got.Status)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAdminPublishExamPeriod_RejectsPeriodWithNoValidSessions proves the guard blocks
+// publishing when a period has 0 valid child sessions.
+func TestAdminPublishExamPeriod_RejectsPeriodWithNoValidSessions(t *testing.T) {
+	svc, mock := newMockService(t)
+	now := time.Now()
+	start := now.Add(96 * time.Hour)
+	end := now.Add(120 * time.Hour)
+	regStart := now.Add(24 * time.Hour)
+	deadline := now.Add(72 * time.Hour)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(lockPeriodSQL).
+		WithArgs(int64(11)).
+		WillReturnRows(cascadePeriodRow(11, enum.PeriodStatusDraft, &start, &end, &regStart, &deadline, 0, 0))
+	mock.ExpectRollback()
+
+	_, err := svc.AdminPublishExamPeriod(context.Background(), 11, 42)
+	if !exam.IsInvalidStateTransition(err) {
+		t.Fatalf("error = %v, want InvalidStateTransitionError", err)
+	}
+	if err.Error() != "Đợt thi phải có ít nhất một ca thi hợp lệ trước khi công bố" {
+		t.Fatalf("error msg = %q, want 'Đợt thi phải có ít nhất một ca thi hợp lệ trước khi công bố'", err.Error())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAdminPublishExamPeriod_RejectsNonDraftPeriod proves already published or open
+// periods cannot be published again.
+func TestAdminPublishExamPeriod_RejectsNonDraftPeriod(t *testing.T) {
+	svc, mock := newMockService(t)
+	now := time.Now()
+	start := now.Add(96 * time.Hour)
+	end := now.Add(120 * time.Hour)
+	regStart := now.Add(-24 * time.Hour)
+	deadline := now.Add(72 * time.Hour)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(lockPeriodSQL).
+		WithArgs(int64(11)).
+		WillReturnRows(cascadePeriodRow(11, enum.PeriodStatusRegistrationOpen, &start, &end, &regStart, &deadline, 2, 4))
+	mock.ExpectRollback()
+
+	if _, err := svc.AdminPublishExamPeriod(context.Background(), 11, 42); !exam.IsInvalidStateTransition(err) {
+		t.Fatalf("error = %v, want InvalidStateTransitionError", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

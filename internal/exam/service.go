@@ -74,9 +74,10 @@ const periodMetrics = `,
 	(SELECT COUNT(*) FROM exam_sessions x
 	   WHERE x.exam_session_exam_period_id = ep.exam_period_id
 	     AND x.exam_session_is_deleted = FALSE
-	     AND x.exam_session_status NOT IN ('draft', 'cancelled')
+	     AND x.exam_session_status <> 'cancelled'
 	     AND x.exam_session_date IS NOT NULL
 	     AND x.exam_session_capacity IS NOT NULL
+	     AND x.exam_session_capacity > 0
 	     AND x.exam_session_registration_deadline IS NOT NULL) AS valid_session_count,
 	(SELECT COUNT(*) FROM exam_registrations r
 	   JOIN exam_sessions x ON x.exam_session_id = r.exam_registration_exam_session_id
@@ -1663,6 +1664,8 @@ func (s *Service) AdminUpdateExamPeriod(ctx context.Context, periodID, actorID i
 }
 
 // AdminPublishExamPeriod publishes a draft period so its sessions become visible.
+// In one atomic transaction, it updates the period status to 'published' and cascades
+// this transition to all associated valid child sessions whose status is still 'draft'.
 func (s *Service) AdminPublishExamPeriod(ctx context.Context, periodID, actorID int64) (response.ExamPeriodResponseDTO, error) {
 	now := time.Now()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1687,20 +1690,46 @@ func (s *Service) AdminPublishExamPeriod(ctx context.Context, periodID, actorID 
 		RETURNING `+periodColumns, periodID).Scan(periodScanDest(&updated)...); err != nil {
 		return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: publish period: %w", err)
 	}
-	// Scheduled children may only go live once the period itself is public.
+
+	// ── Top-Down Cascade: Tự động công bố toàn bộ ca thi con hợp lệ đang ở trạng thái draft ──
+	res, err := tx.ExecContext(ctx, `
+		UPDATE exam_sessions
+		SET exam_session_status = CASE
+		        WHEN exam_session_publish_at IS NOT NULL AND exam_session_publish_at > NOW() THEN 'scheduled'
+		        ELSE 'open'
+		    END,
+		    exam_session_closed_reason = NULL,
+		    exam_session_updated_at = NOW()
+		WHERE exam_session_exam_period_id = $1
+		  AND exam_session_is_deleted = FALSE
+		  AND exam_session_status = 'draft'
+		  AND exam_session_date IS NOT NULL
+		  AND exam_session_capacity IS NOT NULL
+		  AND exam_session_capacity > 0
+		  AND exam_session_registration_deadline IS NOT NULL`, periodID)
+	if err != nil {
+		return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: cascade publish to child sessions: %w", err)
+	}
+	cascadedSessions, _ := res.RowsAffected()
+
+	newVal, _ := json.Marshal(map[string]any{
+		"status":            "published",
+		"cascaded_sessions": cascadedSessions,
+	})
 	_ = s.auditSvc.Log(ctx, tx, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &actorID,
 		Action:         auditenum.AuditActionUpdate.String(),
 		EntityTable:    auditenum.AuditEntityExamPeriod.String(),
 		EntityID:       periodID,
-		NewValue:       json.RawMessage(`{"status":"published"}`),
+		NewValue:       newVal,
 	})
 
 	if err := tx.Commit(); err != nil {
 		return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: commit publish period: %w", err)
 	}
 	s.invalidateSessionCache(ctx)
-	return ToExamPeriodResponseDTO(updated, newPeriodState(updated), 0, nil, now), nil
+	_ = s.ClearCache(ctx)
+	return ToExamPeriodResponseDTO(updated, newPeriodState(updated), int(cascadedSessions), nil, now), nil
 }
 
 // AdminUnpublishExamPeriod returns a published period to draft. Only periods without
