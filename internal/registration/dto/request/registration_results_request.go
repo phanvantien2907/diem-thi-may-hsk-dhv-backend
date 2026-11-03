@@ -23,7 +23,7 @@ type AdminListSlotRegistrationsRequestDTO struct {
 type AdminExportRegistrationsRequestDTO struct {
 	PeriodID           int64  `form:"period_id"`
 	SessionID          int64  `form:"session_id"`
-	Format             string `form:"format" validate:"required,oneof=pdf excel csv"` // pdf | excel | csv
+	Format             string `form:"format" validate:"required,oneof=pdf excel xlsx csv json txt"` // pdf | excel | xlsx | csv | json | txt
 	Eligibility        string `form:"eligibility" validate:"omitempty"`               // eligible | ineligible | pending_review | all
 	RegistrationStatus string `form:"registration_status" validate:"omitempty"`       // confirmed | pending_payment | all
 	SlotScope          string `form:"slot_scope" validate:"omitempty"`                // single | multiple | all

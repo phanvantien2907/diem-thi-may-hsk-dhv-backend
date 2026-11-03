@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/hskvinh/backend/internal/utils"
 	"github.com/hskvinh/backend/internal/ws"
 	"github.com/lib/pq"
+	"github.com/xuri/excelize/v2"
 )
 
 const (
@@ -1479,16 +1481,42 @@ type registrationExportRecord struct {
 	RegisteredAt        time.Time
 }
 
+// ErrNoExportData is returned when the export query yields 0 matching candidate records.
+var ErrNoExportData = errors.New("Không có dữ liệu đăng ký phù hợp với bộ lọc đã chọn")
+
 // AdminExportRegistrations exports the filtered registration list for an exam slot or period
-// to either PDF (using the shared NotoSerifSC UTF-8 font) or Excel-compatible UTF-8 BOM CSV,
-// and logs an EXPORT audit event.
+// to either PDF, Native Excel (.xlsx), or JSON (.txt) and logs an EXPORT audit event.
+// It uses AdminStreamExportRegistrations internally with an in-memory buffer.
 func (s *Service) AdminExportRegistrations(ctx context.Context, adminID int64, req request.AdminExportRegistrationsRequestDTO) ([]byte, string, string, error) {
+	var buf bytes.Buffer
+	var resFilename, resContentType string
+	err := s.AdminStreamExportRegistrations(ctx, adminID, req, func(filename, contentType string) error {
+		resFilename = filename
+		resContentType = contentType
+		return nil
+	}, &buf)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return buf.Bytes(), resContentType, resFilename, nil
+}
+
+// AdminStreamExportRegistrations streams the exported registration list directly to an io.Writer
+// with an O(1) memory pipeline, database cursor streaming, context cancellation monitoring,
+// and early zero-row detection.
+func (s *Service) AdminStreamExportRegistrations(
+	ctx context.Context,
+	adminID int64,
+	req request.AdminExportRegistrationsRequestDTO,
+	setupHeader func(filename, contentType string) error,
+	w io.Writer,
+) error {
 	if req.PeriodID <= 0 && req.SessionID <= 0 {
-		return nil, "", "", errors.New("Bắt buộc chọn đợt thi (period_id) hoặc ca thi (session_id) để xuất danh sách")
+		return errors.New("Bắt buộc chọn đợt thi (period_id) hoặc ca thi (session_id) để xuất danh sách")
 	}
 	format := strings.ToLower(strings.TrimSpace(req.Format))
-	if format != "pdf" && format != "excel" && format != "csv" {
-		return nil, "", "", errors.New("Định dạng xuất không hợp lệ (chấp nhận: pdf, excel, csv)")
+	if format != "pdf" && format != "excel" && format != "xlsx" && format != "csv" && format != "json" && format != "txt" {
+		return errors.New("Định dạng xuất không hợp lệ (chấp nhận: excel, pdf, json, txt)")
 	}
 
 	searchKeyword := strings.TrimSpace(req.Search)
@@ -1506,7 +1534,7 @@ func (s *Service) AdminExportRegistrations(ctx context.Context, adminID int64, r
 		searchKeyword,
 	)
 	if err != nil {
-		return nil, "", "", err
+		return err
 	}
 
 	exportQuery := slotCandidatesCTE + `
@@ -1542,76 +1570,86 @@ func (s *Service) AdminExportRegistrations(ctx context.Context, adminID int64, r
 		WHERE ` + whereClause + `
 		ORDER BY es.exam_session_date ASC, es.exam_session_shift ASC, seat.exam_seat_number ASC, er.exam_registration_id ASC`
 
-	rows, err := s.db.QueryContext(ctx, exportQuery, args...)
+	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	rows, err := s.db.QueryContext(queryCtx, exportQuery, args...)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("registration: export query: %w", err)
+		return fmt.Errorf("registration: export query: %w", err)
 	}
 	defer rows.Close()
 
-	records := make([]registrationExportRecord, 0, 64)
-	for rows.Next() {
-		var (
-			rec               registrationExportRecord
-			rejectionReason   string
-			hasPortraitPhoto  bool
-			hasIdentityPhotos bool
-		)
-		if err := rows.Scan(
-			&rec.RegistrationID,
-			&rec.PeriodName,
-			&rec.SessionID,
-			&rec.ExamTypeName,
-			&rec.ExamDate,
-			&rec.Shift,
-			&rec.RoomName,
-			&rec.SeatNumber,
-			&rec.FullName,
-			&rec.FullNameCN,
-			&rec.DOB,
-			&rec.Gender,
-			&rec.Phone,
-			&rec.Email,
-			&rec.DocType,
-			&rec.DocNumber,
-			&rec.VerificationStatus,
-			&rejectionReason,
-			&hasPortraitPhoto,
-			&hasIdentityPhotos,
-			&rec.RegistrationStatus,
-			&rec.PaymentStatus,
-			&rec.RegisteredSlotCount,
-			&rec.RegisteredAt,
-		); err != nil {
-			return nil, "", "", fmt.Errorf("registration: export scan: %w", err)
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("registration: export rows: %w", err)
+		}
+		return ErrNoExportData
+	}
+
+	firstRec, err := scanExportRecord(rows)
+	if err != nil {
+		return fmt.Errorf("registration: export scan first row: %w", err)
+	}
+
+	dateStr := resolveExportDateStr(firstRec.ExamDate)
+	var (
+		contentType string
+		filename    string
+	)
+
+	switch format {
+	case "pdf":
+		contentType = "application/pdf"
+		filename = fmt.Sprintf("ket-qua-dang-ky-%s.pdf", dateStr)
+
+	case "excel", "xlsx":
+		contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		filename = fmt.Sprintf("ket-qua-dang-ky-%s.xlsx", dateStr)
+
+	case "json", "txt", "csv":
+		contentType = "text/plain; charset=utf-8"
+		filename = fmt.Sprintf("ket-qua-dang-ky-%s.txt", dateStr)
+
+	default:
+		return errors.New("Định dạng xuất không hợp lệ (chấp nhận: excel, pdf, json, txt)")
+	}
+
+	if setupHeader != nil {
+		if err := setupHeader(filename, contentType); err != nil {
+			return err
+		}
+	}
+
+	var exportedCount int
+	switch format {
+	case "pdf":
+		exportedCount, err = streamRegistrationResultsPDF(queryCtx, firstRec, rows, w)
+		if err != nil {
+			return fmt.Errorf("registration: stream pdf: %w", err)
 		}
 
-		// Mask PII in exported batch lists per Decree 13/2023 (full unmasked PII is only via single profile view)
-		rec.Phone = MaskCandidatePhone(rec.Phone)
-		rec.DocNumber = MaskCandidateDocNumber(rec.DocNumber)
+	case "excel", "xlsx":
+		exportedCount, err = streamRegistrationResultsXLSX(queryCtx, firstRec, rows, w)
+		if err != nil {
+			return fmt.Errorf("registration: stream xlsx: %w", err)
+		}
 
-		eligStatus, reasons := EvaluateCandidateEligibility(
-			rec.RegistrationStatus,
-			rec.VerificationStatus,
-			rejectionReason,
-			hasIdentityPhotos,
-			hasPortraitPhoto,
-			rec.PaymentStatus,
-		)
-		rec.EligibilityStatus = eligStatus
-		rec.EligibilityReasons = strings.Join(reasons, "; ")
-		records = append(records, rec)
+	case "json", "txt", "csv":
+		exportedCount, err = streamRegistrationResultsJSON(queryCtx, firstRec, rows, w)
+		if err != nil {
+			return fmt.Errorf("registration: stream json: %w", err)
+		}
 	}
+
 	if err := rows.Err(); err != nil {
-		return nil, "", "", fmt.Errorf("registration: export rows: %w", err)
+		return fmt.Errorf("registration: export rows: %w", err)
 	}
 
 	entityTable := auditenum.AuditEntityExamSession.String()
 	entityID := req.SessionID
-	scopeSlug := fmt.Sprintf("ca-%d", req.SessionID)
 	if req.PeriodID > 0 && req.SessionID <= 0 {
 		entityTable = auditenum.AuditEntityExamPeriod.String()
 		entityID = req.PeriodID
-		scopeSlug = fmt.Sprintf("dot-%d", req.PeriodID)
 	}
 
 	auditVal, _ := json.Marshal(map[string]any{
@@ -1621,7 +1659,7 @@ func (s *Service) AdminExportRegistrations(ctx context.Context, adminID int64, r
 		"eligibility":         req.Eligibility,
 		"registration_status": req.RegistrationStatus,
 		"slot_scope":          req.SlotScope,
-		"exported_count":      len(records),
+		"exported_count":      exportedCount,
 	})
 	_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
 		ActorAccountID: &adminID,
@@ -1631,77 +1669,316 @@ func (s *Service) AdminExportRegistrations(ctx context.Context, adminID int64, r
 		NewValue:       auditVal,
 	})
 
-	if format == "pdf" {
-		data, err := buildRegistrationResultsPDF(records)
-		if err != nil {
-			return nil, "", "", fmt.Errorf("registration: build pdf: %w", err)
-		}
-		filename := fmt.Sprintf("ket-qua-dang-ky-%s.pdf", scopeSlug)
-		return data, "application/pdf", filename, nil
-	}
-
-	data, err := buildRegistrationResultsCSV(records)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("registration: build csv: %w", err)
-	}
-	filename := fmt.Sprintf("ket-qua-dang-ky-%s.csv", scopeSlug)
-	return data, "text/csv; charset=utf-8", filename, nil
+	return nil
 }
 
-func buildRegistrationResultsCSV(records []registrationExportRecord) ([]byte, error) {
-	var buf bytes.Buffer
-	// Write UTF-8 BOM so Microsoft Excel opens Vietnamese & Chinese characters cleanly
-	buf.Write([]byte{0xEF, 0xBB, 0xBF})
+// scanExportRecord scans one candidate row from the database cursor and applies Decree 13/2023 PII masking.
+func scanExportRecord(rows *sql.Rows) (registrationExportRecord, error) {
+	var (
+		rec               registrationExportRecord
+		rejectionReason   string
+		hasPortraitPhoto  bool
+		hasIdentityPhotos bool
+	)
+	if err := rows.Scan(
+		&rec.RegistrationID,
+		&rec.PeriodName,
+		&rec.SessionID,
+		&rec.ExamTypeName,
+		&rec.ExamDate,
+		&rec.Shift,
+		&rec.RoomName,
+		&rec.SeatNumber,
+		&rec.FullName,
+		&rec.FullNameCN,
+		&rec.DOB,
+		&rec.Gender,
+		&rec.Phone,
+		&rec.Email,
+		&rec.DocType,
+		&rec.DocNumber,
+		&rec.VerificationStatus,
+		&rejectionReason,
+		&hasPortraitPhoto,
+		&hasIdentityPhotos,
+		&rec.RegistrationStatus,
+		&rec.PaymentStatus,
+		&rec.RegisteredSlotCount,
+		&rec.RegisteredAt,
+	); err != nil {
+		return rec, err
+	}
 
-	w := csv.NewWriter(&buf)
-	headers := []string{
-		"STT", "Mã ĐK", "Đợt thi", "Ca thi", "Cấp độ", "Ngày thi", "Ca", "Phòng thi", "Số ghế",
+	// Mask PII in exported batch lists per Decree 13/2023
+	rec.Phone = MaskCandidatePhone(rec.Phone)
+	rec.DocNumber = MaskCandidateDocNumber(rec.DocNumber)
+
+	eligStatus, reasons := EvaluateCandidateEligibility(
+		rec.RegistrationStatus,
+		rec.VerificationStatus,
+		rejectionReason,
+		hasIdentityPhotos,
+		hasPortraitPhoto,
+		rec.PaymentStatus,
+	)
+	rec.EligibilityStatus = eligStatus
+	rec.EligibilityReasons = strings.Join(reasons, "; ")
+	return rec, nil
+}
+
+// resolveExportDateStr determines the date string in DD-MM-YYYY format from exam date or falls back to time.Now().
+func resolveExportDateStr(examDate string) string {
+	dateStr := strings.TrimSpace(examDate)
+	if dateStr != "" {
+		if t, err := time.Parse("2006-01-02", dateStr); err == nil {
+			return t.Format("02-01-2006")
+		}
+	}
+	return time.Now().Format("02-01-2006")
+}
+
+// RegistrationExportItemJSON represents an exported candidate item formatted for human-readable and machine-parseable JSON.
+type RegistrationExportItemJSON struct {
+	STT                 int    `json:"stt"`
+	RegistrationID      int64  `json:"registration_id"`
+	PeriodName          string `json:"period_name"`
+	SessionID           int64  `json:"session_id"`
+	ExamTypeName        string `json:"exam_type_name"`
+	ExamDate            string `json:"exam_date"`
+	Shift               string `json:"shift"`
+	RoomName            string `json:"room_name"`
+	SeatNumber          string `json:"seat_number"`
+	FullName            string `json:"full_name"`
+	FullNameCN          string `json:"full_name_cn"`
+	DOB                 string `json:"dob"`
+	Gender              string `json:"gender"`
+	Phone               string `json:"phone"`
+	Email               string `json:"email"`
+	DocType             string `json:"doc_type"`
+	DocNumber           string `json:"doc_number"`
+	VerificationStatus  string `json:"verification_status"`
+	RegistrationStatus  string `json:"registration_status"`
+	PaymentStatus       string `json:"payment_status"`
+	RegisteredSlotCount int    `json:"registered_slot_count"`
+	EligibilityStatus   string `json:"eligibility_status"`
+	EligibilityReasons  string `json:"eligibility_reasons"`
+	RegisteredAt        string `json:"registered_at"`
+}
+
+func formatRegistrationExportItemJSON(index int, r registrationExportRecord) ([]byte, error) {
+	item := RegistrationExportItemJSON{
+		STT:                 index,
+		RegistrationID:      r.RegistrationID,
+		PeriodName:          r.PeriodName,
+		SessionID:           r.SessionID,
+		ExamTypeName:        r.ExamTypeName,
+		ExamDate:            r.ExamDate,
+		Shift:               r.Shift,
+		RoomName:            r.RoomName,
+		SeatNumber:          r.SeatNumber,
+		FullName:            r.FullName,
+		FullNameCN:          r.FullNameCN,
+		DOB:                 r.DOB.Format("02/01/2006"),
+		Gender:              r.Gender,
+		Phone:               r.Phone,
+		Email:               r.Email,
+		DocType:             r.DocType,
+		DocNumber:           r.DocNumber,
+		VerificationStatus:  r.VerificationStatus,
+		RegistrationStatus:  r.RegistrationStatus,
+		PaymentStatus:       r.PaymentStatus,
+		RegisteredSlotCount: r.RegisteredSlotCount,
+		EligibilityStatus:   r.EligibilityStatus,
+		EligibilityReasons:  r.EligibilityReasons,
+		RegisteredAt:        r.RegisteredAt.Format("02/01/2006 15:04:05"),
+	}
+	return json.MarshalIndent(item, "  ", "  ")
+}
+
+func streamRegistrationResultsJSON(ctx context.Context, firstRec registrationExportRecord, rows *sql.Rows, w io.Writer) (int, error) {
+	if _, err := io.WriteString(w, "[\n"); err != nil {
+		return 0, err
+	}
+
+	firstItemJSON, err := formatRegistrationExportItemJSON(1, firstRec)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := io.WriteString(w, "  "); err != nil {
+		return 0, err
+	}
+	if _, err := w.Write(firstItemJSON); err != nil {
+		return 0, err
+	}
+
+	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	count := 1
+	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			return count, ctx.Err()
+		default:
+		}
+		count++
+		rec, err := scanExportRecord(rows)
+		if err != nil {
+			return count, err
+		}
+		if _, err := io.WriteString(w, ",\n  "); err != nil {
+			return count, err
+		}
+		itemJSON, err := formatRegistrationExportItemJSON(count, rec)
+		if err != nil {
+			return count, err
+		}
+		if _, err := w.Write(itemJSON); err != nil {
+			return count, err
+		}
+		if flusher != nil && count%50 == 0 {
+			flusher.Flush()
+		}
+	}
+
+	if _, err := io.WriteString(w, "\n]\n"); err != nil {
+		return count, err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	return count, nil
+}
+
+func exportRecordToExcelRow(index int, r registrationExportRecord) []interface{} {
+	return []interface{}{
+		index,
+		r.RegistrationID,
+		r.PeriodName,
+		r.SessionID,
+		r.ExamTypeName,
+		r.ExamDate,
+		r.Shift,
+		r.RoomName,
+		r.SeatNumber,
+		r.FullName,
+		r.FullNameCN,
+		r.DOB.Format("02/01/2006"),
+		r.Gender,
+		r.Phone,
+		r.Email,
+		r.DocNumber,
+		r.VerificationStatus,
+		r.RegistrationStatus,
+		r.PaymentStatus,
+		r.RegisteredSlotCount,
+		r.EligibilityStatus,
+		r.EligibilityReasons,
+		r.RegisteredAt.Format("02/01/2006 15:04"),
+	}
+}
+
+func streamRegistrationResultsXLSX(ctx context.Context, firstRec registrationExportRecord, rows *sql.Rows, w io.Writer) (int, error) {
+	f := excelize.NewFile()
+	defer f.Close()
+
+	sheetName := "KetQuaDangKy"
+	index, err := f.NewSheet(sheetName)
+	if err != nil {
+		return 0, err
+	}
+	f.SetActiveSheet(index)
+	_ = f.DeleteSheet("Sheet1")
+
+	headerStyle, err := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Bold: true, Color: "#1F2937", Size: 11},
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"#F3F4F6"}, Pattern: 1},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center", WrapText: true},
+		Border: []excelize.Border{
+			{Type: "left", Color: "#D1D5DB", Style: 1},
+			{Type: "top", Color: "#D1D5DB", Style: 1},
+			{Type: "bottom", Color: "#9CA3AF", Style: 2},
+			{Type: "right", Color: "#D1D5DB", Style: 1},
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	dataStyle, _ := f.NewStyle(&excelize.Style{
+		Font:      &excelize.Font{Size: 10, Color: "#111827"},
+		Alignment: &excelize.Alignment{Vertical: "center"},
+		Border: []excelize.Border{
+			{Type: "left", Color: "#E5E7EB", Style: 1},
+			{Type: "top", Color: "#E5E7EB", Style: 1},
+			{Type: "bottom", Color: "#E5E7EB", Style: 1},
+			{Type: "right", Color: "#E5E7EB", Style: 1},
+		},
+	})
+
+	sw, err := f.NewStreamWriter(sheetName)
+	if err != nil {
+		return 0, err
+	}
+
+	colWidths := []float64{
+		8, 12, 26, 12, 28, 14, 12, 16, 10,
+		26, 18, 14, 10, 16, 28, 18, 18, 18,
+		16, 14, 22, 36, 20,
+	}
+	for idx, width := range colWidths {
+		if err := sw.SetColWidth(idx+1, idx+1, width); err != nil {
+			return 0, err
+		}
+	}
+
+	headers := []interface{}{
+		"STT", "Mã ĐK", "Đợt thi", "Mã ca thi", "Tên ca thi / Cấp độ", "Ngày thi", "Ca", "Phòng thi", "Số ghế",
 		"Họ và tên", "Tên tiếng Trung", "Ngày sinh", "Giới tính", "Số điện thoại", "Email",
 		"Số CCCD/Hộ chiếu", "Trạng thái hồ sơ", "Trạng thái ĐK", "Thanh toán",
 		"Số ca đăng ký", "Đánh giá điều kiện", "Ghi chú lý do", "Thời gian đăng ký",
 	}
-	if err := w.Write(headers); err != nil {
-		return nil, err
+	if err := sw.SetRow("A1", headers, excelize.RowOpts{Height: 28, StyleID: headerStyle}); err != nil {
+		return 0, err
 	}
 
-	for i, r := range records {
-		row := []string{
-			strconv.Itoa(i + 1),
-			strconv.FormatInt(r.RegistrationID, 10),
-			r.PeriodName,
-			strconv.FormatInt(r.SessionID, 10),
-			r.ExamTypeName,
-			r.ExamDate,
-			r.Shift,
-			r.RoomName,
-			r.SeatNumber,
-			r.FullName,
-			r.FullNameCN,
-			r.DOB.Format("02/01/2006"),
-			r.Gender,
-			r.Phone,
-			r.Email,
-			r.DocNumber,
-			r.VerificationStatus,
-			r.RegistrationStatus,
-			r.PaymentStatus,
-			strconv.Itoa(r.RegisteredSlotCount),
-			r.EligibilityStatus,
-			r.EligibilityReasons,
-			r.RegisteredAt.Format("02/01/2006 15:04"),
+	if err := sw.SetRow("A2", exportRecordToExcelRow(1, firstRec), excelize.RowOpts{Height: 22, StyleID: dataStyle}); err != nil {
+		return 0, err
+	}
+
+	count := 1
+	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			return count, ctx.Err()
+		default:
 		}
-		if err := w.Write(row); err != nil {
-			return nil, err
+		count++
+		rec, err := scanExportRecord(rows)
+		if err != nil {
+			return count, err
+		}
+		cell, _ := excelize.CoordinatesToCellName(1, count+1)
+		if err := sw.SetRow(cell, exportRecordToExcelRow(count, rec), excelize.RowOpts{Height: 22, StyleID: dataStyle}); err != nil {
+			return count, err
 		}
 	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return nil, err
+
+	if err := sw.Flush(); err != nil {
+		return count, err
 	}
-	return buf.Bytes(), nil
+
+	if err := f.Write(w); err != nil {
+		return count, err
+	}
+
+	return count, nil
 }
 
-func buildRegistrationResultsPDF(records []registrationExportRecord) ([]byte, error) {
+func streamRegistrationResultsPDF(ctx context.Context, firstRec registrationExportRecord, rows *sql.Rows, w io.Writer) (int, error) {
 	const rowsPerPage = 22
 	pdf := fpdf.New("L", "mm", "A4", "")
 	pdf.SetMargins(10, 10, 10)
@@ -1709,7 +1986,10 @@ func buildRegistrationResultsPDF(records []registrationExportRecord) ([]byte, er
 	pdf.AddUTF8FontFromBytes("NotoSerifSC", "", candidate.PDFUnicodeFont())
 	pdf.SetTitle("Danh sách kết quả đăng ký thi HSK", true)
 
-	for start := 0; start < len(records) || start == 0; start += rowsPerPage {
+	widths := []float64{10, 42, 22, 26, 28, 16, 14, 24, 24, 71}
+	headers := []string{"STT", "Họ và tên", "Ngày sinh", "CCCD/HC", "Cấp thi / Ca", "Ghế", "Số ca", "Hồ sơ", "Đủ ĐK", "Ghi chú"}
+
+	renderPageHeader := func() {
 		pdf.AddPage()
 		pdf.SetFont("NotoSerifSC", "", 10)
 		pdf.CellFormat(130, 5, "ĐẠI HỌC VINH", "", 0, "C", false, 0, "")
@@ -1721,51 +2001,62 @@ func buildRegistrationResultsPDF(records []registrationExportRecord) ([]byte, er
 		pdf.CellFormat(0, 7, "DANH SÁCH KẾT QUẢ ĐĂNG KÝ DỰ THI HSK", "", 1, "C", false, 0, "")
 		pdf.Ln(4)
 
-		widths := []float64{10, 42, 22, 26, 28, 16, 14, 24, 24, 71}
-		headers := []string{"STT", "Họ và tên", "Ngày sinh", "CCCD/HC", "Cấp thi / Ca", "Ghế", "Số ca", "Hồ sơ", "Đủ ĐK", "Ghi chú"}
 		pdf.SetFont("NotoSerifSC", "", 8)
 		for i, h := range headers {
 			pdf.CellFormat(widths[i], 8, h, "1", 0, "CM", false, 0, "")
 		}
 		pdf.Ln(-1)
+	}
 
-		end := start + rowsPerPage
-		if end > len(records) {
-			end = len(records)
+	renderRow := func(i int, r registrationExportRecord) {
+		note := r.EligibilityReasons
+		if note == "" {
+			note = "Đủ điều kiện dự thi"
 		}
-		for i := start; i < end; i++ {
-			r := records[i]
-			note := r.EligibilityReasons
-			if note == "" {
-				note = "Đủ điều kiện dự thi"
-			}
-			slotLabel := fmt.Sprintf("%s (%s)", r.ExamTypeName, r.ExamDate)
-			values := []string{
-				strconv.Itoa(i + 1),
-				r.FullName,
-				r.DOB.Format("02/01/2006"),
-				r.DocNumber,
-				slotLabel,
-				r.SeatNumber,
-				strconv.Itoa(r.RegisteredSlotCount),
-				r.VerificationStatus,
-				r.EligibilityStatus,
-				note,
-			}
-			for j, val := range values {
-				pdf.CellFormat(widths[j], 7.5, truncatePDFCell(pdf, val, widths[j]-2), "1", 0, "LM", false, 0, "")
-			}
-			pdf.Ln(-1)
+		slotLabel := fmt.Sprintf("%s (%s)", r.ExamTypeName, r.ExamDate)
+		values := []string{
+			strconv.Itoa(i),
+			r.FullName,
+			r.DOB.Format("02/01/2006"),
+			r.DocNumber,
+			slotLabel,
+			r.SeatNumber,
+			strconv.Itoa(r.RegisteredSlotCount),
+			r.VerificationStatus,
+			r.EligibilityStatus,
+			note,
 		}
+		for j, val := range values {
+			pdf.CellFormat(widths[j], 7.5, truncatePDFCell(pdf, val, widths[j]-2), "1", 0, "LM", false, 0, "")
+		}
+		pdf.Ln(-1)
 	}
+
+	renderPageHeader()
+	renderRow(1, firstRec)
+	count := 1
+
+	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			return count, ctx.Err()
+		default:
+		}
+		count++
+		if (count-1)%rowsPerPage == 0 {
+			renderPageHeader()
+		}
+		rec, err := scanExportRecord(rows)
+		if err != nil {
+			return count, err
+		}
+		renderRow(count, rec)
+	}
+
 	if err := pdf.Error(); err != nil {
-		return nil, err
+		return count, err
 	}
-	var out bytes.Buffer
-	if err := pdf.Output(&out); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return count, pdf.Output(w)
 }
 
 func truncatePDFCell(pdf *fpdf.Fpdf, value string, maxWidth float64) string {

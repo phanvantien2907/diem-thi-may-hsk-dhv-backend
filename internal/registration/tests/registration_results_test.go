@@ -517,8 +517,8 @@ func TestAdminCheckDiscrepancies_FiltersOnlyMismatchedSlots(t *testing.T) {
 	}
 }
 
-func TestAdminExportRegistrations_CSVAndPDF(t *testing.T) {
-	for _, format := range []string{"excel", "pdf"} {
+func TestAdminExportRegistrations_FormatsAndDynamicFilename(t *testing.T) {
+	for _, format := range []string{"excel", "pdf", "json"} {
 		t.Run(format, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			if err != nil {
@@ -561,24 +561,40 @@ func TestAdminExportRegistrations_CSVAndPDF(t *testing.T) {
 				t.Fatal("expected non-empty exported bytes")
 			}
 
+			// Format of filename must be strict: ket-qua-dang-ky-DD-MM-YYYY.<ext>
+			expectedFilenamePrefix := "ket-qua-dang-ky-15-11-2026."
+
 			if format == "excel" {
-				if !strings.HasPrefix(contentType, "text/csv") || !strings.HasSuffix(filename, ".csv") {
-					t.Errorf("got contentType=%q filename=%q", contentType, filename)
+				if contentType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+					t.Errorf("got contentType=%q, want OpenXML sheet", contentType)
 				}
-				// Verify UTF-8 BOM and masked PII in CSV
-				if !bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}) {
-					t.Error("expected UTF-8 BOM at beginning of CSV")
+				if filename != expectedFilenamePrefix+"xlsx" {
+					t.Errorf("got filename=%q, want %s", filename, expectedFilenamePrefix+"xlsx")
 				}
-				csvStr := string(data)
-				if !strings.Contains(csvStr, "091***678") || !strings.Contains(csvStr, "040***234") {
-					t.Errorf("expected masked PII in CSV output, got: %s", csvStr)
+				// Verify ZIP/XLSX magic header (PK\x03\x04)
+				if !bytes.HasPrefix(data, []byte("PK\x03\x04")) {
+					t.Error("expected PK header for native .xlsx file")
 				}
-			} else {
-				if contentType != "application/pdf" || !strings.HasSuffix(filename, ".pdf") {
-					t.Errorf("got contentType=%q filename=%q", contentType, filename)
+			} else if format == "pdf" {
+				if contentType != "application/pdf" {
+					t.Errorf("got contentType=%q, want application/pdf", contentType)
+				}
+				if filename != expectedFilenamePrefix+"pdf" {
+					t.Errorf("got filename=%q, want %s", filename, expectedFilenamePrefix+"pdf")
 				}
 				if !bytes.HasPrefix(data, []byte("%PDF")) {
 					t.Error("expected valid %PDF header")
+				}
+			} else if format == "json" {
+				if contentType != "text/plain; charset=utf-8" {
+					t.Errorf("got contentType=%q, want text/plain; charset=utf-8", contentType)
+				}
+				if filename != expectedFilenamePrefix+"txt" {
+					t.Errorf("got filename=%q, want %s", filename, expectedFilenamePrefix+"txt")
+				}
+				jsonStr := string(data)
+				if !strings.Contains(jsonStr, "091***678") || !strings.Contains(jsonStr, "040***234") {
+					t.Errorf("expected masked PII in JSON output, got: %s", jsonStr)
 				}
 			}
 
@@ -586,6 +602,144 @@ func TestAdminExportRegistrations_CSVAndPDF(t *testing.T) {
 				t.Fatalf("unmet expectations: %v", err)
 			}
 		})
+	}
+}
+
+func TestAdminExportRegistrations_ZeroRows_ReturnsErrNoExportData(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	// Return 0 rows for query
+	mock.ExpectQuery(`WITH latest_docs AS .* SELECT er\.exam_registration_id`).
+		WithArgs(int64(999)).
+		WillReturnRows(sqlmock.NewRows([]string{"exam_registration_id"}))
+
+	svc := registration.NewService(db, &fakeAudit{})
+	data, _, _, err := svc.AdminExportRegistrations(context.Background(), 1, request.AdminExportRegistrationsRequestDTO{
+		SessionID: 999,
+		Format:    "excel",
+	})
+	if err == nil {
+		t.Fatal("expected error on 0 rows, got nil")
+	}
+	if !errors.Is(err, registration.ErrNoExportData) {
+		t.Fatalf("expected ErrNoExportData, got: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected 0 bytes returned, got %d bytes", len(data))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+type cancellingWriter struct {
+	cancel context.CancelFunc
+	buf    bytes.Buffer
+}
+
+func (c *cancellingWriter) Write(p []byte) (n int, err error) {
+	n, err = c.buf.Write(p)
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil // call once
+	}
+	return n, err
+}
+
+func TestAdminStreamExportRegistrations_ContextCancellation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	dob := time.Date(2000, 8, 20, 0, 0, 0, 0, time.UTC)
+	regAt := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
+
+	rows := sqlmock.NewRows([]string{
+		"exam_registration_id", "exam_period_name", "exam_session_id", "exam_type_name",
+		"exam_session_date", "exam_session_shift", "exam_room_name", "exam_seat_number",
+		"candidate_full_name", "candidate_full_name_cn", "candidate_dob", "candidate_gender",
+		"account_phone", "account_email", "doc_type", "doc_number",
+		"verification_status", "rejection_reason", "has_portrait_photo", "has_identity_photos",
+		"exam_registration_status", "payment_status", "slot_count", "exam_registration_registered_at",
+	}).
+		AddRow(
+			int64(501), "Đợt 1", int64(101), "HSK 3", "2026-11-15", "Sáng", "P1", "A01",
+			"A", "", dob, "nam", "0912345678", "a@example.com", "cccd", "040202001234",
+			"verified", "", true, true, "confirmed", "success", 1, regAt,
+		).
+		AddRow(
+			int64(502), "Đợt 1", int64(101), "HSK 3", "2026-11-15", "Sáng", "P1", "A02",
+			"B", "", dob, "nam", "0912345679", "b@example.com", "cccd", "040202001235",
+			"verified", "", true, true, "confirmed", "success", 1, regAt,
+		)
+
+	mock.ExpectQuery(`WITH latest_docs AS .* SELECT er\.exam_registration_id`).
+		WithArgs(int64(101)).
+		WillReturnRows(rows)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cw := &cancellingWriter{cancel: cancel}
+
+	svc := registration.NewService(db, &fakeAudit{})
+	err = svc.AdminStreamExportRegistrations(ctx, 1, request.AdminExportRegistrationsRequestDTO{
+		SessionID: 101,
+		Format:    "json",
+	}, nil, cw)
+
+	if err == nil {
+		t.Fatal("expected error on cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestHandler_AdminExportRegistrations_ZeroRows_Returns400BadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`WITH latest_docs AS .* SELECT er\.exam_registration_id`).
+		WithArgs(int64(999)).
+		WillReturnRows(sqlmock.NewRows([]string{"exam_registration_id"}))
+
+	h := registration.NewHandler(registration.NewService(db, &fakeAudit{}))
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", int64(1))
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/registration-results/export?session_id=999&format=excel", nil)
+
+	h.AdminExportRegistrations(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse json response: %v", err)
+	}
+	if !strings.Contains(w.Body.String(), "Không có dữ liệu đăng ký phù hợp") {
+		t.Fatalf("expected error message in response body, got: %s", w.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
 	}
 }
 

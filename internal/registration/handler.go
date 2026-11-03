@@ -1,6 +1,8 @@
 package registration
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -581,12 +583,31 @@ func (h *Handler) AdminExportRegistrations(c *gin.Context) {
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
-		utils.BadRequest(c, "Tham số định dạng xuất (format) là bắt buộc (pdf, excel hoặc csv)")
+		utils.BadRequest(c, "Tham số định dạng xuất (format) là bắt buộc (pdf, excel, xlsx, json, txt hoặc csv)")
 		return
 	}
 	adminID := utils.MustAccountID(c)
-	data, contentType, filename, err := h.svc.AdminExportRegistrations(c.Request.Context(), adminID, req)
+
+	err := h.svc.AdminStreamExportRegistrations(c.Request.Context(), adminID, req, func(filename, contentType string) error {
+		c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+		c.Header("Content-Type", contentType)
+		c.Status(http.StatusOK)
+		return nil
+	}, c.Writer)
+
 	if err != nil {
+		if errors.Is(err, ErrNoExportData) || strings.Contains(err.Error(), "Không có dữ liệu") {
+			utils.BadRequest(c, "Không có dữ liệu đăng ký phù hợp với bộ lọc đã chọn")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			utils.InternalServerError(c, "Yêu cầu xuất dữ liệu đã quá thời gian chờ (timeout)")
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			// Client disconnected prematurely; nothing more to write
+			return
+		}
 		if strings.Contains(err.Error(), "Bắt buộc") || strings.Contains(err.Error(), "không hợp lệ") {
 			utils.BadRequest(c, err.Error())
 			return
@@ -594,8 +615,6 @@ func (h *Handler) AdminExportRegistrations(c *gin.Context) {
 		utils.InternalServerError(c, "Không thể xuất danh sách kết quả đăng ký")
 		return
 	}
-	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
-	c.Data(http.StatusOK, contentType, data)
 }
 
 // AdminCancelRegistration POST /admin/registrations/:id/cancel
