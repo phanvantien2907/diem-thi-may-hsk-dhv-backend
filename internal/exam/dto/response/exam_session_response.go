@@ -16,6 +16,9 @@ type ExamSessionResponseDTO struct {
 	Date                 *time.Time `json:"date"`
 	Shift                string     `json:"shift"`
 	Capacity             *int       `json:"capacity"`
+	RegisteredCount      int        `json:"registered_count"`
+	AvailableSeats       int        `json:"available_seats"`
+	AvailableSlots       int        `json:"available_slots"`
 	Fee                  int64      `json:"fee"`
 	RegistrationDeadline *time.Time `json:"registration_deadline"`
 	Status               string     `json:"status"`

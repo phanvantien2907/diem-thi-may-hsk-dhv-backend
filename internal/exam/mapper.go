@@ -26,6 +26,10 @@ func ToExamSessionResponseDTO(e ExamSessionEntity, st SessionState, now time.Tim
 		r := reason.String()
 		closedReason = &r
 	}
+	availableSeats := 0
+	if e.ExamSessionCapacity != nil && *e.ExamSessionCapacity > st.RegisteredCount {
+		availableSeats = *e.ExamSessionCapacity - st.RegisteredCount
+	}
 	return response.ExamSessionResponseDTO{
 		ID:                   e.ExamSessionID,
 		PeriodID:             e.ExamSessionExamPeriodID,
@@ -35,6 +39,9 @@ func ToExamSessionResponseDTO(e ExamSessionEntity, st SessionState, now time.Tim
 		Date:                 e.ExamSessionDate,
 		Shift:                string(e.ExamSessionShift),
 		Capacity:             e.ExamSessionCapacity,
+		RegisteredCount:      st.RegisteredCount,
+		AvailableSeats:       availableSeats,
+		AvailableSlots:       availableSeats,
 		Fee:                  e.ExamSessionFee,
 		RegistrationDeadline: e.ExamSessionRegistrationDeadline,
 		Status:               effective.String(),

@@ -395,7 +395,29 @@ func (s *Service) GetExamSession(ctx context.Context, id int64) (response.ExamSe
 }
 
 // ListExamSeats returns seats for a publicly visible session.
+// If the session has capacity > 0 and no seat rows have been generated yet,
+// it lazily provisions seats 1..capacity idempotently.
 func (s *Service) ListExamSeats(ctx context.Context, sessionID int64) ([]response.ExamSeatResponseDTO, error) {
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO exam_seats (exam_seat_exam_session_id, exam_seat_number, exam_seat_status)
+		SELECT sess.exam_session_id, gs, 'available'
+		FROM exam_sessions sess
+		LEFT JOIN exam_periods ep ON ep.exam_period_id = sess.exam_session_exam_period_id,
+		LATERAL generate_series(1, sess.exam_session_capacity) AS gs
+		WHERE sess.exam_session_id = $1
+		  AND sess.exam_session_is_deleted = FALSE
+		  AND sess.exam_session_capacity IS NOT NULL
+		  AND sess.exam_session_capacity > 0
+		  AND ((sess.exam_session_status IN ('open', 'closed', 'completed'))
+		       OR (sess.exam_session_status = 'scheduled' AND sess.exam_session_publish_at IS NOT NULL
+		           AND sess.exam_session_publish_at <= NOW()))
+		  AND (ep.exam_period_status IS NULL OR ep.exam_period_status NOT IN ('draft', 'cancelled'))
+		  AND NOT EXISTS (
+		      SELECT 1 FROM exam_seats ex
+		      WHERE ex.exam_seat_exam_session_id = sess.exam_session_id
+		        AND ex.exam_seat_is_deleted = FALSE)
+		ON CONFLICT (exam_seat_exam_session_id, exam_seat_number) DO NOTHING`, sessionID)
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT es.exam_seat_id, es.exam_seat_exam_session_id, es.exam_seat_number,
 		       es.exam_seat_status, es.exam_seat_held_until
