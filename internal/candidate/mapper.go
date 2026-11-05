@@ -1,6 +1,8 @@
 package candidate
 
 import (
+	"strings"
+
 	"github.com/hskvinh/backend/internal/candidate/dto/response"
 	"github.com/hskvinh/backend/internal/candidate/entities"
 	"github.com/hskvinh/backend/internal/utils"
@@ -59,12 +61,19 @@ func ToAdminCandidateResponseDTO(e entities.CandidateEntity) response.AdminCandi
 }
 
 func ToAdminDocumentResponseDTO(e entities.CandidateDocumentEntity) response.AdminDocumentResponseDTO {
+	hasFront := strings.TrimSpace(e.CandidateDocumentFrontImageURL) != ""
+	hasBack := e.CandidateDocumentBackImageURL != nil && strings.TrimSpace(*e.CandidateDocumentBackImageURL) != ""
+	hasPortrait := strings.TrimSpace(e.CandidateDocumentPortraitImageURL) != ""
 	return response.AdminDocumentResponseDTO{
 		ID: e.CandidateDocumentID, CandidateID: e.CandidateDocumentCandidateID,
 		DocType: string(e.CandidateDocumentType), DocNumber: e.CandidateDocumentNumber,
 		IssueDate: e.CandidateDocumentIssueDate, IssuePlace: e.CandidateDocumentIssuePlace,
 		FrontImageURL: e.CandidateDocumentFrontImageURL, BackImageURL: e.CandidateDocumentBackImageURL,
 		PortraitImageURL:   e.CandidateDocumentPortraitImageURL,
+		HasFrontImage:      hasFront,
+		HasBackImage:       hasBack,
+		HasPortraitImage:   hasPortrait,
+		PiiLocked:          false,
 		VerificationStatus: string(e.CandidateDocumentVerificationStatus),
 		RejectionReason:    e.CandidateDocumentRejectionReason,
 		WardID:             e.CandidateDocumentWardID, ProvinceID: e.CandidateDocumentProvinceID,
@@ -72,10 +81,15 @@ func ToAdminDocumentResponseDTO(e entities.CandidateDocumentEntity) response.Adm
 	}
 }
 
-// ToAdminMaskedDocumentResponseDTO maps a CandidateDocumentEntity for list endpoints with DocNumber masked (Decree 13/2023).
+// ToAdminMaskedDocumentResponseDTO maps a CandidateDocumentEntity for list endpoints with DocNumber masked
+// and raw PII image URLs withheld until the admin unlocks the Zero-Trust 6-Digit PIN Gateway (Decree 13/2023).
 func ToAdminMaskedDocumentResponseDTO(e entities.CandidateDocumentEntity) response.AdminDocumentResponseDTO {
 	dto := ToAdminDocumentResponseDTO(e)
 	dto.DocNumber = MaskDocumentNumber(dto.DocNumber)
+	dto.FrontImageURL = ""
+	dto.BackImageURL = nil
+	dto.PortraitImageURL = ""
+	dto.PiiLocked = true
 	return dto
 }
 

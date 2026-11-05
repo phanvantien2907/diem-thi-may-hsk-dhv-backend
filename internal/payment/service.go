@@ -23,6 +23,7 @@ import (
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/media"
+	"github.com/hskvinh/backend/internal/notification"
 	"github.com/hskvinh/backend/internal/payment/dto/request"
 	"github.com/hskvinh/backend/internal/payment/dto/response"
 	payenum "github.com/hskvinh/backend/internal/payment/enum"
@@ -45,7 +46,8 @@ type Service struct {
 	mediaSvc *media.Service
 	payOS    PayOSConfig
 	httpCli  *http.Client
-	hub      *ws.Hub // optional, nil-safe
+	hub      *ws.Hub                     // optional, nil-safe
+	notifPub notification.EventPublisher // decoupled internal event bus publisher
 }
 
 // NewService creates a payment Service.
@@ -61,6 +63,31 @@ func NewService(db *sql.DB, auditSvc audit.Service, payOS PayOSConfig, mediaSvc 
 
 // SetHub attaches a WebSocket hub for broadcasting real-time events.
 func (s *Service) SetHub(hub *ws.Hub) { s.hub = hub }
+
+// SetNotificationPublisher injects the decoupled notification event bus publisher.
+func (s *Service) SetNotificationPublisher(pub notification.EventPublisher) {
+	s.notifPub = pub
+}
+
+func (s *Service) emitPaymentSuccessByReg(ctx context.Context, regID int64, fallbackAmount int64) {
+	if s.notifPub == nil || regID <= 0 {
+		return
+	}
+	var accountID, amount int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT c.candidate_account_id, COALESCE(p.payment_amount, $2)
+		FROM exam_registrations er
+		JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
+		LEFT JOIN payments p ON p.payment_exam_registration_id = er.exam_registration_id
+		                    AND p.payment_is_deleted = FALSE
+		WHERE er.exam_registration_id = $1
+		ORDER BY p.payment_id DESC
+		LIMIT 1`, regID, fallbackAmount,
+	).Scan(&accountID, &amount)
+	if err == nil && accountID > 0 {
+		s.notifPub.Publish(notification.NewPaymentSuccessEvent(accountID, regID, amount))
+	}
+}
 
 // ─── Column list + scanner (DRY) ───────────────────────────────────────────
 
@@ -358,22 +385,25 @@ func (s *Service) ProcessWebhook(ctx context.Context, payload request.PayOSWebho
 		log.Printf("[payment] webhook: payment_id=%d updated to %s", resultID, status)
 		log.Printf("[payment] webhook: payment_id=%d updated to %s", resultID, status)
 
-		// Broadcast real-time event if successful
-		if isSuccess && s.hub != nil {
-			var regID, seatID, sessionID int64
+		// Broadcast real-time event and emit PAYMENT_SUCCESS notification if successful
+		if isSuccess && (s.hub != nil || s.notifPub != nil) {
+			var regID, seatID, sessionID, amount int64
 			err := s.db.QueryRowContext(ctx, `
-				SELECT p.payment_exam_registration_id, r.exam_registration_exam_seat_id, r.exam_registration_exam_session_id
+				SELECT p.payment_exam_registration_id, r.exam_registration_exam_seat_id, r.exam_registration_exam_session_id, p.payment_amount
 				FROM payments p
 				JOIN exam_registrations r ON r.exam_registration_id = p.payment_exam_registration_id
 				WHERE p.payment_id = $1
-			`, resultID).Scan(&regID, &seatID, &sessionID)
+			`, resultID).Scan(&regID, &seatID, &sessionID, &amount)
 			if err == nil {
-				s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
-					"registration_id": regID,
-					"session_id":      sessionID,
-					"seat_id":         seatID,
-					"status":          "confirmed",
-				})
+				if s.hub != nil {
+					s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
+						"registration_id": regID,
+						"session_id":      sessionID,
+						"seat_id":         seatID,
+						"status":          "confirmed",
+					})
+				}
+				s.emitPaymentSuccessByReg(ctx, regID, amount)
 			}
 		}
 	}
@@ -716,6 +746,7 @@ func (s *Service) AdminConfirmPaymentAs(ctx context.Context, paymentID, actorID 
 			"status":          "confirmed",
 		})
 	}
+	s.emitPaymentSuccessByReg(ctx, regID, 0)
 
 	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
 	if err != nil {
@@ -1209,12 +1240,15 @@ func (s *Service) SyncPayment(ctx context.Context, paymentID, actorID int64) (re
 		return response.AdminPaymentResponseDTO{}, fmt.Errorf("payment: sync commit: %w", err)
 	}
 
-	if seatAvailable && s.hub != nil {
-		s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
-			"registration_id": regID,
-			"seat_id":         seatID,
-			"status":          "confirmed",
-		})
+	if seatAvailable {
+		if s.hub != nil {
+			s.hub.Broadcast(ws.EventPaymentConfirmed, map[string]interface{}{
+				"registration_id": regID,
+				"seat_id":         seatID,
+				"status":          "confirmed",
+			})
+		}
+		s.emitPaymentSuccessByReg(ctx, regID, received)
 	}
 
 	updated, err := s.fetchAdminPaymentByID(ctx, paymentID)
@@ -2279,6 +2313,9 @@ func (s *Service) AdminMatchSuspense(ctx context.Context, suspenseID, actorID in
 			"status":          "confirmed",
 			"action":          "manual_match",
 		})
+	}
+	if s.notifPub != nil && candidateAccountID > 0 {
+		s.notifPub.Publish(notification.NewPaymentSuccessEvent(candidateAccountID, req.ExamRegistrationID, suspenseAmt))
 	}
 
 	var sEnt SuspenseTransactionEntity

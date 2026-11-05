@@ -13,6 +13,10 @@ type AdminDocumentResponseDTO struct {
 	FrontImageURL      string    `json:"front_image_url"`
 	BackImageURL       *string   `json:"back_image_url"`
 	PortraitImageURL   string    `json:"portrait_image_url"`
+	HasFrontImage      bool      `json:"has_front_image"`
+	HasBackImage       bool      `json:"has_back_image"`
+	HasPortraitImage   bool      `json:"has_portrait_image"`
+	PiiLocked          bool      `json:"pii_locked"`
 	VerificationStatus string    `json:"verification_status"`
 	RejectionReason    *string   `json:"rejection_reason"`
 	WardID             *int64    `json:"ward_id"`

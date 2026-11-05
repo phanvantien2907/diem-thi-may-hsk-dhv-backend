@@ -7,6 +7,7 @@ import (
 
 // RegisterRoutes mounts all candidate routes on the given router group.
 func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
+	h.SetJWTSecret(jwtSecret)
 	auth := middleware.JWTAuth(jwtSecret)
 	admin := middleware.RequireRole("admin")
 

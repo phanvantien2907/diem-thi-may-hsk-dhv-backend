@@ -20,6 +20,11 @@ const (
 	// ContextKeyUserRole is the gin.Context key used to store the authenticated user's role.
 	ContextKeyUserRole = "user_role"
 
+	// HeaderPIIAccessToken is the HTTP header carrying the 5-minute Zero-Trust PII access token.
+	HeaderPIIAccessToken = "X-PII-Access-Token"
+	// ScopePIIAccess is the mandatory JWT claim scope required to unlock candidate PII images.
+	ScopePIIAccess = "pii_access"
+
 	revokedAccountKeyPrefix = "hsk:auth:revoked_acct:"
 )
 
@@ -106,7 +111,40 @@ func IsAccountTokenRevoked(ctx context.Context, accountID int64) bool {
 type Claims struct {
 	UserID   int64  `json:"user_id"`
 	UserRole string `json:"user_role"`
+	Scope    string `json:"scope,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// VerifyPIIAccessToken validates an ephemeral 5-minute PII access token issued by POST /api/v1/admin/verify-pin.
+// Standard login JWTs are rejected because they lack `"scope": "pii_access"`.
+func VerifyPIIAccessToken(tokenStr, secret string, expectedAdminID int64) bool {
+	trimmed := strings.TrimSpace(tokenStr)
+	if trimmed == "" || expectedAdminID <= 0 {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "bearer ") {
+		trimmed = strings.TrimSpace(trimmed[7:])
+	}
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(trimmed, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !token.Valid {
+		return false
+	}
+	if claims.UserID != expectedAdminID {
+		return false
+	}
+	if !strings.EqualFold(claims.UserRole, "admin") {
+		return false
+	}
+	if claims.Scope != ScopePIIAccess {
+		return false
+	}
+	return true
 }
 
 // JWTAuth returns a Gin middleware that validates Bearer JWT tokens.

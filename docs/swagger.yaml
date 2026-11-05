@@ -784,6 +784,15 @@ definitions:
     required:
     - reason
     type: object
+  request.SetupAdminPinRequestDTO:
+    properties:
+      current_password:
+        type: string
+      pin:
+        type: string
+    required:
+    - pin
+    type: object
   request.TransferRegistrationRequestDTO:
     properties:
       new_exam_session_id:
@@ -906,6 +915,13 @@ definitions:
     required:
     - portrait_image_url
     type: object
+  request.VerifyAdminPinRequestDTO:
+    properties:
+      pin:
+        type: string
+    required:
+    - pin
+    type: object
   request.VerifyCertRequestDTO:
     properties:
       certificate_no:
@@ -1005,6 +1021,10 @@ definitions:
         items:
           type: string
         type: array
+      available_seats:
+        type: integer
+      available_slots:
+        type: integer
       capacity:
         type: integer
       check_in_at:
@@ -1027,6 +1047,8 @@ definitions:
         type: integer
       publish_at:
         type: string
+      registered_count:
+        type: integer
       registration_deadline:
         type: string
       shift:
@@ -2604,6 +2626,49 @@ paths:
       summary: Lịch sử hoạt động gần đây
       tags:
       - Dashboard
+  /admin/me/pin/setup:
+    post:
+      consumes:
+      - application/json
+      description: Băm mã PIN 6 số bằng bcrypt và lưu vào bảng accounts để mở khóa
+        dữ liệu nhạy cảm PII.
+      parameters:
+      - description: Mã PIN 6 số
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.SetupAdminPinRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Thiết lập hoặc đổi mã PIN bảo mật 6 số (Admin)
+      tags:
+      - Auth
+  /admin/me/pin/status:
+    get:
+      description: Kiểm tra xem Admin đã thiết lập mã PIN 6 số chưa và trạng thái
+        khóa chống spam hiện tại.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Kiểm tra trạng thái mã PIN bảo mật 6 số của Admin
+      tags:
+      - Auth
   /admin/metrics/hsk-distribution:
     get:
       consumes:
@@ -4001,6 +4066,47 @@ paths:
       summary: Lịch sử thao tác cá nhân
       tags:
       - Dashboard
+  /admin/verify-pin:
+    post:
+      consumes:
+      - application/json
+      description: 'Kiểm tra mã PIN 6 số (chống dò mã: sai 5 lần khóa 15 phút) và
+        trả về JWT pii_access_token (scope="pii_access", TTL 5 phút).'
+      parameters:
+      - description: Mã PIN 6 số
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/request.VerifyAdminPinRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Chưa thiết lập PIN hoặc sai định dạng
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Mã PIN không chính xác
+          schema:
+            additionalProperties: true
+            type: object
+        "429":
+          description: Nhập sai quá 5 lần — tạm khóa 15 phút
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Xác thực mã PIN bảo mật 6 số và cấp pii_access_token (TTL 5 phút)
+      tags:
+      - Auth
   /auth/force-password-change:
     post:
       consumes:
@@ -5396,7 +5502,13 @@ paths:
     get:
       consumes:
       - application/json
-      description: Lấy danh sách thông báo hệ thống (hộp thư đến).
+      description: Lấy danh sách thông báo hệ thống của người dùng hiện tại. Hỗ trợ
+        tham số after_id để đồng bộ các thông báo bị lỡ khi kết nối lại WebSocket.
+      parameters:
+      - description: Chỉ lấy các thông báo có ID lớn hơn after_id
+        in: query
+        name: after_id
+        type: integer
       produces:
       - application/json
       responses:
@@ -5405,18 +5517,8 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "400":
-          description: Dữ liệu yêu cầu không hợp lệ
-          schema:
-            additionalProperties: true
-            type: object
         "401":
-          description: Chưa xác thực (Thiếu token hoặc token hết hạn)
-          schema:
-            additionalProperties: true
-            type: object
-        "403":
-          description: Không có quyền truy cập
+          description: Chưa xác thực
           schema:
             additionalProperties: true
             type: object
@@ -5428,6 +5530,41 @@ paths:
       security:
       - BearerAuth: []
       summary: Danh sách thông báo
+      tags:
+      - Notification
+  /notifications/{id}/read:
+    patch:
+      consumes:
+      - application/json
+      description: Đánh dấu một thông báo của người dùng hiện tại sang trạng thái
+        đã đọc (is_read = true).
+      parameters:
+      - description: ID thông báo
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: ID thông báo không hợp lệ
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Không tìm thấy thông báo
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Đánh dấu thông báo đã đọc
       tags:
       - Notification
   /payments:
@@ -5711,6 +5848,30 @@ paths:
       summary: Webhook Giao Hàng
       tags:
       - Certificate
+  /ws/ticket:
+    post:
+      consumes:
+      - application/json
+      description: Cấp One-Time Ticket có hiệu lực 30 giây để kết nối WebSocket mà
+        không cần truyền JWT trên URL query.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực hoặc token hết hạn
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cấp vé kết nối WebSocket dùng một lần (30s TTL)
+      tags:
+      - WebSocket
 securityDefinitions:
   BearerAuth:
     in: header

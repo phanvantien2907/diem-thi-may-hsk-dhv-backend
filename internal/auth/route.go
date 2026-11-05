@@ -47,5 +47,10 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string, authLimite
 		adminG.POST("/accounts/:id/deactivate", h.AdminDeleteAccount)
 		adminG.POST("/accounts/:id/reactivate", h.AdminReactivateAccount)
 		adminG.POST("/staff-accounts", h.CreateStaffAccount)
+
+		// Zero-Trust 6-Digit Admin PIN Gateway for PII Access
+		adminG.GET("/me/pin/status", h.GetAdminPinStatus)
+		adminG.POST("/me/pin/setup", h.SetupAdminPin)
+		adminG.POST("/verify-pin", h.VerifyAdminPin)
 	}
 }

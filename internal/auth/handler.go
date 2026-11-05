@@ -463,3 +463,97 @@ func (h *Handler) CreateStaffAccount(c *gin.Context) {
 		"message":       "Tài khoản nhân viên đã được tạo. Nhân viên phải đổi mật khẩu khi đăng nhập lần đầu.",
 	})
 }
+
+// GetAdminPinStatus GET /admin/me/pin/status
+// @Summary Kiểm tra trạng thái mã PIN bảo mật 6 số của Admin
+// @Description Kiểm tra xem Admin đã thiết lập mã PIN 6 số chưa và trạng thái khóa chống spam hiện tại.
+// @Tags Auth
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Router /admin/me/pin/status [get]
+func (h *Handler) GetAdminPinStatus(c *gin.Context) {
+	status, err := h.svc.GetAdminPinStatus(c.Request.Context(), utils.MustAccountID(c))
+	if err != nil {
+		if errors.Is(err, ErrAccountNotFound) {
+			utils.NotFound(c, err.Error())
+			return
+		}
+		utils.InternalServerError(c, err.Error())
+		return
+	}
+	utils.OK(c, status)
+}
+
+// SetupAdminPin POST /admin/me/pin/setup
+// @Summary Thiết lập hoặc đổi mã PIN bảo mật 6 số (Admin)
+// @Description Băm mã PIN 6 số bằng bcrypt và lưu vào bảng accounts để mở khóa dữ liệu nhạy cảm PII.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.SetupAdminPinRequestDTO true "Mã PIN 6 số"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Router /admin/me/pin/setup [post]
+func (h *Handler) SetupAdminPin(c *gin.Context) {
+	var req request.SetupAdminPinRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	if err := h.svc.SetupAdminPin(c.Request.Context(), utils.MustAccountID(c), req); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidPassword):
+			utils.Unauthorized(c, err.Error())
+		case errors.Is(err, ErrAccountNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			utils.BadRequest(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, gin.H{
+		"has_pin": true,
+		"message": "Đã thiết lập mã PIN bảo mật 6 số thành công.",
+	})
+}
+
+// VerifyAdminPin POST /admin/verify-pin
+// @Summary Xác thực mã PIN bảo mật 6 số và cấp pii_access_token (TTL 5 phút)
+// @Description Kiểm tra mã PIN 6 số (chống dò mã: sai 5 lần khóa 15 phút) và trả về JWT pii_access_token (scope="pii_access", TTL 5 phút).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body request.VerifyAdminPinRequestDTO true "Mã PIN 6 số"
+// @Success 200 {object} map[string]interface{} "Thành công"
+// @Failure 400 {object} map[string]interface{} "Chưa thiết lập PIN hoặc sai định dạng"
+// @Failure 401 {object} map[string]interface{} "Mã PIN không chính xác"
+// @Failure 429 {object} map[string]interface{} "Nhập sai quá 5 lần — tạm khóa 15 phút"
+// @Router /admin/verify-pin [post]
+func (h *Handler) VerifyAdminPin(c *gin.Context) {
+	var req request.VerifyAdminPinRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Vui lòng nhập mã PIN gồm đúng 6 chữ số")
+		return
+	}
+	res, err := h.svc.VerifyAdminPin(c.Request.Context(), utils.MustAccountID(c), req)
+	if err != nil {
+		var lockoutErr *PinLockoutError
+		var invalidErr *PinInvalidError
+		switch {
+		case errors.As(err, &lockoutErr):
+			utils.TooManyRequests(c, lockoutErr.Error())
+		case errors.As(err, &invalidErr):
+			utils.Unauthorized(c, invalidErr.Error())
+		case errors.Is(err, ErrPinNotConfigured), errors.Is(err, ErrInvalidPinFormat):
+			utils.BadRequest(c, err.Error())
+		case errors.Is(err, ErrAccountNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			utils.InternalServerError(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, res)
+}

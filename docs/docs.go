@@ -2299,6 +2299,72 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/me/pin/setup": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Băm mã PIN 6 số bằng bcrypt và lưu vào bảng accounts để mở khóa dữ liệu nhạy cảm PII.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Thiết lập hoặc đổi mã PIN bảo mật 6 số (Admin)",
+                "parameters": [
+                    {
+                        "description": "Mã PIN 6 số",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.SetupAdminPinRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/me/pin/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Kiểm tra xem Admin đã thiết lập mã PIN 6 số chưa và trạng thái khóa chống spam hiện tại.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Kiểm tra trạng thái mã PIN bảo mật 6 số của Admin",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/admin/metrics/hsk-distribution": {
             "get": {
                 "security": [
@@ -4382,6 +4448,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/verify-pin": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Kiểm tra mã PIN 6 số (chống dò mã: sai 5 lần khóa 15 phút) và trả về JWT pii_access_token (scope=\"pii_access\", TTL 5 phút).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Xác thực mã PIN bảo mật 6 số và cấp pii_access_token (TTL 5 phút)",
+                "parameters": [
+                    {
+                        "description": "Mã PIN 6 số",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/request.VerifyAdminPinRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Chưa thiết lập PIN hoặc sai định dạng",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Mã PIN không chính xác",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "429": {
+                        "description": "Nhập sai quá 5 lần — tạm khóa 15 phút",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/auth/force-password-change": {
             "post": {
                 "security": [
@@ -6455,7 +6582,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lấy danh sách thông báo hệ thống (hộp thư đến).",
+                "description": "Lấy danh sách thông báo hệ thống của người dùng hiện tại. Hỗ trợ tham số after_id để đồng bộ các thông báo bị lỡ khi kết nối lại WebSocket.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6466,6 +6593,66 @@ const docTemplate = `{
                     "Notification"
                 ],
                 "summary": "Danh sách thông báo",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chỉ lấy các thông báo có ID lớn hơn after_id",
+                        "name": "after_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/notifications/{id}/read": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Đánh dấu một thông báo của người dùng hiện tại sang trạng thái đã đọc (is_read = true).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Notification"
+                ],
+                "summary": "Đánh dấu thông báo đã đọc",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID thông báo",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Thành công",
@@ -6475,28 +6662,14 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Dữ liệu yêu cầu không hợp lệ",
+                        "description": "ID thông báo không hợp lệ",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "401": {
-                        "description": "Chưa xác thực (Thiếu token hoặc token hết hạn)",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "403": {
-                        "description": "Không có quyền truy cập",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "500": {
-                        "description": "Lỗi hệ thống nội bộ",
+                    "404": {
+                        "description": "Không tìm thấy thông báo",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6916,6 +7089,42 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Lỗi hệ thống nội bộ",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/ws/ticket": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cấp One-Time Ticket có hiệu lực 30 giây để kết nối WebSocket mà không cần truyền JWT trên URL query.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "WebSocket"
+                ],
+                "summary": "Cấp vé kết nối WebSocket dùng một lần (30s TTL)",
+                "responses": {
+                    "200": {
+                        "description": "Thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực hoặc token hết hạn",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8038,6 +8247,20 @@ const docTemplate = `{
                 }
             }
         },
+        "request.SetupAdminPinRequestDTO": {
+            "type": "object",
+            "required": [
+                "pin"
+            ],
+            "properties": {
+                "current_password": {
+                    "type": "string"
+                },
+                "pin": {
+                    "type": "string"
+                }
+            }
+        },
         "request.TransferRegistrationRequestDTO": {
             "type": "object",
             "required": [
@@ -8210,6 +8433,17 @@ const docTemplate = `{
                 }
             }
         },
+        "request.VerifyAdminPinRequestDTO": {
+            "type": "object",
+            "required": [
+                "pin"
+            ],
+            "properties": {
+                "pin": {
+                    "type": "string"
+                }
+            }
+        },
         "request.VerifyCertRequestDTO": {
             "type": "object",
             "properties": {
@@ -8360,6 +8594,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "available_seats": {
+                    "type": "integer"
+                },
+                "available_slots": {
+                    "type": "integer"
+                },
                 "capacity": {
                     "type": "integer"
                 },
@@ -8392,6 +8632,9 @@ const docTemplate = `{
                 },
                 "publish_at": {
                     "type": "string"
+                },
+                "registered_count": {
+                    "type": "integer"
                 },
                 "registration_deadline": {
                     "type": "string"

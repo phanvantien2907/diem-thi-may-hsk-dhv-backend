@@ -29,8 +29,11 @@ import (
 )
 
 const (
-	maxFailedAttempts = 5
-	lockDuration      = 15 * time.Minute
+	maxFailedAttempts    = 5
+	lockDuration         = 15 * time.Minute
+	maxFailedPinAttempts = 5
+	pinLockDuration      = 15 * time.Minute
+	piiAccessTTL         = 5 * time.Minute
 )
 
 // ErrDuplicateCCCD is returned when the CCCD is already registered to an account.
@@ -53,6 +56,30 @@ var ErrDeactivationBlockedByPaidRegistration = errors.New("không thể vô hi�
 
 // ErrInvalidPassword is returned when password confirmation fails.
 var ErrInvalidPassword = errors.New("mật khẩu xác nhận không chính xác")
+
+// ErrPinNotConfigured is returned when an admin attempts to verify a PIN before setting one up.
+var ErrPinNotConfigured = errors.New("Tài khoản quản trị viên chưa thiết lập mã PIN bảo mật 6 số")
+
+// ErrInvalidPinFormat is returned when a PIN is not strictly 6 numeric digits.
+var ErrInvalidPinFormat = errors.New("Mã PIN bảo mật phải bao gồm đúng 6 chữ số (0-9)")
+
+// PinLockoutError is returned when the admin has exceeded maxFailedPinAttempts (5) and is temporarily locked out.
+type PinLockoutError struct {
+	LockedUntil      time.Time
+	RemainingSeconds int64
+	Message          string
+}
+
+func (e *PinLockoutError) Error() string { return e.Message }
+
+// PinInvalidError is returned when a PIN verification attempt fails, carrying remaining attempt metadata.
+type PinInvalidError struct {
+	FailedCount       int
+	RemainingAttempts int
+	Message           string
+}
+
+func (e *PinInvalidError) Error() string { return e.Message }
 
 // Service handles account management and JWT issuance.
 type Service struct {
@@ -387,7 +414,7 @@ func (s *Service) ChangePassword(ctx context.Context, accountID int64, req reque
 	})
 
 	if s.hub != nil {
-		s.hub.Broadcast(ws.EventAccountUpdated, map[string]interface{}{
+		s.hub.SendToUser(accountID, ws.EventAccountUpdated, map[string]interface{}{
 			"account_id": accountID,
 		})
 	}
@@ -503,6 +530,9 @@ func (s *Service) Logout(ctx context.Context, accountID, sessionID int64) error 
 		EntityID:       accountID,
 		NewValue:       mustMarshal(map[string]any{"session_id": sessionID}),
 	})
+	if s.hub != nil {
+		s.hub.DisconnectUser(accountID, ws.CloseCodeSessionTerminated, "Người dùng đã đăng xuất")
+	}
 	return nil
 }
 
@@ -526,6 +556,9 @@ func (s *Service) LogoutAll(ctx context.Context, accountID int64) error {
 		EntityID:       accountID,
 		NewValue:       mustMarshal(map[string]any{"scope": "all_sessions"}),
 	})
+	if s.hub != nil {
+		s.hub.DisconnectUser(accountID, ws.CloseCodeSessionTerminated, "Đã đăng xuất khỏi tất cả thiết bị")
+	}
 	return nil
 }
 
@@ -611,7 +644,17 @@ func (s *Service) GetAccount(ctx context.Context, accountID int64) (response.Acc
 	if err != nil {
 		return response.AccountResponseDTO{}, fmt.Errorf("auth: get account: %w", err)
 	}
-	return ToAccountResponseDTO(e), nil
+	dto := ToAccountResponseDTO(e)
+
+	// Best-effort check for whether a 6-digit PII PIN hash is configured
+	var pinHash sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT account_pii_pin_hash FROM accounts WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		accountID,
+	).Scan(&pinHash); err == nil {
+		dto.HasPiiPin = pinHash.Valid && strings.TrimSpace(pinHash.String) != ""
+	}
+	return dto, nil
 }
 
 // UpdateAccount applies partial updates and returns the updated public DTO.
@@ -659,7 +702,7 @@ func (s *Service) UpdateAccount(ctx context.Context, accountID int64, req reques
 	}
 
 	if s.hub != nil {
-		s.hub.Broadcast(ws.EventAccountUpdated, map[string]interface{}{
+		s.hub.SendToUser(accountID, ws.EventAccountUpdated, map[string]interface{}{
 			"account_id": accountID,
 		})
 	}
@@ -891,6 +934,9 @@ func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64, req 
 		return err
 	}
 	middleware.RevokeAccountTokens(ctx, accountID, s.accessTTL)
+	if s.hub != nil {
+		s.hub.DisconnectUser(accountID, ws.CloseCodeSessionTerminated, "Tài khoản đã bị vô hiệu hóa")
+	}
 	return nil
 }
 
@@ -997,6 +1043,9 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 		return err
 	}
 	middleware.RevokeAccountTokens(ctx, targetID, s.accessTTL)
+	if s.hub != nil {
+		s.hub.DisconnectUser(targetID, ws.CloseCodeSessionTerminated, "Tài khoản đã bị quản trị viên vô hiệu hóa")
+	}
 	return nil
 }
 
@@ -1065,6 +1114,281 @@ func (s *Service) issueAccessToken(accountID int64, roleCode string) (string, er
 		"iat":       time.Now().Unix(),
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.jwtSecret))
+}
+
+// issuePIIAccessToken signs a short-lived (5-minute) JWT strictly scoped to `"scope": "pii_access"`.
+func (s *Service) issuePIIAccessToken(adminID int64, now time.Time) (string, time.Time, error) {
+	exp := now.UTC().Add(piiAccessTTL)
+	claims := jwt.MapClaims{
+		"sub":       strconv.FormatInt(adminID, 10),
+		"user_id":   adminID,
+		"user_role": "admin",
+		"scope":     middleware.ScopePIIAccess,
+		"iat":       now.UTC().Unix(),
+		"exp":       exp.Unix(),
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.jwtSecret))
+	return tok, exp, err
+}
+
+func isValidSixDigitPin(pin string) bool {
+	if len(pin) != 6 {
+		return false
+	}
+	for i := 0; i < 6; i++ {
+		if pin[i] < '0' || pin[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// GetAdminPinStatus returns the current PII PIN configuration & lockout status for an admin account.
+func (s *Service) GetAdminPinStatus(ctx context.Context, adminID int64) (response.AdminPinStatusResponseDTO, error) {
+	var (
+		pinHash     sql.NullString
+		failedCount int
+		lockedUntil *time.Time
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT account_pii_pin_hash,
+		       COALESCE(account_pii_pin_failed_count, 0),
+		       account_pii_pin_locked_until
+		FROM accounts
+		WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		adminID,
+	).Scan(&pinHash, &failedCount, &lockedUntil)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.AdminPinStatusResponseDTO{}, ErrAccountNotFound
+	}
+	if err != nil {
+		return response.AdminPinStatusResponseDTO{}, fmt.Errorf("auth: get admin pin status: %w", err)
+	}
+
+	now := time.Now().UTC()
+	hasPin := pinHash.Valid && strings.TrimSpace(pinHash.String) != ""
+	isLocked := false
+	var remainingSec int64
+	if lockedUntil != nil && now.Before(*lockedUntil) {
+		isLocked = true
+		remainingSec = int64(lockedUntil.Sub(now).Seconds())
+		if remainingSec < 1 {
+			remainingSec = 1
+		}
+	} else if lockedUntil != nil && !now.Before(*lockedUntil) {
+		// Lockout window has elapsed
+		failedCount = 0
+		lockedUntil = nil
+	}
+
+	remAttempts := maxFailedPinAttempts - failedCount
+	if remAttempts < 0 {
+		remAttempts = 0
+	}
+
+	return response.AdminPinStatusResponseDTO{
+		HasPin:               hasPin,
+		IsLocked:             isLocked,
+		LockedUntil:          lockedUntil,
+		RemainingLockSeconds: remainingSec,
+		FailedCount:          failedCount,
+		MaxAttempts:          maxFailedPinAttempts,
+		RemainingAttempts:    remAttempts,
+	}, nil
+}
+
+// SetupAdminPin sets or updates the admin's 6-digit PII PIN using bcrypt hashing.
+// If the admin already has a PIN configured, CurrentPassword is verified before overwriting.
+func (s *Service) SetupAdminPin(ctx context.Context, adminID int64, req request.SetupAdminPinRequestDTO) error {
+	pin := strings.TrimSpace(req.Pin)
+	if !isValidSixDigitPin(pin) {
+		return ErrInvalidPinFormat
+	}
+
+	var (
+		passwordHash string
+		existingPin  sql.NullString
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT account_password_hash, account_pii_pin_hash
+		FROM accounts
+		WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		adminID,
+	).Scan(&passwordHash, &existingPin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrAccountNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("auth: lookup account for pin setup: %w", err)
+	}
+
+	hasExistingPin := existingPin.Valid && strings.TrimSpace(existingPin.String) != ""
+	if hasExistingPin || strings.TrimSpace(req.CurrentPassword) != "" {
+		if strings.TrimSpace(req.CurrentPassword) == "" {
+			return errors.New("Vui lòng nhập mật khẩu đăng nhập hiện tại để xác nhận đổi mã PIN bảo mật")
+		}
+		if err := utils.CheckPassword(passwordHash, req.CurrentPassword); err != nil {
+			return ErrInvalidPassword
+		}
+	}
+
+	pinHash, err := utils.HashPassword(pin)
+	if err != nil {
+		return fmt.Errorf("auth: hash admin pin: %w", err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE accounts
+		SET account_pii_pin_hash         = $1,
+		    account_pii_pin_failed_count = 0,
+		    account_pii_pin_locked_until = NULL,
+		    account_pii_pin_updated_at   = $2,
+		    account_updated_at           = $2
+		WHERE account_id = $3 AND account_is_deleted = FALSE`,
+		pinHash, now, adminID,
+	); err != nil {
+		return fmt.Errorf("auth: save admin pin hash: %w", err)
+	}
+
+	if s.auditSvc != nil {
+		actionType := "setup_pii_pin"
+		if hasExistingPin {
+			actionType = "reset_pii_pin"
+		}
+		_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionUpdate.String(),
+			EntityTable:    auditenum.AuditEntityAccount.String(),
+			EntityID:       adminID,
+			NewValue:       mustMarshal(map[string]any{"event": actionType, "updated_at": now}),
+		})
+	}
+	return nil
+}
+
+// VerifyAdminPin validates the admin's 6-digit PIN against the stored bcrypt hash,
+// enforces anti-spam lockout (5 failed attempts -> 15-minute lockout), and issues a 5-minute pii_access_token.
+func (s *Service) VerifyAdminPin(ctx context.Context, adminID int64, req request.VerifyAdminPinRequestDTO) (response.VerifyAdminPinResponseDTO, error) {
+	pin := strings.TrimSpace(req.Pin)
+	if !isValidSixDigitPin(pin) {
+		return response.VerifyAdminPinResponseDTO{}, ErrInvalidPinFormat
+	}
+
+	var (
+		pinHash     sql.NullString
+		failedCount int
+		lockedUntil *time.Time
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT account_pii_pin_hash,
+		       COALESCE(account_pii_pin_failed_count, 0),
+		       account_pii_pin_locked_until
+		FROM accounts
+		WHERE account_id = $1 AND account_is_deleted = FALSE`,
+		adminID,
+	).Scan(&pinHash, &failedCount, &lockedUntil)
+	if errors.Is(err, sql.ErrNoRows) {
+		return response.VerifyAdminPinResponseDTO{}, ErrAccountNotFound
+	}
+	if err != nil {
+		return response.VerifyAdminPinResponseDTO{}, fmt.Errorf("auth: lookup admin pin: %w", err)
+	}
+
+	if !pinHash.Valid || strings.TrimSpace(pinHash.String) == "" {
+		return response.VerifyAdminPinResponseDTO{}, ErrPinNotConfigured
+	}
+
+	now := time.Now().UTC()
+	if lockedUntil != nil && now.Before(*lockedUntil) {
+		rem := lockedUntil.Sub(now).Round(time.Second)
+		if rem < time.Second {
+			rem = time.Second
+		}
+		return response.VerifyAdminPinResponseDTO{}, &PinLockoutError{
+			LockedUntil:      *lockedUntil,
+			RemainingSeconds: int64(rem.Seconds()),
+			Message:          fmt.Sprintf("Nhập sai mã PIN quá %d lần. Cổng bảo mật PII đang tạm khóa, vui lòng thử lại sau %s", maxFailedPinAttempts, formatDurationVN(rem)),
+		}
+	}
+
+	// If a previous lock window has expired, reset baseline failed count before evaluating this attempt
+	if lockedUntil != nil && !now.Before(*lockedUntil) {
+		failedCount = 0
+	}
+
+	if err := utils.CheckPassword(pinHash.String, pin); err != nil {
+		newCount := failedCount + 1
+		if newCount >= maxFailedPinAttempts {
+			until := now.Add(pinLockDuration)
+			_, _ = s.db.ExecContext(ctx, `
+				UPDATE accounts
+				SET account_pii_pin_failed_count = $1,
+				    account_pii_pin_locked_until = $2
+				WHERE account_id = $3`,
+				newCount, until, adminID,
+			)
+			if s.auditSvc != nil {
+				_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+					ActorAccountID: &adminID,
+					Action:         auditenum.AuditActionUpdate.String(),
+					EntityTable:    auditenum.AuditEntityAccount.String(),
+					EntityID:       adminID,
+					NewValue:       mustMarshal(map[string]any{"event": "pii_pin_locked", "failed_count": newCount, "locked_until": until}),
+				})
+			}
+			return response.VerifyAdminPinResponseDTO{}, &PinLockoutError{
+				LockedUntil:      until,
+				RemainingSeconds: int64(pinLockDuration.Seconds()),
+				Message:          fmt.Sprintf("Nhập sai mã PIN quá %d lần liên tiếp. Cổng bảo mật PII đã bị khóa 15 phút để chống dò mã.", maxFailedPinAttempts),
+			}
+		}
+
+		_, _ = s.db.ExecContext(ctx, `
+			UPDATE accounts
+			SET account_pii_pin_failed_count = $1,
+			    account_pii_pin_locked_until = NULL
+			WHERE account_id = $2`,
+			newCount, adminID,
+		)
+		remAttempts := maxFailedPinAttempts - newCount
+		return response.VerifyAdminPinResponseDTO{}, &PinInvalidError{
+			FailedCount:       newCount,
+			RemainingAttempts: remAttempts,
+			Message:           fmt.Sprintf("Mã PIN bảo mật không chính xác (còn %d/%d lần thử trước khi tạm khóa 15 phút)", remAttempts, maxFailedPinAttempts),
+		}
+	}
+
+	// Success: reset failed counter and issue 5-minute pii_access_token
+	_, _ = s.db.ExecContext(ctx, `
+		UPDATE accounts
+		SET account_pii_pin_failed_count = 0,
+		    account_pii_pin_locked_until = NULL
+		WHERE account_id = $1`,
+		adminID,
+	)
+
+	piiToken, exp, err := s.issuePIIAccessToken(adminID, now)
+	if err != nil {
+		return response.VerifyAdminPinResponseDTO{}, fmt.Errorf("auth: issue pii access token: %w", err)
+	}
+
+	if s.auditSvc != nil {
+		_ = s.auditSvc.Log(ctx, nil, auditreq.CreateAuditLogRequestDTO{
+			ActorAccountID: &adminID,
+			Action:         auditenum.AuditActionViewPII.String(),
+			EntityTable:    auditenum.AuditEntityAccount.String(),
+			EntityID:       adminID,
+			NewValue:       mustMarshal(map[string]any{"event": "pii_pin_verified", "scope": middleware.ScopePIIAccess, "expires_at": exp}),
+		})
+	}
+
+	return response.VerifyAdminPinResponseDTO{
+		PiiAccessToken: piiToken,
+		Scope:          middleware.ScopePIIAccess,
+		ExpiresIn:      int64(piiAccessTTL.Seconds()),
+		ExpiresAt:      exp.Format(time.RFC3339),
+	}, nil
 }
 
 // issueRawToken signs a raw JWT for refresh tokens.

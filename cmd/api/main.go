@@ -128,6 +128,11 @@ func main() {
 	regSvc.SetPaymentCanceller(paySvc)
 	paySvc.SetHub(hub)
 	authSvc.SetHub(hub)
+	notifSvc.SetHub(hub)
+	go notifSvc.StartEventListener(context.Background())
+	candSvc.SetNotificationPublisher(notifSvc)
+	paySvc.SetNotificationPublisher(notifSvc)
+	examSvc.SetNotificationPublisher(notifSvc)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
 	auditH := audit.NewHandler(auditSvc)
@@ -189,7 +194,7 @@ func main() {
 
 	// ── WebSocket Route ──────────────────────────────────────────────────
 	wsH := ws.NewHandler(hub, cfg.JWTSecret)
-	ws.RegisterRoutes(engine, wsH)
+	ws.RegisterRoutes(engine, wsH, api)
 
 	// ── HTTP Server ───────────────────────────────────────────────────────
 	srv := &http.Server{
@@ -205,6 +210,8 @@ func main() {
 	defer stop()
 
 	// ── Background Workers ───────────────────────────────────────────────
+	go notifSvc.StartEventListener(ctx)
+
 	seatCron := worker.NewSeatReleaseCron(regSvc, hub, 60*time.Second)
 	go seatCron.Start(ctx)
 

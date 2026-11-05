@@ -24,6 +24,7 @@ import (
 	"github.com/hskvinh/backend/internal/candidate/entities"
 	"github.com/hskvinh/backend/internal/candidate/enum"
 	"github.com/hskvinh/backend/internal/middleware"
+	"github.com/hskvinh/backend/internal/notification"
 	"github.com/hskvinh/backend/internal/utils"
 	"github.com/lib/pq"
 )
@@ -128,6 +129,7 @@ type Service struct {
 	mediaSvc      MediaService
 	visionSvc     VisionService
 	cacheSvc      *cache.Service
+	notifPub      notification.EventPublisher
 	reviewLocks   sync.Map // map[int64]softLockEntry (in-memory fallback when Redis is disabled)
 	viewedByAdmin sync.Map // map[string]time.Time    (key: "<candidateID>:<adminID>")
 }
@@ -140,6 +142,21 @@ type softLockEntry struct {
 // SetCache injects the Redis cache service.
 func (s *Service) SetCache(cacheSvc *cache.Service) {
 	s.cacheSvc = cacheSvc
+}
+
+// SetNotificationPublisher injects the decoupled domain event publisher.
+func (s *Service) SetNotificationPublisher(pub notification.EventPublisher) {
+	s.notifPub = pub
+}
+
+// lookupCandidateAccountID resolves the candidate_account_id for a candidate_id.
+func (s *Service) lookupCandidateAccountID(ctx context.Context, candidateID int64) int64 {
+	var accID int64
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT candidate_account_id FROM candidates WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`,
+		candidateID,
+	).Scan(&accID)
+	return accID
 }
 
 // InvalidateCandidateCache clears candidate profile and document caches by candidate ID.
@@ -1423,6 +1440,13 @@ func (s *Service) AdminApproveDocument(ctx context.Context, adminID, candidateID
 	}
 	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
+
+	// Decoupled Domain Event: notify candidate that their profile was approved
+	if s.notifPub != nil {
+		if accountID := s.lookupCandidateAccountID(ctx, candidateID); accountID > 0 {
+			s.notifPub.Publish(notification.NewProfileApprovedEvent(accountID))
+		}
+	}
 	return nil
 }
 
@@ -1477,6 +1501,13 @@ func (s *Service) AdminRejectDocument(ctx context.Context, adminID, candidateID 
 	}
 	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
+
+	// Decoupled Domain Event: notify candidate via internal Go channel without coupling to WebSocket Hub
+	if s.notifPub != nil {
+		if accountID := s.lookupCandidateAccountID(ctx, candidateID); accountID > 0 {
+			s.notifPub.Publish(notification.NewProfileRejectedEvent(accountID, req.Reason))
+		}
+	}
 	return nil
 }
 
@@ -1648,6 +1679,13 @@ func (s *Service) AdminRevokeApproval(ctx context.Context, adminID, candidateID 
 	}
 	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
+
+	// Decoupled Domain Event: notify candidate that their profile approval was revoked
+	if s.notifPub != nil {
+		if accountID := s.lookupCandidateAccountID(ctx, candidateID); accountID > 0 {
+			s.notifPub.Publish(notification.NewProfileRejectedEvent(accountID, req.Reason))
+		}
+	}
 	return nil
 }
 

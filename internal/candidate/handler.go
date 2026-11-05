@@ -9,14 +9,21 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
+	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/utils"
 )
 
 // Handler wires HTTP requests to the candidate Service.
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc       *Service
+	jwtSecret string
+}
 
 // NewHandler creates a candidate Handler.
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+
+// SetJWTSecret configures the JWT secret used to verify ephemeral Zero-Trust PII access tokens (`scope: "pii_access"`).
+func (h *Handler) SetJWTSecret(secret string) { h.jwtSecret = secret }
 
 // CreateProfile POST /me/candidate-profile
 // @Summary Tạo hồ sơ thí sinh
@@ -345,6 +352,8 @@ func (h *Handler) AdminListDuplicates(c *gin.Context) {
 }
 
 // AdminGetCandidate GET /admin/candidates/:id
+// Zero-Trust PII Gateway: Raw identity image URLs (front, back, portrait) are withheld unless a valid
+// 5-minute `X-PII-Access-Token` (issued by POST /api/v1/admin/verify-pin with `scope: "pii_access"`) is supplied.
 func (h *Handler) AdminGetCandidate(c *gin.Context) {
 	id, ok := utils.ParamID(c, "id")
 	if !ok {
@@ -361,6 +370,21 @@ func (h *Handler) AdminGetCandidate(c *gin.Context) {
 	if err != nil {
 		utils.NotFound(c, err.Error())
 		return
+	}
+
+	if h.jwtSecret != "" && cand.LatestDocument != nil {
+		piiToken := c.GetHeader(middleware.HeaderPIIAccessToken)
+		if piiToken == "" {
+			piiToken = c.Query("pii_token")
+		}
+		if !middleware.VerifyPIIAccessToken(piiToken, h.jwtSecret, adminID) {
+			cand.LatestDocument.FrontImageURL = ""
+			cand.LatestDocument.BackImageURL = nil
+			cand.LatestDocument.PortraitImageURL = ""
+			cand.LatestDocument.PiiLocked = true
+		} else {
+			cand.LatestDocument.PiiLocked = false
+		}
 	}
 	utils.OK(c, cand)
 }

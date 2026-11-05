@@ -16,6 +16,7 @@ import (
 	examreq "github.com/hskvinh/backend/internal/exam/dto/request"
 	"github.com/hskvinh/backend/internal/exam/dto/response"
 	"github.com/hskvinh/backend/internal/exam/enum"
+	"github.com/hskvinh/backend/internal/notification"
 	"github.com/lib/pq"
 )
 
@@ -31,6 +32,7 @@ type Service struct {
 	db       *sql.DB
 	auditSvc audit.Service
 	cacheSvc *cache.Service
+	notifPub notification.EventPublisher
 }
 
 // sessionColumns is the canonical column list used by every exam_sessions read.
@@ -227,6 +229,64 @@ func NewService(db *sql.DB, auditSvc audit.Service) *Service {
 // SetCache injects the Redis cache service.
 func (s *Service) SetCache(cacheSvc *cache.Service) {
 	s.cacheSvc = cacheSvc
+}
+
+// SetNotificationPublisher injects the decoupled notification event bus publisher.
+func (s *Service) SetNotificationPublisher(pub notification.EventPublisher) {
+	s.notifPub = pub
+}
+
+func (s *Service) querySessionCandidateAccountIDs(ctx context.Context, tx *sql.Tx, sessionID int64) []int64 {
+	if s.notifPub == nil {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT c.candidate_account_id
+		FROM exam_registrations er
+		JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
+		                 AND c.candidate_is_deleted = FALSE
+		WHERE er.exam_registration_exam_session_id = $1
+		  AND er.exam_registration_status IN ('pending_payment', 'confirmed')
+		  AND er.exam_registration_is_deleted = FALSE`, sessionID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func (s *Service) queryPeriodCandidateAccountIDs(ctx context.Context, tx *sql.Tx, periodID int64) []int64 {
+	if s.notifPub == nil {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT c.candidate_account_id
+		FROM exam_registrations er
+		JOIN candidates c ON c.candidate_id = er.exam_registration_candidate_id
+		                 AND c.candidate_is_deleted = FALSE
+		JOIN exam_sessions es ON es.exam_session_id = er.exam_registration_exam_session_id
+		WHERE es.exam_session_exam_period_id = $1
+		  AND er.exam_registration_status IN ('pending_payment', 'confirmed')
+		  AND er.exam_registration_is_deleted = FALSE`, periodID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // ClearCache clears all exam-related caches (types, published sessions, individual sessions).
@@ -604,6 +664,8 @@ func (s *Service) CancelExamSession(ctx context.Context, sessionID, actorID int6
 		return err
 	}
 
+	affectedAccountIDs := s.querySessionCandidateAccountIDs(ctx, tx, sessionID)
+
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE exam_sessions
 		 SET exam_session_status = 'cancelled', exam_session_closed_reason = NULL,
@@ -628,6 +690,14 @@ func (s *Service) CancelExamSession(ctx context.Context, sessionID, actorID int6
 		return fmt.Errorf("exam: commit cancel session: %w", err)
 	}
 	s.invalidateSessionCache(ctx, sessionID)
+
+	if s.notifPub != nil && len(affectedAccountIDs) > 0 {
+		sessionTitle := fmt.Sprintf("Ca thi #%d", sessionID)
+		if e.ExamSessionName != nil && strings.TrimSpace(*e.ExamSessionName) != "" {
+			sessionTitle = strings.TrimSpace(*e.ExamSessionName)
+		}
+		s.notifPub.Publish(notification.NewExamCancelledEvent(affectedAccountIDs, sessionTitle, ""))
+	}
 	return nil
 }
 
@@ -1942,6 +2012,8 @@ func (s *Service) AdminCancelExamPeriod(ctx context.Context, periodID, actorID i
 		return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: cancel period sessions: %w", err)
 	}
 
+	affectedAccountIDs := s.queryPeriodCandidateAccountIDs(ctx, tx, periodID)
+
 	moved, refunded, err := s.resolvePeriodRegistrations(ctx, tx, periodID, resolution, req.TargetSession)
 	if err != nil {
 		return response.ExamPeriodResponseDTO{}, err
@@ -1966,6 +2038,10 @@ func (s *Service) AdminCancelExamPeriod(ctx context.Context, periodID, actorID i
 		return response.ExamPeriodResponseDTO{}, fmt.Errorf("exam: commit cancel period: %w", err)
 	}
 	s.invalidateSessionCache(ctx)
+
+	if s.notifPub != nil && len(affectedAccountIDs) > 0 {
+		s.notifPub.Publish(notification.NewExamCancelledEvent(affectedAccountIDs, updated.ExamPeriodName, req.Reason))
+	}
 	return ToExamPeriodResponseDTO(updated, newPeriodState(updated), 0, nil, now), nil
 }
 
@@ -2191,10 +2267,21 @@ func (s *Service) AdminRescheduleExamPeriod(ctx context.Context, periodID, actor
 		NewValue:       newVal,
 	})
 
+	affectedAccountIDs := s.queryPeriodCandidateAccountIDs(ctx, tx, periodID)
+
 	if err := tx.Commit(); err != nil {
 		return response.RescheduleExamPeriodResponseDTO{}, fmt.Errorf("exam: commit reschedule: %w", err)
 	}
 	s.invalidateSessionCache(ctx)
+
+	if s.notifPub != nil && len(affectedAccountIDs) > 0 {
+		s.notifPub.Publish(notification.NewExamRescheduledPeriodEvent(
+			affectedAccountIDs,
+			src.ExamPeriodName,
+			newStartDate.Format("02/01/2006"),
+			req.Reason,
+		))
+	}
 
 	return response.RescheduleExamPeriodResponseDTO{
 		PeriodID:          periodID,

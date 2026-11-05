@@ -13,6 +13,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditres "github.com/hskvinh/backend/internal/audit/dto/response"
 	"github.com/hskvinh/backend/internal/candidate"
@@ -417,6 +418,87 @@ func TestHandler_OptimisticLockConflictReturns409(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409 Conflict on optimistic lock 0 rows affected, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandler_AdminGetCandidate_ZeroTrustPIIPinGateway(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	const jwtSecret = "zero-trust-secret"
+	const adminID int64 = 99
+	svc := candidate.NewService(db, &recordingAuditService{}, nil, nil)
+	h := candidate.NewHandler(svc)
+	h.SetJWTSecret(jwtSecret)
+
+	_, _, r := testutils.SetupTestRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", adminID)
+		c.Set("user_role", "admin")
+	})
+	r.GET("/admin/candidates/:id", h.AdminGetCandidate)
+
+	// 1. Call WITHOUT X-PII-Access-Token -> Raw image URLs must be withheld and pii_locked=true
+	mockAdminGetCandidateQueries(mock, 10)
+	w1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "/admin/candidates/10", nil)
+	r.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w1.Code)
+	}
+	var env1 struct {
+		Data struct {
+			LatestDocument struct {
+				FrontImageURL    string  `json:"front_image_url"`
+				BackImageURL     *string `json:"back_image_url"`
+				PortraitImageURL string  `json:"portrait_image_url"`
+				HasFrontImage    bool    `json:"has_front_image"`
+				HasBackImage     bool    `json:"has_back_image"`
+				HasPortraitImage bool    `json:"has_portrait_image"`
+				PiiLocked        bool    `json:"pii_locked"`
+			} `json:"latest_document"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w1.Body.Bytes(), &env1); err != nil {
+		t.Fatalf("unmarshal response 1 failed: %v", err)
+	}
+	if !env1.Data.LatestDocument.PiiLocked {
+		t.Fatalf("expected pii_locked=true when X-PII-Access-Token is absent")
+	}
+	if env1.Data.LatestDocument.FrontImageURL != "" || env1.Data.LatestDocument.BackImageURL != nil || env1.Data.LatestDocument.PortraitImageURL != "" {
+		t.Fatalf("expected raw image URLs to be withheld without pii_access_token, got %+v", env1.Data.LatestDocument)
+	}
+	if !env1.Data.LatestDocument.HasFrontImage || !env1.Data.LatestDocument.HasBackImage || !env1.Data.LatestDocument.HasPortraitImage {
+		t.Fatalf("expected has_*_image boolean flags to remain true so UI knows photos exist")
+	}
+
+	// 2. Call WITH valid 5-minute X-PII-Access-Token (scope="pii_access") -> Raw image URLs unlocked
+	piiToken, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":   adminID,
+		"user_role": "admin",
+		"scope":     middleware.ScopePIIAccess,
+		"exp":       time.Now().Add(5 * time.Minute).Unix(),
+	}).SignedString([]byte(jwtSecret))
+
+	mockAdminGetCandidateQueries(mock, 10)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/candidates/10", nil)
+	req2.Header.Set(middleware.HeaderPIIAccessToken, piiToken)
+	r.ServeHTTP(w2, req2)
+
+	if err := json.Unmarshal(w2.Body.Bytes(), &env1); err != nil {
+		t.Fatalf("unmarshal response 2 failed: %v", err)
+	}
+	if env1.Data.LatestDocument.PiiLocked {
+		t.Fatalf("expected pii_locked=false when valid X-PII-Access-Token is supplied")
+	}
+	if env1.Data.LatestDocument.FrontImageURL != "https://cdn.example.com/front.jpg" ||
+		env1.Data.LatestDocument.PortraitImageURL != "https://cdn.example.com/portrait.jpg" {
+		t.Fatalf("expected unmasked image URLs after PIN unlock, got %+v", env1.Data.LatestDocument)
 	}
 }
 

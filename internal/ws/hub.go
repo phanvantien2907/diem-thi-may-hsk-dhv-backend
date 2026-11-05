@@ -20,87 +20,471 @@ const (
 	EventAccountUpdated          EventType = "account_updated"           // Thông tin tài khoản (profile/password) vừa cập nhật
 	EventDashboardMetricsUpdated EventType = "dashboard_metrics_updated" // Background job cập nhật dữ liệu dashboard
 	EventTransactionException    EventType = "transaction_exception"     // Phát hiện giao dịch ngoại lệ
+	EventNotificationPayload     EventType = "NOTIFICATION_PAYLOAD"      // Thông báo thời gian thực gửi tới người dùng
+	EventNotificationRead        EventType = "notification_read"         // Đồng bộ trạng thái đã đọc giữa nhiều tab của cùng 1 user
 )
 
-// Event là JSON payload được đẩy tới mọi client đã kết nối.
+// Resilience, Buffer, and Custom WebSocket Close Code constants.
+const (
+	// MaxConnectionsPerUser limits simultaneous open WebSocket tabs/devices per account_id.
+	MaxConnectionsPerUser = 5
+
+	// ClientSendBufferSize is the per-client outbound message channel capacity.
+	// Slow clients whose buffer fills up are dropped immediately to prevent memory bloat.
+	ClientSendBufferSize = 256
+
+	// DefaultThrottleWindow is the debounce/batch interval for high-frequency broadcast storms.
+	DefaultThrottleWindow = 250 * time.Millisecond
+
+	// Custom WebSocket Close Codes (RFC 6455 private use range 4000-4999)
+	CloseCodeTokenExpired      = 4001 // JWT expired or authentication failed
+	CloseCodeMaxConnEvicted    = 4002 // Exceeded MaxConnectionsPerUser (oldest connection evicted)
+	CloseCodeSessionTerminated = 4003 // User logged out or account disabled by admin
+)
+
+// Event represents the JSON envelope pushed to WebSocket clients.
+// Includes both "type"/"payload" and "event"/"data" aliases so all existing
+// and new frontend listeners work seamlessly.
 type Event struct {
 	Type      EventType   `json:"type"`
+	Event     EventType   `json:"event"`
 	Payload   interface{} `json:"payload"`
+	Data      interface{} `json:"data"`
 	Timestamp string      `json:"timestamp"`
 }
 
-// Hub quản lý tập hợp các client WebSocket đang hoạt động và phát broadcast các event.
-type Hub struct {
-	mu         sync.RWMutex
-	clients    map[*Client]struct{}
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+type throttledItem struct {
+	eventType EventType
+	payload   interface{}
 }
 
-// NewHub tạo và trả về một Hub mới.
+// Hub manages active WebSocket clients in a single-instance modular monolith.
+// Maintains map[account_id][]*Client for O(1) targeted multi-tab delivery and max-5 connection enforcement.
+type Hub struct {
+	mu          sync.RWMutex
+	clients     map[*Client]struct{}
+	userClients map[int64][]*Client
+	roleClients map[string]map[*Client]struct{}
+	broadcast   chan []byte
+	register    chan *Client
+	unregister  chan *Client
+
+	throttleMu     sync.Mutex
+	throttleQueue  map[string]throttledItem
+	throttleWindow time.Duration
+	tickets        *TicketStore
+}
+
+// NewHub creates and initializes a new Hub with a built-in TicketStore and throttle buffer.
 func NewHub() *Hub {
 	return &Hub{
-		clients:    make(map[*Client]struct{}),
-		broadcast:  make(chan []byte, 256),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:        make(map[*Client]struct{}),
+		userClients:    make(map[int64][]*Client),
+		roleClients:    make(map[string]map[*Client]struct{}),
+		broadcast:      make(chan []byte, 512),
+		register:       make(chan *Client, 128),
+		unregister:     make(chan *Client, 128),
+		throttleQueue:  make(map[string]throttledItem),
+		throttleWindow: DefaultThrottleWindow,
+		tickets:        NewTicketStore(),
 	}
 }
 
-// Run starts the hub's main event loop. Must be called in a goroutine.
+// TicketStore returns the Hub's one-time ticket manager.
+func (h *Hub) TicketStore() *TicketStore {
+	return h.tickets
+}
+
+// SetThrottleWindow overrides the debounce interval (useful for fast unit tests).
+func (h *Hub) SetThrottleWindow(d time.Duration) {
+	h.throttleMu.Lock()
+	if d > 0 {
+		h.throttleWindow = d
+	}
+	h.throttleMu.Unlock()
+}
+
+// RegisterClient synchronously registers a Client in the Hub, enforcing MaxConnectionsPerUser (5).
+// If the user already has 5 active connections, the oldest connection (index 0) is evicted with close code 4002.
+func (h *Hub) RegisterClient(client *Client) {
+	if client == nil {
+		return
+	}
+	var evicted []*Client
+
+	h.mu.Lock()
+	if client.UserID > 0 {
+		conns := h.userClients[client.UserID]
+		for len(conns) >= MaxConnectionsPerUser {
+			oldest := conns[0]
+			conns = conns[1:]
+			h.userClients[client.UserID] = conns
+			if _, exists := h.clients[oldest]; exists {
+				delete(h.clients, oldest)
+				if oldest.Role != "" {
+					if rset, ok := h.roleClients[oldest.Role]; ok {
+						delete(rset, oldest)
+						if len(rset) == 0 {
+							delete(h.roleClients, oldest.Role)
+						}
+					}
+				}
+				evicted = append(evicted, oldest)
+			}
+		}
+		h.userClients[client.UserID] = append(conns, client)
+	}
+
+	h.clients[client] = struct{}{}
+	if client.Role != "" {
+		if h.roleClients[client.Role] == nil {
+			h.roleClients[client.Role] = make(map[*Client]struct{})
+		}
+		h.roleClients[client.Role][client] = struct{}{}
+	}
+	total := len(h.clients)
+	h.mu.Unlock()
+
+	for _, old := range evicted {
+		old.CloseWithCode(CloseCodeMaxConnEvicted, "Exceeded maximum 5 concurrent connections; oldest tab evicted")
+	}
+
+	log.Printf("[ws] client connected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
+}
+
+// UnregisterClient removes a Client from the Hub safely.
+func (h *Hub) UnregisterClient(client *Client) {
+	if client == nil {
+		return
+	}
+	h.mu.Lock()
+	removed := h.removeClientLocked(client)
+	total := len(h.clients)
+	h.mu.Unlock()
+	if removed {
+		log.Printf("[ws] client disconnected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
+	}
+}
+
+func (h *Hub) removeClientLocked(client *Client) bool {
+	if _, ok := h.clients[client]; !ok {
+		return false
+	}
+	delete(h.clients, client)
+
+	if client.UserID > 0 {
+		conns := h.userClients[client.UserID]
+		filtered := conns[:0]
+		for _, c := range conns {
+			if c != client {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(h.userClients, client.UserID)
+		} else {
+			h.userClients[client.UserID] = filtered
+		}
+	}
+
+	if client.Role != "" {
+		if set, exists := h.roleClients[client.Role]; exists {
+			delete(set, client)
+			if len(set) == 0 {
+				delete(h.roleClients, client.Role)
+			}
+		}
+	}
+
+	client.closeSendOnce()
+	return true
+}
+
+// Run starts the hub's main event loop and high-frequency broadcast throttle ticker.
+// Must be called in a goroutine.
 func (h *Hub) Run() {
+	h.throttleMu.Lock()
+	window := h.throttleWindow
+	h.throttleMu.Unlock()
+	if window <= 0 {
+		window = DefaultThrottleWindow
+	}
+	throttleTicker := time.NewTicker(window)
+	defer throttleTicker.Stop()
+
 	for {
 		select {
 		case client := <-h.register:
-			h.mu.Lock()
-			h.clients[client] = struct{}{}
-			h.mu.Unlock()
-			log.Printf("[ws] client connected (total=%d)", h.ClientCount())
+			h.RegisterClient(client)
 
 		case client := <-h.unregister:
-			h.mu.Lock()
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-				close(client.send)
-			}
-			h.mu.Unlock()
-			log.Printf("[ws] client disconnected (total=%d)", h.ClientCount())
+			h.UnregisterClient(client)
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
-			for client := range h.clients {
-				select {
-				case client.send <- message:
-				default:
-					// Client too slow, drop it
-					close(client.send)
-					delete(h.clients, client)
-				}
-			}
-			h.mu.RUnlock()
+			h.dispatchBroadcastBytes(message)
+
+		case <-throttleTicker.C:
+			h.FlushThrottledBroadcasts()
 		}
 	}
 }
 
-// Broadcast serializes an Event and pushes it to all connected clients.
-func (h *Hub) Broadcast(eventType EventType, payload interface{}) {
+func (h *Hub) dispatchBroadcastBytes(message []byte) {
+	var slowClients []*Client
+
+	h.mu.Lock()
+	for client := range h.clients {
+		select {
+		case client.send <- message:
+		default:
+			// Client send channel buffer (256) is full -> drop slow client immediately
+			h.removeClientLocked(client)
+			slowClients = append(slowClients, client)
+		}
+	}
+	h.mu.Unlock()
+
+	for _, sc := range slowClients {
+		if sc.conn != nil {
+			_ = sc.conn.Close()
+		}
+	}
+}
+
+func marshalEvent(eventType EventType, payload interface{}) ([]byte, bool) {
 	evt := Event{
 		Type:      eventType,
+		Event:     eventType,
 		Payload:   payload,
+		Data:      payload,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		log.Printf("[ws] marshal error: %v", err)
-		return
+		return nil, false
 	}
-	h.broadcast <- data
+	return data, true
 }
 
-// ClientCount returns the number of currently connected clients.
+// Broadcast serializes an Event and pushes it to all connected clients.
+// High-frequency seat events are automatically coalesced when BroadcastThrottled is used.
+func (h *Hub) Broadcast(eventType EventType, payload interface{}) {
+	data, ok := marshalEvent(eventType, payload)
+	if !ok {
+		return
+	}
+	select {
+	case h.broadcast <- data:
+	default:
+		log.Printf("[ws] broadcast channel full, dropping event %s", eventType)
+	}
+}
+
+// BroadcastThrottled batches/debounces high-frequency broadcast events (such as seat_updated
+// during registration rush) by coalesceKey within a 200-500ms window before broadcasting.
+func (h *Hub) BroadcastThrottled(eventType EventType, coalesceKey string, payload interface{}) {
+	key := string(eventType) + ":" + coalesceKey
+	h.throttleMu.Lock()
+	h.throttleQueue[key] = throttledItem{
+		eventType: eventType,
+		payload:   payload,
+	}
+	h.throttleMu.Unlock()
+}
+
+// FlushThrottledBroadcasts flushes all pending coalesced high-frequency events immediately.
+func (h *Hub) FlushThrottledBroadcasts() {
+	h.throttleMu.Lock()
+	if len(h.throttleQueue) == 0 {
+		h.throttleMu.Unlock()
+		return
+	}
+	pending := h.throttleQueue
+	h.throttleQueue = make(map[string]throttledItem)
+	h.throttleMu.Unlock()
+
+	for _, item := range pending {
+		data, ok := marshalEvent(item.eventType, item.payload)
+		if !ok {
+			continue
+		}
+		h.dispatchBroadcastBytes(data)
+	}
+}
+
+// SendToUser pushes an event strictly to the active WebSocket connections in map[account_id][]*Client.
+// Never broadcasts to other users. Drops any slow client whose 256-message buffer is full.
+func (h *Hub) SendToUser(userID int64, eventType EventType, payload interface{}) {
+	if userID <= 0 {
+		return
+	}
+	data, ok := marshalEvent(eventType, payload)
+	if !ok {
+		return
+	}
+
+	var slowClients []*Client
+
+	h.mu.Lock()
+	conns := h.userClients[userID]
+	if len(conns) == 0 {
+		h.mu.Unlock()
+		return
+	}
+	// Copy slice snapshot to iterate safely even if a slow client is removed
+	snapshot := make([]*Client, len(conns))
+	copy(snapshot, conns)
+
+	for _, client := range snapshot {
+		select {
+		case client.send <- data:
+		default:
+			h.removeClientLocked(client)
+			slowClients = append(slowClients, client)
+		}
+	}
+	h.mu.Unlock()
+
+	for _, sc := range slowClients {
+		if sc.conn != nil {
+			_ = sc.conn.Close()
+		}
+	}
+}
+
+// SendToUsers pushes an event to all active WebSocket connections belonging to any user in userIDs.
+func (h *Hub) SendToUsers(userIDs []int64, eventType EventType, payload interface{}) {
+	if len(userIDs) == 0 {
+		return
+	}
+	data, ok := marshalEvent(eventType, payload)
+	if !ok {
+		return
+	}
+
+	var slowClients []*Client
+
+	h.mu.Lock()
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, uid := range userIDs {
+		if uid <= 0 {
+			continue
+		}
+		if _, dup := seen[uid]; dup {
+			continue
+		}
+		seen[uid] = struct{}{}
+		conns := h.userClients[uid]
+		if len(conns) == 0 {
+			continue
+		}
+		snapshot := make([]*Client, len(conns))
+		copy(snapshot, conns)
+		for _, client := range snapshot {
+			select {
+			case client.send <- data:
+			default:
+				h.removeClientLocked(client)
+				slowClients = append(slowClients, client)
+			}
+		}
+	}
+	h.mu.Unlock()
+
+	for _, sc := range slowClients {
+		if sc.conn != nil {
+			_ = sc.conn.Close()
+		}
+	}
+}
+
+// SendToRole pushes an event to all active WebSocket connections matching the given role.
+func (h *Hub) SendToRole(role string, eventType EventType, payload interface{}) {
+	if role == "" {
+		return
+	}
+	data, ok := marshalEvent(eventType, payload)
+	if !ok {
+		return
+	}
+
+	var slowClients []*Client
+
+	h.mu.Lock()
+	conns, exists := h.roleClients[role]
+	if !exists {
+		h.mu.Unlock()
+		return
+	}
+	for client := range conns {
+		select {
+		case client.send <- data:
+		default:
+			h.removeClientLocked(client)
+			slowClients = append(slowClients, client)
+		}
+	}
+	h.mu.Unlock()
+
+	for _, sc := range slowClients {
+		if sc.conn != nil {
+			_ = sc.conn.Close()
+		}
+	}
+}
+
+// DisconnectUser immediately ranges over and terminates all active WebSocket connections
+// of an account_id (e.g., when the user logs out or is disabled by an admin).
+func (h *Hub) DisconnectUser(userID int64, closeCode int, reason string) int {
+	if userID <= 0 {
+		return 0
+	}
+	if closeCode == 0 {
+		closeCode = CloseCodeSessionTerminated
+	}
+	if reason == "" {
+		reason = "Session terminated"
+	}
+
+	h.mu.Lock()
+	conns := h.userClients[userID]
+	if len(conns) == 0 {
+		h.mu.Unlock()
+		return 0
+	}
+	snapshot := make([]*Client, len(conns))
+	copy(snapshot, conns)
+	delete(h.userClients, userID)
+	for _, client := range snapshot {
+		delete(h.clients, client)
+		if client.Role != "" {
+			if set, exists := h.roleClients[client.Role]; exists {
+				delete(set, client)
+				if len(set) == 0 {
+					delete(h.roleClients, client.Role)
+				}
+			}
+		}
+	}
+	h.mu.Unlock()
+
+	for _, client := range snapshot {
+		client.CloseWithCode(closeCode, reason)
+	}
+	return len(snapshot)
+}
+
+// ClientCount returns the total number of currently connected clients.
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+// UserConnectionCount returns the number of active connections for a specific userID.
+func (h *Hub) UserConnectionCount(userID int64) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.userClients[userID])
 }

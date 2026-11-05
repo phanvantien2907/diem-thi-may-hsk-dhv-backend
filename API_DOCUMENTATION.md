@@ -3,10 +3,18 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.2.4
-> **Cập nhật lần cuối:** 2026-10-28
+> **Phiên bản:** v1.2.6
+> **Cập nhật lần cuối:** 2026-11-05
 
 ## Changelog
+
+### v1.2.6 (2026-11-05)
+- 🔔 **Hệ thống Thông báo Thời gian thực (Real-Time Notification) & Bảo mật/Chịu tải WebSocket Hub**:
+  - **Handshake an toàn không lộ JWT trên URL (`POST /api/v1/ws/ticket`)**: Cấp vé dùng 1 lần (One-Time Ticket, TTL 30 giây) để mở kết nối `ws://<host>/ws?ticket=<ticket>` (hoặc xác thực qua frame đầu tiên `{"type":"auth","token":"<jwt>"}` trong 5 giây). Chặn hoàn toàn việc truyền `?token=<jwt>` trên URL với `HTTP 401 Unauthorized` nhằm ngăn chặn rò rỉ JWT trong log proxy/reverse-proxy.
+  - **Định tuyến mục tiêu & Giới hạn đa tab (`map[account_id][]*Client`)**: Hỗ trợ tối đa **5 kết nối đồng thời/user**; khi mở tab thứ 6, kết nối cũ nhất bị đóng tự động với mã `4002`. Các sự kiện cá nhân (`NOTIFICATION_PAYLOAD`, `notification_read`, `account_updated`) chỉ gửi đích danh tới các kết nối của `account_id` tương ứng.
+  - **Mã đóng kết nối tùy chỉnh (Custom Close Codes `4001`, `4002`, `4003`)**: Tự động đóng kết nối với mã `4001` khi JWT hết hạn (để Frontend thực hiện silent refresh + xin vé mới + reconnect); ngắt tức thì toàn bộ kết nối của `account_id` với mã `4003` khi người dùng đăng xuất hoặc bị Admin vô hiệu hóa tài khoản.
+  - **Chống tràn bộ đệm & Bão Broadcast**: Giới hạn kênh gửi `256` tin nhắn/client (tự động ngắt client chậm) và gộp/debounce các sự kiện tần suất cao (`seat_updated`) trong cửa sổ `250ms`.
+  - **Đồng bộ tin nhắn bị lỡ & Đồng bộ trạng thái đọc đa tab**: Bổ sung `GET /api/v1/notifications?after_id=<max_local_id>` khi kết nối lại và phát sự kiện `notification_read` qua WebSocket khi gọi `PATCH /api/v1/notifications/:id/read`.
 
 ### v1.2.5 (2026-11-03)
 - ⚡ **Giải quyết Deadlock State Machine & Top-Down Transactional Cascade**:
@@ -4377,13 +4385,19 @@ transaction PostgreSQL. Không sử dụng Redis.
 
 ## 9. Module Notification (Thông báo)
 
-### 9.1. Danh sách thông báo
+### 9.1. Danh sách thông báo (Hỗ trợ đồng bộ `after_id`)
 
 | | |
 |---|---|
 | **Endpoint** | `GET /api/v1/notifications` |
 | **Auth** | 🔐 JWT |
-| **Use-case** | Lấy danh sách thông báo hệ thống của người dùng |
+| **Use-case** | Lấy danh sách thông báo hệ thống của người dùng hiện tại. Khi WebSocket kết nối lại (`onopen`), truyền `?after_id=<max_local_id>` để lấy các thông báo bị lỡ trong thời gian rớt mạng |
+
+**Query Params (tùy chọn):**
+
+| Param | Kiểu | Bắt buộc | Mô tả |
+|---|---|---|---|
+| `after_id` | `integer` | ❌ | Chỉ trả về các thông báo có `id > after_id` (dùng cho REST fallback catch-up khi kết nối lại WebSocket) |
 
 **Response (200 OK):**
 
@@ -4392,12 +4406,17 @@ transaction PostgreSQL. Không sử dụng Redis.
   "success": true,
   "data": [
     {
-      "id": 1,
+      "id": 105,
+      "user_id": 42,
       "account_id": 42,
+      "role": "candidate",
+      "type": "PROFILE_REJECTED",
+      "title": "Hồ sơ của bạn đã bị từ chối",
+      "content": "Hồ sơ dự thi HSK của bạn đã bị từ chối. Lý do: Ảnh chân dung bị mờ",
+      "is_read": false,
       "channel": "push",
-      "content": "Bạn đã đăng ký thi HSK 1 thành công",
       "status": "pending",
-      "created_at": "2026-09-07T10:30:00+07:00"
+      "created_at": "2026-11-05T09:00:00Z"
     }
   ],
   "error": null,
@@ -4410,21 +4429,26 @@ transaction PostgreSQL. Không sử dụng Redis.
 | Field | Kiểu | Nullable | Mô tả |
 |---|---|---|---|
 | `id` | `integer` | ❌ | ID thông báo |
-| `account_id` | `integer` | ❌ | ID tài khoản |
+| `user_id` | `integer` | ❌ | ID tài khoản nhận thông báo |
+| `account_id` | `integer` | ❌ | ID tài khoản (alias tương thích ngược) |
+| `role` | `string` | ❌ | Vai trò nhận thông báo (`candidate`, `admin`) |
+| `type` | `string` | ❌ | Phân loại sự kiện: `PROFILE_REJECTED`, `PROFILE_APPROVED`, `EXAM_RESCHEDULED`, `PAYMENT_CONFIRMED`, `SYSTEM` |
+| `title` | `string` | ❌ | Tiêu đề ngắn hiển thị trên Chuông & Toast |
+| `content` | `string` | ❌ | Nội dung chi tiết thông báo |
+| `is_read` | `boolean` | ❌ | `true` nếu đã đọc, `false` nếu chưa đọc |
 | `channel` | `string` | ❌ | `email`, `sms`, `zalo`, `push` |
-| `content` | `string` | ❌ | Nội dung thông báo |
 | `status` | `string` | ❌ | `pending`, `sent`, `failed` |
-| `created_at` | `datetime` | ❌ | Thời điểm tạo |
+| `created_at` | `datetime` | ❌ | Thời điểm tạo (ISO 8601) |
 
 ---
 
-### 9.2. Đánh dấu đã đọc
+### 9.2. Đánh dấu đã đọc (Đồng bộ đa tab qua WebSocket)
 
 | | |
 |---|---|
-| **Endpoint** | `PUT /api/v1/notifications/:id/read` |
+| **Endpoint** | `PATCH /api/v1/notifications/:id/read` (hoặc `PUT /api/v1/notifications/:id/read`) |
 | **Auth** | 🔐 JWT |
-| **Use-case** | Đánh dấu thông báo đã đọc |
+| **Use-case** | Đánh dấu thông báo đã đọc (`is_read = true`) và phát sự kiện WebSocket `notification_read` tới mọi tab đang mở của người dùng đó |
 
 **Path Params:** `id` — ID thông báo (`integer`)
 
@@ -4433,7 +4457,11 @@ transaction PostgreSQL. Không sử dụng Redis.
 ```json
 {
   "success": true,
-  "data": { "message": "Đã đánh dấu thông báo là đã đọc" },
+  "data": {
+    "id": 105,
+    "is_read": true,
+    "message": "Đã đánh dấu thông báo là đã đọc"
+  },
   "error": null,
   "meta": null
 }
@@ -5109,13 +5137,14 @@ ngày thi, `publish_at` và trạng thái hiệu lực của đợt cha — **kh
 | 106 | `PATCH` | `/admin/deliveries/:id` | 🔐👑 | Certificate |
 | 107 | `POST` | `/webhooks/shipping/:courier` | HMAC | Certificate |
 | 108 | `GET` | `/notifications` | 🔐 | Notification |
-| 109 | `PUT` | `/notifications/:id/read` | 🔐 | Notification |
-| 110 | `GET` | `/locations/provinces` | 🔓 | Location |
-| 111 | `GET` | `/locations/provinces/:id/wards` | 🔓 | Location |
-| 112 | `GET` | `/locations/wards/:id/delivery-coverage` | 🔓 | Location |
-| 113 | `GET` | `/admin/locations/stats/candidates-by-province` | 🔐👑 | Location |
-| 114 | `POST` | `/admin/locations/wards/:id/merge` | 🔐👑 | Location |
-| 115 | `GET` | `/admin/audit-logs` | 🔐👑 | Audit |
+| 109 | `PATCH` / `PUT` | `/notifications/:id/read` | 🔐 | Notification |
+| 110 | `POST` | `/ws/ticket` | 🔐 | WebSocket |
+| 111 | `GET` | `/locations/provinces` | 🔓 | Location |
+| 112 | `GET` | `/locations/provinces/:id/wards` | 🔓 | Location |
+| 113 | `GET` | `/locations/wards/:id/delivery-coverage` | 🔓 | Location |
+| 114 | `GET` | `/admin/locations/stats/candidates-by-province` | 🔐👑 | Location |
+| 115 | `POST` | `/admin/locations/wards/:id/merge` | 🔐👑 | Location |
+| 116 | `GET` | `/admin/audit-logs` | 🔐👑 | Audit |
 
 > **Chú thích:** 🔓 = Public | 🔐 = JWT | 🔐👑 = JWT + Admin | HMAC = Webhook signature
 
@@ -5127,131 +5156,145 @@ ngày thi, `publish_at` và trạng thái hiệu lực của đợt cha — **kh
 
 ## 14. WebSocket Real-time Events
 
-Hệ thống hỗ trợ kết nối WebSocket để nhận các sự kiện real-time (cập nhật ghế, đăng ký, thanh toán…) mà **không cần reload trang**.
+Hệ thống hỗ trợ kết nối WebSocket trong kiến trúc **Single-Instance Modular Monolith** để nhận các sự kiện thời gian thực (thông báo cá nhân, đồng bộ đa tab, cập nhật ghế, đăng ký, thanh toán…) mà **không cần reload trang**.
 
-### 14.1. Kết nối WebSocket
+### 14.1. Cấp vé kết nối một lần (`POST /api/v1/ws/ticket`) & Handshake Bảo mật
+
+> **⚠️ Quy tắc bảo mật bắt buộc:** Server **TỪ CHỐI (`HTTP 401 Unauthorized`)** mọi kết nối WebSocket truyền JWT qua query string (`?token=<jwt>`) để ngăn chặn rò rỉ Access Token trong access log của Nginx/Proxy.
+
+#### Bước 1: Xin vé kết nối dùng 1 lần (One-Time Ticket)
+
+| | |
+|---|---|
+| **Endpoint** | `POST /api/v1/ws/ticket` (hoặc `POST /ws/ticket`) |
+| **Auth** | 🔐 JWT (`Authorization: Bearer <access_token>`) |
+| **TTL** | **30 giây**, chỉ sử dụng **1 lần duy nhất** (atomic consume) |
+
+**Response (200 OK):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "ticket": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "expires_in": 30,
+    "expires_at": "2026-11-05T09:00:30Z"
+  },
+  "error": null,
+  "meta": null
+}
+```
+
+#### Bước 2: Mở kết nối WebSocket
 
 | Thuộc tính | Giá trị |
 |---|---|
-| **URL** | `ws://<host>:<port>/ws?token=<jwt_access_token>` |
-| **Protocol** | WebSocket (RFC 6455) |
-| **Authentication** | JWT Access Token truyền qua **query parameter** `token` |
-| **Heartbeat** | Server gửi `ping` mỗi 54 giây, client cần trả `pong` |
+| **URL (Khuyên dùng)** | `ws://<host>:<port>/ws?ticket=<one_time_ticket>` |
+| **Phương thức dự phòng** | Kết nối `ws://<host>:<port>/ws` không tham số và gửi frame đầu tiên `{"type":"auth","token":"<jwt>"}` trong vòng **5 giây** |
+| **Giới hạn đa tab** | Tối đa **5 kết nối đồng thời** trên mỗi `account_id` (`MaxConnectionsPerUser = 5`). Kết nối thứ 6 sẽ tự động đẩy kết nối cũ nhất ra với mã đóng `4002` |
+| **Giới hạn bộ đệm** | Kênh gửi tối đa **256 tin nhắn/client** (`ClientSendBufferSize = 256`). Client chậm làm đầy bộ đệm sẽ bị ngắt kết nối ngay lập tức |
+| **Heartbeat** | Server gửi `ping` mỗi 54 giây, client tự động trả `pong` |
 
-#### Ví dụ kết nối (JavaScript):
+---
 
-```javascript
-// Kết nối WebSocket
-const token = localStorage.getItem("access_token");
-const ws = new WebSocket(`ws://localhost:8080/ws?token=${token}`);
+### 14.2. Bảng Mã Đóng Kết Nối Tùy Chỉnh (Custom WebSocket Close Codes)
 
-ws.onopen = () => {
-  console.log("[WS] Connected");
-};
+| Close Code | Hằng số Backend | Ý nghĩa | Hành vi bắt buộc phía Frontend |
+|---|---|---|---|
+| `4001` | `CloseCodeTokenExpired` | JWT hết hạn trong khi đang kết nối hoặc xác thực thất bại | Gọi silent refresh (`POST /api/v1/auth/refresh`), lấy vé mới từ `POST /api/v1/ws/ticket`, và kết nối lại với Exponential Backoff (`1s -> 2s -> 4s -> 8s -> tối đa 30s`) |
+| `4002` | `CloseCodeMaxConnEvicted` | Mở quá 5 tab/thiết bị đồng thời (tab cũ nhất bị thu hồi theo FIFO) | **Dừng** auto-reconnect trên tab bị thu hồi để tránh vòng lặp tranh chấp kết nối |
+| `4003` | `CloseCodeSessionTerminated` | Người dùng đã đăng xuất (`logout` / `logout-all`) hoặc tài khoản bị Admin vô hiệu hóa | **Dừng** auto-reconnect ngay lập tức và chuyển hướng về trang đăng nhập |
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log("[WS] Event:", data);
+---
 
-  switch (data.type) {
-    case "seats_released":
-      // Reload danh sách ca thi để cập nhật số ghế
-      refetchSessions();
-      break;
-    case "registration_created":
-      // Cập nhật số ghế còn lại của session tương ứng
-      updateSlotCount(data.payload.session_id, -1);
-      break;
-    case "registration_cancelled":
-      // Cập nhật ghế được nhả
-      updateSlotCount(data.payload.session_id, +1);
-      break;
-    case "payment_confirmed":
-      // Cập nhật trạng thái đăng ký
-      updateRegistrationStatus(data.payload.registration_id, "confirmed");
-      break;
-  }
-};
+### 14.3. Event Types & Payload Schemas
 
-ws.onclose = (event) => {
-  console.log("[WS] Disconnected, reconnecting...");
-  // Implement reconnect logic (e.g. exponential backoff)
-};
-```
-
-### 14.2. Event Types (Loại sự kiện)
-
-Mỗi message nhận được qua WebSocket có cấu trúc JSON:
+Mỗi message nhận được qua WebSocket có cấu trúc JSON chuẩn (hỗ trợ đồng thời cặp trường `type`/`payload` và `event`/`data`):
 
 ```json
 {
   "type": "<event_type>",
+  "event": "<event_type>",
   "payload": { ... },
-  "timestamp": "2026-10-01T08:30:00Z"
+  "data": { ... },
+  "timestamp": "2026-11-05T09:00:00Z"
 }
 ```
 
-| Event Type | Mô tả | Payload |
-|---|---|---|
-| `registration_created` | Có thí sinh vừa đăng ký (giữ) 1 ghế | `{ registration_id, session_id, seat_id, status }` |
-| `registration_cancelled` | Đơn đăng ký bị hủy (thí sinh hủy tay hoặc hết hạn 15 phút) | `{ registration_id, seat_id, status }` |
-| `payment_confirmed` | Thanh toán thành công → ghế được chốt (booked) | `{ registration_id, seat_id, status }` |
-| `seats_released` | CronJob vừa giải phóng ghế quá hạn 15 phút | `{ released_count, message }` |
-| `seat_updated` | Ghế thay đổi trạng thái (reserved) | `{ session_id, seat_id, new_status }` |
-| `account_updated` | Thông tin tài khoản (profile/password) vừa được cập nhật | `{ account_id }` |
+| Event Type | Phạm vi gửi | Mô tả | Payload Schema |
+|---|---|---|---|
+| `NOTIFICATION_PAYLOAD` | Đích danh (`SendToUser`) | Thông báo thời gian thực mới (ví dụ: từ chối/duyệt hồ sơ, dời lịch thi) | `{ id, user_id, account_id, role, type, title, content, is_read, channel, status, created_at }` |
+| `notification_read` | Đích danh (`SendToUser` tới mọi tab của user) | Đồng bộ trạng thái đã đọc giữa nhiều tab khi người dùng click đọc ở 1 tab | `{ id: 105, user_id: 42, is_read: true }` |
+| `account_updated` | Đích danh (`SendToUser`) | Thông tin tài khoản hoặc mật khẩu của người dùng vừa cập nhật | `{ account_id: 42 }` |
+| `seat_updated` | Broadcast (Debounced `250ms`) | Ghế thay đổi trạng thái (được gộp theo cửa sổ 250ms chống bão broadcast) | `{ session_id, seat_id, new_status }` |
+| `registration_created` | Broadcast | Có thí sinh vừa đăng ký (giữ) 1 ghế | `{ registration_id, session_id, seat_id, status }` |
+| `registration_cancelled` | Broadcast | Đơn đăng ký bị hủy (thí sinh hủy tay hoặc hết hạn 15 phút) | `{ registration_id, seat_id, status }` |
+| `payment_confirmed` | Broadcast | Thanh toán thành công → ghế được chốt (`booked`) | `{ registration_id, seat_id, status }` |
+| `seats_released` | Broadcast | CronJob vừa giải phóng ghế quá hạn 15 phút | `{ released_count, message }` |
 
-### 14.3. Cơ chế CronJob tự động giải phóng ghế
-
-- **Tần suất:** Mỗi **60 giây**, hệ thống tự động quét database.
-- **Logic:** Tất cả ghế có trạng thái `held` mà `exam_seat_held_until < NOW()` sẽ được:
-  1. Đặt lại thành `available` (ghế trống)
-  2. Đơn đăng ký tương ứng chuyển thành `cancelled`
-  3. Phát sự kiện WebSocket `seats_released` để FE cập nhật UI ngay lập tức
-- **Kết quả:** Thí sinh không thanh toán trong 15 phút → ghế tự động được nhả cho người khác đăng ký.
-
-### 14.4. Xử lý reconnect phía Frontend
-
-WebSocket có thể bị ngắt do mạng không ổn định. Frontend cần implement **auto-reconnect** với exponential backoff:
-
-```javascript
-function connectWS(token, onMessage) {
-  let retryCount = 0;
-  const maxRetries = 10;
-
-  function connect() {
-    const ws = new WebSocket(`ws://localhost:8080/ws?token=${token}`);
-
-    ws.onopen = () => {
-      console.log("[WS] Connected");
-      retryCount = 0; // Reset retry counter on success
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      onMessage(data);
-    };
-
-    ws.onclose = () => {
-      if (retryCount < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-        console.log(`[WS] Reconnecting in ${delay}ms...`);
-        setTimeout(connect, delay);
-        retryCount++;
-      }
-    };
-
-    return ws;
-  }
-
-  return connect();
+#### Ví dụ Payload `NOTIFICATION_PAYLOAD`:
+```json
+{
+  "type": "NOTIFICATION_PAYLOAD",
+  "event": "NOTIFICATION_PAYLOAD",
+  "payload": {
+    "id": 105,
+    "user_id": 42,
+    "account_id": 42,
+    "role": "candidate",
+    "type": "PROFILE_REJECTED",
+    "title": "Hồ sơ của bạn đã bị từ chối",
+    "content": "Hồ sơ dự thi HSK của bạn đã bị từ chối. Lý do: Ảnh chân dung bị mờ",
+    "is_read": false,
+    "channel": "push",
+    "status": "pending",
+    "created_at": "2026-11-05T09:00:00Z"
+  },
+  "data": {
+    "id": 105,
+    "user_id": 42,
+    "account_id": 42,
+    "role": "candidate",
+    "type": "PROFILE_REJECTED",
+    "title": "Hồ sơ của bạn đã bị từ chối",
+    "content": "Hồ sơ dự thi HSK của bạn đã bị từ chối. Lý do: Ảnh chân dung bị mờ",
+    "is_read": false,
+    "channel": "push",
+    "status": "pending",
+    "created_at": "2026-11-05T09:00:00Z"
+  },
+  "timestamp": "2026-11-05T09:00:00Z"
 }
 ```
 
-### 14.5. Lưu ý quan trọng
+#### Ví dụ Payload `notification_read` (Đồng bộ đa tab):
+```json
+{
+  "type": "notification_read",
+  "event": "notification_read",
+  "payload": {
+    "id": 105,
+    "user_id": 42,
+    "is_read": true
+  },
+  "data": {
+    "id": 105,
+    "user_id": 42,
+    "is_read": true
+  },
+  "timestamp": "2026-11-05T09:01:10Z"
+}
+```
 
-- **Không gửi dữ liệu lên WS:** Đây là kênh **broadcast một chiều** (server → client). Client chỉ nhận, không gửi.
-- **Dùng `make db-build` thay vì `make db-rs`:** Để tránh mất dữ liệu khi build lại code, luôn dùng `make db-build` (chỉ rebuild API image, giữ nguyên DB volume).
-- **Token hết hạn:** Nếu JWT token hết hạn, server sẽ từ chối kết nối WS. Frontend cần refresh token trước khi reconnect.
+### 14.4. Quy trình Kết nối, Đồng bộ Tin nhắn bị lỡ & Reconnect chuẩn phía Frontend
+
+1. **Xin vé & Kết nối**: Gọi `POST /api/v1/ws/ticket` lấy `ticket`, mở `new WebSocket("ws://host/ws?ticket=" + ticket)`.
+2. **Đồng bộ khi mở kết nối (`onopen`)**: Gọi ngay `GET /api/v1/notifications?after_id=<max_local_id>` và gộp vào `Map<id, NotificationItem>` để chống mất tin khi rớt mạng và khử trùng lặp.
+3. **Đồng bộ đọc đa tab (`onmessage`)**: Khi nhận `event === "notification_read"`, đánh dấu `is_read = true` cho `id` tương ứng và giảm `unreadCount` ngay lập tức mà không cần gọi lại API.
+4. **Xử lý hết hạn Token (`onclose` mã `4001`)**: Tự động gọi `POST /api/v1/auth/refresh`, xin vé WS mới và kết nối lại với Exponential Backoff.
+
+### 14.5. Lưu ý vận hành & Đóng gói Container
+- **Dùng `make db-build` (hoặc `docker-compose up --build -d api`) thay vì `make db-rs`**: Để tránh mất dữ liệu khi build lại code monolith, luôn dùng `make db-build` (chỉ rebuild API image, giữ nguyên DB volume).
 
 ---
 
