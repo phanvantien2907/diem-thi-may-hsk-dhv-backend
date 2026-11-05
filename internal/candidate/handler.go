@@ -403,6 +403,30 @@ func (h *Handler) AdminReleaseCandidateLock(c *gin.Context) {
 	utils.OK(c, gin.H{"message": "Đã giải phóng khóa xem hồ sơ"})
 }
 
+// AdminGetCandidateAuditLogs GET /admin/candidates/:id/audit-logs
+func (h *Handler) AdminGetCandidateAuditLogs(c *gin.Context) {
+	id, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID thí sinh không hợp lệ")
+		return
+	}
+	var req request.AdminCandidateAuditLogsRequestDTO
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "Tham số truy vấn không hợp lệ")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	items, meta, err := h.svc.AdminGetCandidateAuditLogs(c.Request.Context(), id, req)
+	if err != nil {
+		utils.InternalServerError(c, "Không thể tải lịch sử thao tác của thí sinh")
+		return
+	}
+	utils.OKWithMeta(c, items, &meta)
+}
+
 // AdminApproveDocument POST /admin/candidates/:id/approve
 // @Summary Duyệt giấy tờ
 // @Description Admin phê duyệt giấy tờ tùy thân của thí sinh.

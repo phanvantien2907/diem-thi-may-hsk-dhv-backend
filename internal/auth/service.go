@@ -960,19 +960,27 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 	defer tx.Rollback() //nolint:errcheck
 
 	var (
-		username, email           string
-		accFullName, candFullName sql.NullString
-		candidateID               sql.NullInt64
+		username, email                      string
+		accFullName, candFullName, docNumber sql.NullString
+		candidateID                          sql.NullInt64
 	)
 	err = tx.QueryRowContext(ctx, `
 		SELECT a.account_username, a.account_email, a.account_full_name,
-		       c.candidate_id, c.candidate_full_name
+		       c.candidate_id, c.candidate_full_name,
+		       (
+		         SELECT cd.candidate_document_number
+		         FROM candidate_documents cd
+		         WHERE cd.candidate_document_candidate_id = c.candidate_id
+		           AND cd.candidate_document_is_deleted = FALSE
+		         ORDER BY cd.candidate_document_created_at DESC, cd.candidate_document_id DESC
+		         LIMIT 1
+		       ) AS doc_number
 		FROM accounts a
 		LEFT JOIN candidates c ON c.candidate_account_id = a.account_id AND c.candidate_is_deleted = FALSE
 		WHERE a.account_id = $1 AND a.account_is_deleted = FALSE
 		FOR UPDATE OF a`,
 		targetID,
-	).Scan(&username, &email, &accFullName, &candidateID, &candFullName)
+	).Scan(&username, &email, &accFullName, &candidateID, &candFullName, &docNumber)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrAccountNotFound
 	}
@@ -980,7 +988,7 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 		return fmt.Errorf("auth: lookup account for admin deactivation: %w", err)
 	}
 
-	if !matchesConfirmIdentity(payload.ConfirmIdentity, username, email, accFullName.String, candFullName.String) {
+	if !matchesConfirmIdentity(payload.ConfirmIdentity, username, email, accFullName.String, candFullName.String, docNumber.String) {
 		return ErrDeactivationConfirmationMismatch
 	}
 

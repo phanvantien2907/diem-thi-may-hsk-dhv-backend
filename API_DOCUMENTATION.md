@@ -738,7 +738,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 | Field | Kiểu | Bắt buộc | Validate | Mô tả |
 |---|---|---|---|---|
 | `confirm_account_id` | `integer` | ✅ | Khớp với `:id` | ID tài khoản xác nhận |
-| `confirm_identity` | `string` | ✅ | Khớp với `username` (CCCD), `email` hoặc `full_name` | Chuỗi xác nhận danh tính chống xóa nhầm |
+| `confirm_identity` | `string` | ✅ | Khớp với `full_name`, `doc_number` (số CCCD/Hộ chiếu), `username` hoặc `email` | Chuỗi xác nhận danh tính chống xóa nhầm |
 | `reason` | `string` | ✅ | 5–500 ký tự | Lý do vô hiệu hóa (ghi vào `audit_logs`) |
 | `paid_resolution` | `string` | ❌ | `block` (mặc định) hoặc `refund` | Cách xử lý nếu thí sinh có đơn đã thanh toán (`confirmed`) |
 
@@ -1419,13 +1419,34 @@ bao gồm cả hồ sơ chưa có giấy tờ mới nhất và các hồ sơ có
 
 ---
 
-### 3.10c. [Admin] Từ chối giấy tờ, Thu hồi phê duyệt & Mở lại xét duyệt
+### 3.10c. [Admin] Từ chối giấy tờ, Thu hồi phê duyệt & Mở lại xét duyệt (Strict State Machine)
 
 | Endpoint | Chuyển trạng thái | Mô tả |
 |---|---|---|
-| `POST /api/v1/admin/candidates/:id/reject` | `pending -> rejected` | Từ chối hồ sơ đang chờ duyệt (bắt buộc `reason`). |
-| `POST /api/v1/admin/candidates/:id/revoke-approval` | `verified -> rejected` | **Thu hồi phê duyệt:** Bắt buộc `reason` (5–500 ký tự). Tự động hủy các đơn `pending_payment` và nhả ghế `held -> available`. Với đơn đã thanh toán (`confirmed`), mặc định chặn (`paid_resolution: "block"` -> `409 Conflict`) hoặc chuyển thanh toán sang `pending_refund` và nhả ghế khi truyền `"paid_resolution": "refund"`. |
-| `POST /api/v1/admin/candidates/:id/reopen-review` | `rejected -> pending` | **Mở lại xét duyệt:** Bắt buộc `reason` (5–500 ký tự), đưa hồ sơ bị từ chối về lại `pending` và ghi `REOPEN_REVIEW` vào `audit_logs`. |
+| `POST /api/v1/admin/candidates/:id/approve` | `pending -> verified` | **Duyệt hồ sơ:** Chỉ cho phép khi trạng thái hiện tại là `pending`. Không cho phép duyệt trực tiếp hồ sơ `rejected`. |
+| `POST /api/v1/admin/candidates/:id/reject` | `pending -> rejected` | **Từ chối hồ sơ:** Chỉ cho phép khi trạng thái hiện tại là `pending` (bắt buộc `reason`). |
+| `POST /api/v1/admin/candidates/:id/revoke-approval` | `verified -> rejected` | **Thu hồi phê duyệt:** Chỉ cho phép khi trạng thái hiện tại là `verified`. Bắt buộc `reason` (5–500 ký tự). Tự động hủy các đơn `pending_payment` và nhả ghế `held -> available`. Với đơn đã thanh toán (`confirmed`), mặc định chặn (`paid_resolution: "block"` -> `409 Conflict`) hoặc chuyển thanh toán sang `pending_refund` và nhả ghế khi truyền `"paid_resolution": "refund"`. |
+| `POST /api/v1/admin/candidates/:id/reopen-review` | `rejected -> pending` | **Mở lại xét duyệt:** Chỉ cho phép khi trạng thái hiện tại là `rejected`. Bắt buộc `reason` (5–500 ký tự), đưa hồ sơ bị từ chối về lại `pending` và ghi `REOPEN_REVIEW` vào `audit_logs`. |
+
+---
+
+### 3.10d. [Admin] Lịch sử thao tác của thí sinh (Audit Logs theo thí sinh)
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/v1/admin/candidates/:id/audit-logs` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Xem lịch sử phê duyệt, từ chối, thu hồi, mở lại xét duyệt và cập nhật hồ sơ của một thí sinh cụ thể có phân trang |
+
+**Query Params:**
+
+| Param | Kiểu | Bắt buộc | Validate | Mô tả |
+|---|---|---|---|---|
+| `scope` | `string` | ❌ | `all`, `candidate_documents`, `candidates` | Phạm vi nhật ký (`candidate_documents`: giấy tờ tùy thân; `candidates`: thông tin hồ sơ & tài khoản; mặc định `all`) |
+| `page` | `integer` | ❌ | Min 1, mặc định 1 | Trang hiện tại |
+| `limit` | `integer` | ❌ | Min 1, max 100, mặc định 10 | Số bản ghi mỗi trang (5 hoặc 10 bản ghi/trang trên UI modal) |
+
+**Response (200 OK):** Mảng `AuditLogResponseDTO` (luôn trả về `[]` khi rỗng, không trả `null`) kèm `meta` phân trang (`page`, `per_page`, `total_items`, `total_pages`).
 
 ---
 

@@ -152,16 +152,25 @@ func (s *auditService) List(ctx context.Context, req request.ListAuditLogRequest
 	}
 	defer rows.Close()
 
-	// Pre-allocate slice with known capacity leak memory
+	// Pre-allocate slice with known capacity
 	items := make([]response.AuditLogResponseDTO, 0, req.Limit)
 	for rows.Next() {
-		var e entities.AuditLogEntity
+		var (
+			e                  entities.AuditLogEntity
+			oldBytes, newBytes []byte
+		)
 		if err := rows.Scan(
 			&e.AuditLogID, &e.AuditLogActorAccountID, &e.AuditLogAction,
 			&e.AuditLogEntityTable, &e.AuditLogEntityID,
-			&e.AuditLogOldValue, &e.AuditLogNewValue, &e.AuditLogCreatedAt,
+			&oldBytes, &newBytes, &e.AuditLogCreatedAt,
 		); err != nil {
 			return response.AuditLogListResponseDTO{}, fmt.Errorf("audit: scan: %w", err)
+		}
+		if len(oldBytes) > 0 {
+			e.AuditLogOldValue = oldBytes
+		}
+		if len(newBytes) > 0 {
+			e.AuditLogNewValue = newBytes
 		}
 		items = append(items, ToAuditLogResponseDTO(e))
 	}

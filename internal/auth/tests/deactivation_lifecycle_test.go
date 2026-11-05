@@ -56,8 +56,8 @@ func TestDeactivateAccountByAdmin_ConfirmationSessionRevocationCascadeAndReactiv
 	mock.ExpectQuery(`SELECT a\.account_username, a\.account_email.+FROM accounts a.+FOR UPDATE OF a`).
 		WithArgs(int64(50)).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"account_username", "account_email", "account_full_name", "candidate_id", "candidate_full_name",
-		}).AddRow("040123456060", "cand50@example.com", "Nguyễn Văn B", int64(500), "Nguyễn Văn B"))
+			"account_username", "account_email", "account_full_name", "candidate_id", "candidate_full_name", "doc_number",
+		}).AddRow("040123456060", "cand50@example.com", "Nguyễn Văn B", int64(500), "Nguyễn Văn B", "040123456060"))
 
 	mock.ExpectQuery(`SELECT er\.exam_registration_id, er\.exam_registration_exam_seat_id, er\.exam_registration_status FROM exam_registrations er`).
 		WithArgs(int64(500)).

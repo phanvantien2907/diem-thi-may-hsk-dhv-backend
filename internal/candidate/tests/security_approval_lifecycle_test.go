@@ -502,3 +502,80 @@ func TestHandler_AdminGetCandidate_ZeroTrustPIIPinGateway(t *testing.T) {
 	}
 }
 
+func TestHandler_AdminGetCandidateAuditLogs_PaginatedAndHandlesNullOldValue(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := candidate.NewService(db, &recordingAuditService{}, nil, nil)
+	h := candidate.NewHandler(svc)
+
+	_, _, r := testutils.SetupTestRouter()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", int64(99))
+		c.Set("user_role", "admin")
+	})
+	r.GET("/admin/candidates/:id/audit-logs", h.AdminGetCandidateAuditLogs)
+
+	now := time.Date(2026, 11, 5, 20, 10, 0, 0, time.UTC)
+	actorID := int64(99)
+
+	// Page 1, limit 5, total 12 items -> total_pages = 3
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM audit_logs WHERE`).
+		WithArgs(int64(49)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(12)))
+
+	// Row 1 has NULL old_value (e.g., CREATE/REJECT) and Row 2 has both old_value and new_value (e.g., REOPEN_REVIEW)
+	mock.ExpectQuery(`SELECT audit_log_id, audit_log_actor_account_id, audit_log_action`).
+		WithArgs(int64(49), 5, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"audit_log_id", "audit_log_actor_account_id", "audit_log_action",
+			"audit_log_entity_table", "audit_log_entity_id",
+			"audit_log_old_value", "audit_log_new_value", "audit_log_created_at",
+		}).
+			AddRow(int64(102), &actorID, "REOPEN_REVIEW", "candidate_documents", int64(49), []byte(`{"verification_status":"rejected"}`), []byte(`{"verification_status":"pending","reason":"Thí sinh bổ sung ảnh rõ nét"}`), now).
+			AddRow(int64(101), &actorID, "REJECT", "candidate_documents", int64(49), nil, []byte(`{"reason":"Ảnh CCCD bị mờ"}`), now.Add(-5*time.Minute)))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/candidates/49/audit-logs?scope=candidate_documents&page=1&limit=5", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from GET /admin/candidates/:id/audit-logs, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			ID          int64  `json:"id"`
+			Action      string `json:"action"`
+			EntityTable string `json:"entity_table"`
+			EntityID    int64  `json:"entity_id"`
+		} `json:"data"`
+		Meta struct {
+			Page       int   `json:"page"`
+			PerPage    int   `json:"per_page"`
+			TotalItems int64 `json:"total_items"`
+			TotalPages int   `json:"total_pages"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if !env.Success || len(env.Data) != 2 {
+		t.Fatalf("expected 2 audit log items, got %+v", env)
+	}
+	if env.Data[0].Action != "REOPEN_REVIEW" || env.Data[1].Action != "REJECT" {
+		t.Fatalf("unexpected actions: %+v", env.Data)
+	}
+	if env.Meta.Page != 1 || env.Meta.PerPage != 5 || env.Meta.TotalItems != 12 || env.Meta.TotalPages != 3 {
+		t.Fatalf("unexpected pagination meta: %+v", env.Meta)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+

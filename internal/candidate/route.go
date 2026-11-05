@@ -38,6 +38,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		adminG.POST("/candidates/clear-cache", h.AdminClearCache)
 		adminG.GET("/candidates", h.AdminListCandidates)
 		adminG.GET("/candidates/:id", h.AdminGetCandidate)
+		adminG.GET("/candidates/:id/audit-logs", h.AdminGetCandidateAuditLogs)
 		adminG.DELETE("/candidates/:id/lock", h.AdminReleaseCandidateLock)
 		adminG.POST("/candidates/:id/approve", h.AdminApproveDocument)
 		adminG.POST("/candidates/:id/reject", h.AdminRejectDocument)

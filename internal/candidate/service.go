@@ -17,6 +17,7 @@ import (
 	"github.com/go-pdf/fpdf"
 	"github.com/hskvinh/backend/internal/audit"
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
+	auditres "github.com/hskvinh/backend/internal/audit/dto/response"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
@@ -1915,4 +1916,142 @@ func (s *Service) AdminGetRoster(ctx context.Context, examSessionID int64) ([]re
 		items = []response.RosterItemResponseDTO{}
 	}
 	return items, nil
+}
+
+// AdminGetCandidateAuditLogs returns paginated audit log records for a candidate (:id),
+// scoped to "candidate_documents", "candidates" (including account deactivation/reactivation), or "all".
+// Handles NULL old_value/new_value safely via []byte scanning and always returns a non-nil slice.
+func (s *Service) AdminGetCandidateAuditLogs(ctx context.Context, candidateID int64, req request.AdminCandidateAuditLogsRequestDTO) ([]auditres.AuditLogResponseDTO, utils.Meta, error) {
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := req.Limit
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+	scope := strings.TrimSpace(req.Scope)
+	if scope == "" {
+		scope = "all"
+	}
+
+	var scopeWhere string
+	switch scope {
+	case "candidate_documents":
+		scopeWhere = `(
+			audit_log_entity_table = 'candidate_documents'
+			AND (
+				audit_log_entity_id = $1
+				OR audit_log_entity_id IN (
+					SELECT candidate_document_id
+					FROM candidate_documents
+					WHERE candidate_document_candidate_id = $1
+				)
+			)
+		)`
+	case "candidates":
+		scopeWhere = `(
+			(audit_log_entity_table = 'candidates' AND audit_log_entity_id = $1)
+			OR (
+				audit_log_entity_table = 'accounts'
+				AND audit_log_entity_id = (
+					SELECT candidate_account_id
+					FROM candidates
+					WHERE candidate_id = $1
+				)
+			)
+		)`
+	default:
+		scopeWhere = `(
+			(
+				audit_log_entity_table = 'candidate_documents'
+				AND (
+					audit_log_entity_id = $1
+					OR audit_log_entity_id IN (
+						SELECT candidate_document_id
+						FROM candidate_documents
+						WHERE candidate_document_candidate_id = $1
+					)
+				)
+			)
+			OR (audit_log_entity_table = 'candidates' AND audit_log_entity_id = $1)
+			OR (
+				audit_log_entity_table = 'accounts'
+				AND audit_log_entity_id = (
+					SELECT candidate_account_id
+					FROM candidates
+					WHERE candidate_id = $1
+				)
+			)
+		)`
+	}
+
+	var total int64
+	countQuery := `SELECT COUNT(*) FROM audit_logs WHERE ` + scopeWhere
+	if err := s.db.QueryRowContext(ctx, countQuery, candidateID).Scan(&total); err != nil {
+		return nil, utils.Meta{}, fmt.Errorf("candidate: count audit logs: %w", err)
+	}
+
+	if total == 0 {
+		return make([]auditres.AuditLogResponseDTO, 0), utils.Meta{
+			Page:       page,
+			PerPage:    limit,
+			TotalItems: 0,
+			TotalPages: 0,
+		}, nil
+	}
+
+	offset := (page - 1) * limit
+	dataQuery := `
+		SELECT audit_log_id, audit_log_actor_account_id, audit_log_action,
+		       audit_log_entity_table, audit_log_entity_id,
+		       audit_log_old_value, audit_log_new_value, audit_log_created_at
+		FROM audit_logs
+		WHERE ` + scopeWhere + `
+		ORDER BY audit_log_created_at DESC, audit_log_id DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := s.db.QueryContext(ctx, dataQuery, candidateID, limit, offset)
+	if err != nil {
+		return nil, utils.Meta{}, fmt.Errorf("candidate: query audit logs: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]auditres.AuditLogResponseDTO, 0, limit)
+	for rows.Next() {
+		var (
+			item               auditres.AuditLogResponseDTO
+			oldBytes, newBytes []byte
+		)
+		if err := rows.Scan(
+			&item.ID,
+			&item.ActorID,
+			&item.Action,
+			&item.EntityTable,
+			&item.EntityID,
+			&oldBytes,
+			&newBytes,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, utils.Meta{}, fmt.Errorf("candidate: scan audit log: %w", err)
+		}
+		if len(oldBytes) > 0 {
+			item.OldValue = json.RawMessage(oldBytes)
+		}
+		if len(newBytes) > 0 {
+			item.NewValue = json.RawMessage(newBytes)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, utils.Meta{}, fmt.Errorf("candidate: audit logs rows: %w", err)
+	}
+
+	totalPages := (int(total) + limit - 1) / limit
+	return items, utils.Meta{
+		Page:       page,
+		PerPage:    limit,
+		TotalItems: total,
+		TotalPages: totalPages,
+	}, nil
 }
