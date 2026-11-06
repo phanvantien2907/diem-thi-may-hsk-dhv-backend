@@ -1436,13 +1436,16 @@ bao gồm cả hồ sơ chưa có giấy tờ mới nhất và các hồ sơ có
 |---|---|
 | **Endpoint** | `GET /api/v1/admin/candidates/:id/audit-logs` |
 | **Auth** | 🔐 JWT + Admin |
-| **Use-case** | Xem lịch sử phê duyệt, từ chối, thu hồi, mở lại xét duyệt và cập nhật hồ sơ của một thí sinh cụ thể có phân trang |
+| **Use-case** | Xem nhật ký các thao tác **do chính thí sinh thực hiện** (Actor = `candidate_account_id`), bao gồm nộp giấy tờ, thay đổi thông tin, v.v. có phân trang |
+
+> [!NOTE]
+> Hệ thống lọc theo `audit_log_actor_account_id = candidate_account_id` (hành động do chính thí sinh là tác nhân thực hiện). Các hành động can thiệp quản trị từ Admin lên hồ sơ thí sinh (như Admin duyệt, từ chối, khóa PII) được ghi nhận trong audit log quản trị chung của hệ thống.
 
 **Query Params:**
 
 | Param | Kiểu | Bắt buộc | Validate | Mô tả |
 |---|---|---|---|---|
-| `scope` | `string` | ❌ | `all`, `candidate_documents`, `candidates` | Phạm vi nhật ký (`candidate_documents`: giấy tờ tùy thân; `candidates`: thông tin hồ sơ & tài khoản; mặc định `all`) |
+| `scope` | `string` | ❌ | `all`, `candidate_documents`, `registrations` | Phạm vi nhật ký (`candidate_documents`: thao tác giấy tờ tùy thân; `registrations`: thao tác ca thi & đăng ký; mặc định `all`) |
 | `page` | `integer` | ❌ | Min 1, mặc định 1 | Trang hiện tại |
 | `limit` | `integer` | ❌ | Min 1, max 100, mặc định 10 | Số bản ghi mỗi trang (5 hoặc 10 bản ghi/trang trên UI modal) |
 
@@ -5181,7 +5184,7 @@ Hệ thống hỗ trợ kết nối WebSocket trong kiến trúc **Single-Instan
 
 ### 14.1. Cấp vé kết nối một lần (`POST /api/v1/ws/ticket`) & Handshake Bảo mật
 
-> **⚠️ Quy tắc bảo mật bắt buộc:** Server **TỪ CHỐI (`HTTP 401 Unauthorized`)** mọi kết nối WebSocket truyền JWT qua query string (`?token=<jwt>`) để ngăn chặn rò rỉ Access Token trong access log của Nginx/Proxy.
+> **⚠️ Quy tắc bảo mật bắt buộc:** Server **TỪ CHỐI (`HTTP 401 Unauthorized`)** mọi kết nối WebSocket truyền JWT qua query string (`?token=<jwt>`) để ngăn chặn rò rỉ Access Token trong access log của Nginx/Proxy. Toàn bộ các hook phía frontend (`use-notification-ws.ts` cho thông báo toàn cục, `use-websocket.ts` cho đăng ký thi/dashboard) đều tuân thủ quy trình xin vé (Ticket Handshake) 2 bước dưới đây.
 
 #### Bước 1: Xin vé kết nối dùng 1 lần (One-Time Ticket)
 

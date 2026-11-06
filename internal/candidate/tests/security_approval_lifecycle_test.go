@@ -532,23 +532,28 @@ func TestHandler_AdminGetCandidateAuditLogs_PaginatedAndHandlesNullOldValue(t *t
 	r.GET("/admin/candidates/:id/audit-logs", h.AdminGetCandidateAuditLogs)
 
 	now := time.Date(2026, 11, 5, 20, 10, 0, 0, time.UTC)
-	actorID := int64(99)
+	candidateAccountID := int64(490)
+
+	// Step 1: Resolve candidate's account_id
+	mock.ExpectQuery(`SELECT candidate_account_id FROM candidates WHERE candidate_id = \$1`).
+		WithArgs(int64(49)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_account_id"}).AddRow(candidateAccountID))
 
 	// Page 1, limit 5, total 12 items -> total_pages = 3
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM audit_logs WHERE`).
-		WithArgs(int64(49)).
+		WithArgs(candidateAccountID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(12)))
 
 	// Row 1 has NULL old_value (e.g., CREATE/REJECT) and Row 2 has both old_value and new_value (e.g., REOPEN_REVIEW)
 	mock.ExpectQuery(`SELECT audit_log_id, audit_log_actor_account_id, audit_log_action`).
-		WithArgs(int64(49), 5, 0).
+		WithArgs(candidateAccountID, 5, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"audit_log_id", "audit_log_actor_account_id", "audit_log_action",
 			"audit_log_entity_table", "audit_log_entity_id",
 			"audit_log_old_value", "audit_log_new_value", "audit_log_created_at",
 		}).
-			AddRow(int64(102), &actorID, "REOPEN_REVIEW", "candidate_documents", int64(49), []byte(`{"verification_status":"rejected"}`), []byte(`{"verification_status":"pending","reason":"Thí sinh bổ sung ảnh rõ nét"}`), now).
-			AddRow(int64(101), &actorID, "REJECT", "candidate_documents", int64(49), nil, []byte(`{"reason":"Ảnh CCCD bị mờ"}`), now.Add(-5*time.Minute)))
+			AddRow(int64(102), &candidateAccountID, "REOPEN_REVIEW", "candidate_documents", int64(49), []byte(`{"verification_status":"rejected"}`), []byte(`{"verification_status":"pending","reason":"Thí sinh bổ sung ảnh rõ nét"}`), now).
+			AddRow(int64(101), &candidateAccountID, "REJECT", "candidate_documents", int64(49), nil, []byte(`{"reason":"Ảnh CCCD bị mờ"}`), now.Add(-5*time.Minute)))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/candidates/49/audit-logs?scope=candidate_documents&page=1&limit=5", nil)

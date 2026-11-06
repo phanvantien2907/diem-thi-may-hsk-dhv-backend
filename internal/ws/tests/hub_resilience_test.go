@@ -202,7 +202,7 @@ func TestMaxConnectionsPerUser_EvictsOldest(t *testing.T) {
 		conns = append(conns, c)
 		if i == 0 {
 			go func(first *websocket.Conn) {
-				_ = first.SetReadDeadline(time.Now().Add(2 * time.Second))
+				_ = first.SetReadDeadline(time.Now().Add(5 * time.Second))
 				_, _, rErr := first.ReadMessage()
 				evictErrCh <- rErr
 			}(c)

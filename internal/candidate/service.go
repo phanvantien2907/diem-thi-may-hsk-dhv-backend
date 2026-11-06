@@ -1925,8 +1925,10 @@ func (s *Service) AdminGetRoster(ctx context.Context, examSessionID int64) ([]re
 	return items, nil
 }
 
-// AdminGetCandidateAuditLogs returns paginated audit log records for a candidate (:id),
-// scoped to "candidate_documents", "candidates" (including account deactivation/reactivation), or "all".
+// AdminGetCandidateAuditLogs returns paginated audit log records showing actions performed
+// BY the candidate (actor), not actions performed ON the candidate (target).
+// It resolves the candidate's account_id first, then filters audit_log_actor_account_id.
+// Optional scope filter: "candidate_documents" | "registrations" | "all" (default).
 // Handles NULL old_value/new_value safely via []byte scanning and always returns a non-nil slice.
 func (s *Service) AdminGetCandidateAuditLogs(ctx context.Context, candidateID int64, req request.AdminCandidateAuditLogsRequestDTO) ([]auditres.AuditLogResponseDTO, utils.Meta, error) {
 	page := req.Page
@@ -1942,60 +1944,37 @@ func (s *Service) AdminGetCandidateAuditLogs(ctx context.Context, candidateID in
 		scope = "all"
 	}
 
-	var scopeWhere string
-	switch scope {
-	case "candidate_documents":
-		scopeWhere = `(
-			audit_log_entity_table = 'candidate_documents'
-			AND (
-				audit_log_entity_id = $1
-				OR audit_log_entity_id IN (
-					SELECT candidate_document_id
-					FROM candidate_documents
-					WHERE candidate_document_candidate_id = $1
-				)
-			)
-		)`
-	case "candidates":
-		scopeWhere = `(
-			(audit_log_entity_table = 'candidates' AND audit_log_entity_id = $1)
-			OR (
-				audit_log_entity_table = 'accounts'
-				AND audit_log_entity_id = (
-					SELECT candidate_account_id
-					FROM candidates
-					WHERE candidate_id = $1
-				)
-			)
-		)`
-	default:
-		scopeWhere = `(
-			(
-				audit_log_entity_table = 'candidate_documents'
-				AND (
-					audit_log_entity_id = $1
-					OR audit_log_entity_id IN (
-						SELECT candidate_document_id
-						FROM candidate_documents
-						WHERE candidate_document_candidate_id = $1
-					)
-				)
-			)
-			OR (audit_log_entity_table = 'candidates' AND audit_log_entity_id = $1)
-			OR (
-				audit_log_entity_table = 'accounts'
-				AND audit_log_entity_id = (
-					SELECT candidate_account_id
-					FROM candidates
-					WHERE candidate_id = $1
-				)
-			)
-		)`
+	// Step 1: Resolve the candidate's account_id.
+	// We filter by actor_account_id so we show actions performed BY the candidate.
+	var candidateAccountID int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT candidate_account_id FROM candidates WHERE candidate_id = $1`,
+		candidateID,
+	).Scan(&candidateAccountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, utils.Meta{}, fmt.Errorf("candidate: not found: %w", err)
+		}
+		return nil, utils.Meta{}, fmt.Errorf("candidate: resolve account_id for audit logs: %w", err)
 	}
 
+	// Step 2: Build an optional scope filter on entity_table.
+	// $1 = candidateAccountID (actor); scope limits which entity types to show.
+	var scopeExtra string
+	switch scope {
+	case "candidate_documents":
+		scopeExtra = ` AND audit_log_entity_table = 'candidate_documents'`
+	case "registrations":
+		scopeExtra = ` AND audit_log_entity_table IN ('registrations', 'registration_sessions')`
+	default:
+		// "all" — no additional filter
+		scopeExtra = ""
+	}
+
+	baseWhere := `audit_log_actor_account_id = $1` + scopeExtra
+
 	var total int64
-	countQuery := `SELECT COUNT(*) FROM audit_logs WHERE ` + scopeWhere
-	if err := s.db.QueryRowContext(ctx, countQuery, candidateID).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(*) FROM audit_logs WHERE ` + baseWhere
+	if err := s.db.QueryRowContext(ctx, countQuery, candidateAccountID).Scan(&total); err != nil {
 		return nil, utils.Meta{}, fmt.Errorf("candidate: count audit logs: %w", err)
 	}
 
@@ -2014,11 +1993,11 @@ func (s *Service) AdminGetCandidateAuditLogs(ctx context.Context, candidateID in
 		       audit_log_entity_table, audit_log_entity_id,
 		       audit_log_old_value, audit_log_new_value, audit_log_created_at
 		FROM audit_logs
-		WHERE ` + scopeWhere + `
+		WHERE ` + baseWhere + `
 		ORDER BY audit_log_created_at DESC, audit_log_id DESC
 		LIMIT $2 OFFSET $3`
 
-	rows, err := s.db.QueryContext(ctx, dataQuery, candidateID, limit, offset)
+	rows, err := s.db.QueryContext(ctx, dataQuery, candidateAccountID, limit, offset)
 	if err != nil {
 		return nil, utils.Meta{}, fmt.Errorf("candidate: query audit logs: %w", err)
 	}
