@@ -225,10 +225,13 @@ func (s *Service) Register(ctx context.Context, req request.RegisterRequestDTO) 
 func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, device string) (response.TokenPairResponseDTO, error) {
 	var e entities.AccountEntity
 	err := s.db.QueryRowContext(ctx, `
-		SELECT account_id, account_password_hash, account_status,
+		SELECT account_id, account_password_hash,
+		       CASE WHEN account_is_deleted THEN 'disabled' ELSE account_status END AS account_status,
 		       account_failed_login_count, account_locked_until, account_must_change_password
 		FROM accounts
-		WHERE (account_username = $1 OR account_email = $1) AND account_is_deleted = FALSE`,
+		WHERE (account_username = $1 OR account_email = $1)
+		ORDER BY account_is_deleted ASC, account_id DESC
+		LIMIT 1`,
 		req.Identifier,
 	).Scan(
 		&e.AccountID, &e.AccountPasswordHash, &e.AccountStatus,
@@ -241,7 +244,7 @@ func (s *Service) Login(ctx context.Context, req request.LoginRequestDTO, ip, de
 		return response.TokenPairResponseDTO{}, fmt.Errorf("auth: login query: %w", err)
 	}
 
-	if e.AccountStatus == enum.AccountStatusDisabled {
+	if e.AccountStatus == enum.AccountStatusDisabled || e.AccountStatus == enum.AccountStatusDeactivated {
 		return response.TokenPairResponseDTO{}, ErrAccountDisabled
 	}
 
@@ -935,6 +938,12 @@ func (s *Service) SoftDeleteAccountMe(ctx context.Context, accountID int64, req 
 	}
 	middleware.RevokeAccountTokens(ctx, accountID, s.accessTTL)
 	if s.hub != nil {
+		s.hub.SendToUser(accountID, ws.EventForceLogout, map[string]interface{}{
+			"account_id": accountID,
+			"code":       "ACCOUNT_DEACTIVATED",
+			"reason":     reason,
+			"message":    "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+		})
 		s.hub.DisconnectUser(accountID, ws.CloseCodeSessionTerminated, "Tài khoản đã bị vô hiệu hóa")
 	}
 	return nil
@@ -1052,9 +1061,37 @@ func (s *Service) SoftDeleteAccountByAdmin(ctx context.Context, adminID, targetI
 	}
 	middleware.RevokeAccountTokens(ctx, targetID, s.accessTTL)
 	if s.hub != nil {
+		s.hub.SendToUser(targetID, ws.EventForceLogout, map[string]interface{}{
+			"account_id": targetID,
+			"code":       "ACCOUNT_DEACTIVATED",
+			"reason":     payload.Reason,
+			"message":    "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+		})
 		s.hub.DisconnectUser(targetID, ws.CloseCodeSessionTerminated, "Tài khoản đã bị quản trị viên vô hiệu hóa")
 	}
 	return nil
+}
+
+// DeactivateCandidateByAdmin resolves the account_id for a candidate_id (or accepts a direct account_id)
+// and delegates to SoftDeleteAccountByAdmin so POST /api/v1/admin/candidates/:id/deactivate works seamlessly.
+func (s *Service) DeactivateCandidateByAdmin(ctx context.Context, adminID, candidateOrAccountID int64, req ...request.DeactivateAccountByAdminRequestDTO) error {
+	var accountID int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT candidate_account_id
+		FROM candidates
+		WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`,
+		candidateOrAccountID,
+	).Scan(&accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		accountID = candidateOrAccountID
+	} else if err != nil {
+		return fmt.Errorf("auth: lookup candidate account for deactivation: %w", err)
+	}
+
+	if len(req) > 0 && req[0].ConfirmAccountID == candidateOrAccountID {
+		req[0].ConfirmAccountID = accountID
+	}
+	return s.SoftDeleteAccountByAdmin(ctx, adminID, accountID, req...)
 }
 
 // ReactivateAccountByAdmin restores a previously deactivated/soft-deleted account and its candidate profile.

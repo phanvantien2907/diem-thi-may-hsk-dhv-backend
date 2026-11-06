@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/auth/dto/request"
@@ -78,6 +79,16 @@ func (h *Handler) Login(c *gin.Context) {
 
 	tokens, err := h.svc.Login(c.Request.Context(), req, ip, device)
 	if err != nil {
+		if errors.Is(err, ErrAccountDisabled) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"code":    "ACCOUNT_DEACTIVATED",
+				"message": "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+				"msg":     "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+				"data":    nil,
+			})
+			return
+		}
 		utils.Unauthorized(c, err.Error())
 		return
 	}
@@ -382,6 +393,36 @@ func (h *Handler) AdminDeleteAccount(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SoftDeleteAccountByAdmin(c.Request.Context(), utils.MustAccountID(c), targetID, req); err != nil {
+		switch {
+		case errors.Is(err, ErrDeactivationBlockedByPaidRegistration):
+			utils.Conflict(c, err.Error())
+		case errors.Is(err, ErrAccountNotFound):
+			utils.NotFound(c, err.Error())
+		default:
+			utils.BadRequest(c, err.Error())
+		}
+		return
+	}
+	utils.OK(c, gin.H{"message": "Đã vô hiệu hóa tài khoản và thu hồi toàn bộ phiên đăng nhập"})
+}
+
+// AdminDeactivateCandidate POST /admin/candidates/:id/deactivate
+func (h *Handler) AdminDeactivateCandidate(c *gin.Context) {
+	targetID, ok := utils.ParamID(c, "id")
+	if !ok {
+		utils.BadRequest(c, "ID thí sinh không hợp lệ")
+		return
+	}
+	var req request.DeactivateAccountByAdminRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Vui lòng cung cấp thông tin xác nhận vô hiệu hóa tài khoản (confirm_account_id, confirm_identity, reason)")
+		return
+	}
+	if err := utils.Validate.Struct(req); err != nil {
+		utils.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.svc.DeactivateCandidateByAdmin(c.Request.Context(), utils.MustAccountID(c), targetID, req); err != nil {
 		switch {
 		case errors.Is(err, ErrDeactivationBlockedByPaidRegistration):
 			utils.Conflict(c, err.Error())

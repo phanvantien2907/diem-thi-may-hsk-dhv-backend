@@ -122,6 +122,41 @@ func (s *Service) ProcessEvent(ctx context.Context, evt DomainEvent) {
 		}
 		if s.hub != nil {
 			s.hub.SendToUser(evt.UserID, ws.EventNotificationPayload, dto)
+			switch evt.Type {
+			case TypeProfileApproved:
+				s.hub.SendToUser(evt.UserID, ws.EventProfileStatusUpdated, map[string]interface{}{
+					"account_id":          evt.UserID,
+					"status":              "verified",
+					"verification_status": "verified",
+					"eligible":            true,
+					"event_type":          string(TypeProfileApproved),
+					"message":             content,
+				})
+			case TypeProfileRejected:
+				s.hub.SendToUser(evt.UserID, ws.EventProfileStatusUpdated, map[string]interface{}{
+					"account_id":          evt.UserID,
+					"status":              "rejected",
+					"verification_status": "rejected",
+					"eligible":            false,
+					"event_type":          string(TypeProfileRejected),
+					"reason":              content,
+				})
+			case TypeProfileReopened:
+				s.hub.SendToUser(evt.UserID, ws.EventProfileStatusUpdated, map[string]interface{}{
+					"account_id":          evt.UserID,
+					"status":              "pending",
+					"verification_status": "pending",
+					"eligible":            false,
+					"event_type":          string(TypeProfileReopened),
+					"message":             content,
+				})
+			case TypeShiftChanged:
+				s.hub.SendToUser(evt.UserID, ws.EventShiftChanged, map[string]interface{}{
+					"account_id": evt.UserID,
+					"event_type": string(TypeShiftChanged),
+					"message":    content,
+				})
+			}
 		}
 		return
 	}

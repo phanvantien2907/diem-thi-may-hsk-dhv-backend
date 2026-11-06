@@ -6016,4 +6016,73 @@ Admin có thể chủ động kích hoạt làm mới cache trên giao diện qu
 | **Làm mới cache Địa điểm** | `POST /api/v1/admin/locations/clear-cache` | 🔐 Admin | Xóa `hsk:loc:provinces`, `hsk:loc:wards:*`, `hsk:loc:coverage:*` |
 | **Làm mới cache Điểm thi** | `POST /api/v1/admin/results/clear-cache` | 🔐 Admin | Xóa `hsk:res:score:*` và `hsk:result:*` |
 
+---
+
+## 18. Real-Time Session Invalidation, WebSocket Event Payloads & Registration State Machine
+
+### 18.1. Lỗi Đăng Nhập Khi Tài Khoản Bị Vô Hiệu Hóa (`HTTP 403 ACCOUNT_DEACTIVATED`)
+
+Khi thí sinh hoặc người dùng có tài khoản ở trạng thái `disabled` / `deactivated` (hoặc `account_is_deleted = TRUE`) thực hiện đăng nhập tại `POST /api/v1/auth/login`, hệ thống từ chối ngay lập tức với **HTTP 403 Forbidden**:
+
+```json
+{
+  "success": false,
+  "code": "ACCOUNT_DEACTIVATED",
+  "message": "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+  "msg": "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+  "data": null
+}
+```
+
+### 18.2. Vô Hiệu Hóa Tài Khoản & Thu Hồi Phiên Tức Thì (`FORCE_LOGOUT`)
+
+- **Endpoints:**
+  - `POST /api/v1/admin/candidates/:id/deactivate` (truyền `candidate_id` hoặc `account_id`)
+  - `POST /api/v1/admin/accounts/:id/deactivate`
+  - `DELETE /api/v1/admin/delete-account/:id`
+- **Hành vi đồng bộ tức thì:**
+  1. Cập nhật `accounts.account_status = 'disabled'`, `account_is_deleted = TRUE` và thu hồi toàn bộ `auth_sessions` + ghi dấu thu hồi JWT trên Redis/in-memory (`RevokeAccountTokens`).
+  2. Đẩy sự kiện WebSocket `FORCE_LOGOUT` trực tiếp tới toàn bộ kết nối đang mở của `account_id` đó.
+  3. Đóng cưỡng bức toàn bộ kết nối WebSocket của `account_id` với mã đóng `4002` (`CloseCodeSessionTerminated`).
+
+**Schema Payload WebSocket `FORCE_LOGOUT`:**
+
+```json
+{
+  "event": "FORCE_LOGOUT",
+  "data": {
+    "code": "ACCOUNT_DEACTIVATED",
+    "message": "Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên để được hỗ trợ.",
+    "reason": "Lý do vô hiệu hóa từ Quản trị viên"
+  },
+  "timestamp": "2026-11-05T22:30:00Z"
+}
+```
+
+### 18.3. Đồng Bộ Trạng Thái Hồ Sơ Thời Gian Thực (`PROFILE_STATUS_UPDATED`) & Khóa Đăng Ký Thi
+
+Mọi thao tác xét duyệt hồ sơ của Admin đều phát đồng thời sự kiện `NOTIFICATION_PAYLOAD` và `PROFILE_STATUS_UPDATED` tới `account_id` của thí sinh:
+
+| Thao tác Admin | Endpoint | Sự kiện Notification | Sự kiện Trạng thái (`PROFILE_STATUS_UPDATED`) | Trạng thái Đăng ký (`/dang-ky-thi`) |
+|---|---|---|---|---|
+| **Phê duyệt / Phê duyệt lại** | `PUT /api/v1/admin/candidates/:id/approve-doc` | `PROFILE_APPROVED` | `status: "verified"`, `eligible: true` | **Mở khóa (Unlocked)** tức thì không cần F5 |
+| **Mở lại xét duyệt** | `POST /api/v1/admin/candidates/:id/reopen-review` | `PROFILE_REOPENED` | `status: "pending"`, `eligible: false` | **Khóa (Locked)** — Badge *"Hồ sơ đang chờ xét duyệt lại"* |
+| **Từ chối / Thu hồi phê duyệt** | `PUT /api/v1/admin/candidates/:id/reject-doc` / `POST .../revoke-approval` | `PROFILE_REJECTED` | `status: "rejected"`, `eligible: false` | **Khóa (Locked)** — Yêu cầu nộp lại giấy tờ |
+| **Chuyển ca thi** | `POST /api/v1/admin/registrations/:id/transfer` | `SHIFT_CHANGED` | Sự kiện `SHIFT_CHANGED` kèm `from_session_id`, `to_session_id`, `reason` | Cập nhật thông tin ca thi thời gian thực |
+
+**Schema Payload WebSocket `PROFILE_STATUS_UPDATED`:**
+
+```json
+{
+  "event": "PROFILE_STATUS_UPDATED",
+  "data": {
+    "status": "verified",
+    "eligible": true,
+    "reason": ""
+  },
+  "timestamp": "2026-11-05T22:30:00Z"
+}
+```
+
+
 

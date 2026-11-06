@@ -1747,6 +1747,13 @@ func (s *Service) AdminReopenReview(ctx context.Context, adminID, candidateID in
 	}
 	_ = s.AdminReleaseCandidateLock(ctx, candidateID, adminID)
 	s.invalidateCandidateDocs(ctx, candidateID)
+
+	// Decoupled Domain Event: notify candidate that their profile review was reopened (status = pending)
+	if s.notifPub != nil {
+		if accountID := s.lookupCandidateAccountID(ctx, candidateID); accountID > 0 {
+			s.notifPub.Publish(notification.NewProfileReopenedEvent(accountID, req.Reason))
+		}
+	}
 	return nil
 }
 

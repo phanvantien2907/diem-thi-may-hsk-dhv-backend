@@ -11,6 +11,8 @@ type NotificationType string
 const (
 	TypeProfileRejected NotificationType = "PROFILE_REJECTED"
 	TypeProfileApproved NotificationType = "PROFILE_APPROVED"
+	TypeProfileReopened NotificationType = "PROFILE_REOPENED"
+	TypeShiftChanged    NotificationType = "SHIFT_CHANGED"
 	TypeExamRescheduled NotificationType = "EXAM_RESCHEDULED"
 	TypeExamCancelled   NotificationType = "EXAM_CANCELLED"
 	TypePaymentSuccess  NotificationType = "PAYMENT_SUCCESS"
@@ -61,6 +63,38 @@ func NewProfileApprovedEvent(accountID int64) DomainEvent {
 		Type:    TypeProfileApproved,
 		Title:   "Hồ sơ của bạn đã được phê duyệt",
 		Content: "Hồ sơ giấy tờ tùy thân và ảnh chân dung của bạn đã được xác thực hợp lệ.",
+	}
+}
+
+// NewProfileReopenedEvent constructs the canonical event dispatched when an admin reopens review on a rejected profile.
+func NewProfileReopenedEvent(accountID int64, reason string) DomainEvent {
+	cleanReason := strings.TrimSpace(reason)
+	content := "Hồ sơ đăng ký của bạn đã được Quản trị viên mở lại xét duyệt và đang ở trạng thái chờ thẩm định."
+	if cleanReason != "" {
+		content = fmt.Sprintf("Hồ sơ của bạn đã được mở lại xét duyệt (%s). Vui lòng chờ kết quả thẩm định từ Quản trị viên.", cleanReason)
+	}
+	return DomainEvent{
+		UserID:  accountID,
+		Role:    "candidate",
+		Type:    TypeProfileReopened,
+		Title:   "Hồ sơ đang chờ xét duyệt lại",
+		Content: content,
+	}
+}
+
+// NewShiftChangedEvent constructs the canonical event dispatched when an admin transfers a candidate's registration to another exam slot.
+func NewShiftChangedEvent(accountID, registrationID, oldSessionID, newSessionID int64, reason string) DomainEvent {
+	cleanReason := strings.TrimSpace(reason)
+	content := fmt.Sprintf("Đơn đăng ký dự thi #%d của bạn đã được điều chuyển từ ca thi #%d sang ca thi #%d.", registrationID, oldSessionID, newSessionID)
+	if cleanReason != "" {
+		content += fmt.Sprintf(" Lý do: %s.", cleanReason)
+	}
+	return DomainEvent{
+		UserID:  accountID,
+		Role:    "candidate",
+		Type:    TypeShiftChanged,
+		Title:   "Thông báo điều chuyển ca thi HSK",
+		Content: content,
 	}
 }
 

@@ -22,6 +22,9 @@ const (
 	EventTransactionException    EventType = "transaction_exception"     // Phát hiện giao dịch ngoại lệ
 	EventNotificationPayload     EventType = "NOTIFICATION_PAYLOAD"      // Thông báo thời gian thực gửi tới người dùng
 	EventNotificationRead        EventType = "notification_read"         // Đồng bộ trạng thái đã đọc giữa nhiều tab của cùng 1 user
+	EventProfileStatusUpdated    EventType = "PROFILE_STATUS_UPDATED"    // Trạng thái thẩm định hồ sơ thí sinh thay đổi (verified/pending/rejected)
+	EventForceLogout             EventType = "FORCE_LOGOUT"              // Cưỡng chế đăng xuất ngay lập tức khi tài khoản bị vô hiệu hóa
+	EventShiftChanged            EventType = "SHIFT_CHANGED"             // Ca thi của thí sinh được quản trị viên điều chuyển
 )
 
 // Resilience, Buffer, and Custom WebSocket Close Code constants.

@@ -13,6 +13,7 @@ import (
 	auditreq "github.com/hskvinh/backend/internal/audit/dto/request"
 	auditenum "github.com/hskvinh/backend/internal/audit/enum"
 	"github.com/hskvinh/backend/internal/cache"
+	"github.com/hskvinh/backend/internal/notification"
 	payreq "github.com/hskvinh/backend/internal/payment/dto/request"
 	payresp "github.com/hskvinh/backend/internal/payment/dto/response"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
@@ -32,9 +33,10 @@ type PaymentCanceller interface {
 type Service struct {
 	db         *sql.DB
 	auditSvc   audit.Service
-	hub        *ws.Hub          // optional, nil-safe
-	paymentSvc PaymentCanceller // optional, delegates payment cancellation/refund workflow
-	cache      *cache.Service   // optional, nil-safe idempotency and fast-path cache
+	hub        *ws.Hub                     // optional, nil-safe
+	paymentSvc PaymentCanceller            // optional, delegates payment cancellation/refund workflow
+	cache      *cache.Service              // optional, nil-safe idempotency and fast-path cache
+	notifPub   notification.EventPublisher // optional, decoupled domain notification event publisher
 }
 
 // NewService creates a registration Service.
@@ -50,6 +52,9 @@ func (s *Service) SetPaymentCanceller(p PaymentCanceller) { s.paymentSvc = p }
 
 // SetCache attaches a Redis cache service for idempotency and fast-path caching.
 func (s *Service) SetCache(c *cache.Service) { s.cache = c }
+
+// SetNotificationPublisher attaches the domain notification event publisher.
+func (s *Service) SetNotificationPublisher(p notification.EventPublisher) { s.notifPub = p }
 
 // mapBookingError translates the plpgsql RAISE EXCEPTION names raised by
 // fn_assert_session_accepts_registration (used by fn_book_exam_seat and

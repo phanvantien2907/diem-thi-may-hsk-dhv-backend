@@ -19,8 +19,20 @@ import (
 	"github.com/hskvinh/backend/internal/candidate"
 	"github.com/hskvinh/backend/internal/candidate/dto/request"
 	"github.com/hskvinh/backend/internal/middleware"
+	"github.com/hskvinh/backend/internal/notification"
 	"github.com/hskvinh/backend/internal/utils/testutils"
 )
+
+type recordingNotifPublisher struct {
+	mu     sync.Mutex
+	events []notification.DomainEvent
+}
+
+func (p *recordingNotifPublisher) Publish(evt notification.DomainEvent) {
+	p.mu.Lock()
+	p.events = append(p.events, evt)
+	p.mu.Unlock()
+}
 
 type recordingAuditService struct {
 	mu   sync.Mutex
@@ -578,4 +590,41 @@ func TestHandler_AdminGetCandidateAuditLogs_PaginatedAndHandlesNullOldValue(t *t
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
+
+func TestAdminReopenReview_EmitsProfileReopenedEvent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	notifPub := &recordingNotifPublisher{}
+	svc := candidate.NewService(db, &recordingAuditService{}, nil, nil)
+	svc.SetNotificationPublisher(notifPub)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE candidate_documents SET candidate_document_verification_status = 'pending'`).
+		WithArgs(int64(10)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	mock.ExpectQuery(`SELECT candidate_account_id FROM candidates WHERE candidate_id = \$1`).
+		WithArgs(int64(10)).
+		WillReturnRows(sqlmock.NewRows([]string{"candidate_account_id"}).AddRow(int64(50)))
+
+	err = svc.AdminReopenReview(context.Background(), 99, 10, request.AdminReopenReviewRequestDTO{
+		Reason: "Thí sinh đã liên hệ bổ sung giấy tờ hợp lệ",
+	})
+	if err != nil {
+		t.Fatalf("AdminReopenReview() error = %v", err)
+	}
+
+	if len(notifPub.events) != 1 {
+		t.Fatalf("expected 1 domain event published on AdminReopenReview, got %d", len(notifPub.events))
+	}
+	if notifPub.events[0].Type != notification.TypeProfileReopened || notifPub.events[0].UserID != 50 {
+		t.Fatalf("unexpected domain event: %+v", notifPub.events[0])
+	}
+}
+
 

@@ -77,10 +77,24 @@ func (c *Client) closeSendOnce() {
 
 // CloseWithCode sends a WebSocket Close control frame with a custom close code (e.g. 4001, 4002, 4003)
 // before closing the send channel and underlying connection so peers reliably receive the close code.
+// Any pending messages in c.send (such as FORCE_LOGOUT) are flushed to c.conn before sending Close.
 func (c *Client) CloseWithCode(code int, reason string) {
 	c.closeOnce.Do(func() {
 		c.writeMu.Lock()
 		if c.conn != nil {
+			for {
+				select {
+				case pending, ok := <-c.send:
+					if !ok {
+						goto doneDrain
+					}
+					_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+					_ = c.conn.WriteMessage(websocket.TextMessage, pending)
+				default:
+					goto doneDrain
+				}
+			}
+		doneDrain:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			msg := websocket.FormatCloseMessage(code, reason)
 			_ = c.conn.WriteMessage(websocket.CloseMessage, msg)

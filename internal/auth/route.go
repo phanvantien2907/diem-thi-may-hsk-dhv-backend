@@ -45,6 +45,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string, authLimite
 	{
 		adminG.DELETE("/delete-account/:id", h.AdminDeleteAccount)
 		adminG.POST("/accounts/:id/deactivate", h.AdminDeleteAccount)
+		adminG.POST("/candidates/:id/deactivate", h.AdminDeactivateCandidate)
 		adminG.POST("/accounts/:id/reactivate", h.AdminReactivateAccount)
 		adminG.POST("/staff-accounts", h.CreateStaffAccount)
 

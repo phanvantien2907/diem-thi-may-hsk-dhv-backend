@@ -133,6 +133,7 @@ func main() {
 	candSvc.SetNotificationPublisher(notifSvc)
 	paySvc.SetNotificationPublisher(notifSvc)
 	examSvc.SetNotificationPublisher(notifSvc)
+	regSvc.SetNotificationPublisher(notifSvc)
 
 	// ── Handlers ──────────────────────────────────────────────────────────
 	auditH := audit.NewHandler(auditSvc)

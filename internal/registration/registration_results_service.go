@@ -20,6 +20,7 @@ import (
 	"github.com/hskvinh/backend/internal/candidate"
 	"github.com/hskvinh/backend/internal/exam"
 	examenum "github.com/hskvinh/backend/internal/exam/enum"
+	"github.com/hskvinh/backend/internal/notification"
 	payreq "github.com/hskvinh/backend/internal/payment/dto/request"
 	"github.com/hskvinh/backend/internal/registration/dto/request"
 	"github.com/hskvinh/backend/internal/registration/dto/response"
@@ -1272,6 +1273,21 @@ func (s *Service) AdminTransferRegistration(ctx context.Context, registrationID,
 			"new_seat_id":     dto.SeatID,
 			"status":          dto.Status,
 		})
+	}
+
+	var accountID int64
+	_ = s.db.QueryRowContext(ctx, `SELECT candidate_account_id FROM candidates WHERE candidate_id = $1 AND candidate_is_deleted = FALSE`, dto.CandidateID).Scan(&accountID)
+	if accountID > 0 {
+		if s.notifPub != nil {
+			s.notifPub.Publish(notification.NewShiftChangedEvent(accountID, dto.ID, oldSessionID, dto.SessionID, strings.TrimSpace(req.Reason)))
+		} else if s.hub != nil {
+			s.hub.SendToUser(accountID, ws.EventShiftChanged, map[string]interface{}{
+				"registration_id": dto.ID,
+				"from_session_id": oldSessionID,
+				"to_session_id":   dto.SessionID,
+				"reason":          strings.TrimSpace(req.Reason),
+			})
+		}
 	}
 
 	return dto, nil
