@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/auth/dto/request"
@@ -17,7 +18,7 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 // Register POST /auth/register
 // @Summary Đăng ký tài khoản
-// @Description Tạo một tài khoản thí sinh mới trong hệ thống.
+// @Description Tạo một tài khoản thí sinh mới trong hệ thống (hỗ trợ cả CMND 9 số và CCCD 12 số).
 // @Tags Auth
 // @Accept json
 // @Produce json
@@ -31,6 +32,15 @@ func (h *Handler) Register(c *gin.Context) {
 	var req request.RegisterRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		return
+	}
+	req.Cccd = strings.TrimSpace(req.Cccd)
+	req.FullName = strings.TrimSpace(req.FullName)
+	req.Email = strings.TrimSpace(req.Email)
+	req.Phone = strings.TrimSpace(req.Phone)
+
+	if !request.IsValidIDNumber(req.Cccd) {
+		utils.BadRequest(c, "Số CMND/CCCD không hợp lệ (phải bao gồm đúng 9 hoặc 12 chữ số)")
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
@@ -54,7 +64,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 // Login POST /auth/login
 // @Summary Đăng nhập
-// @Description Xác thực người dùng và trả về JWT Tokens (Access/Refresh).
+// @Description Xác thực người dùng bằng CMND (9 số), CCCD (12 số) hoặc Email và trả về JWT Tokens (Access/Refresh).
 // @Tags Auth
 // @Accept json
 // @Produce json
@@ -70,8 +80,13 @@ func (h *Handler) Login(c *gin.Context) {
 		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
+	req.Identifier = strings.TrimSpace(req.Identifier)
 	if err := utils.Validate.Struct(req); err != nil {
 		utils.BadRequest(c, err.Error())
+		return
+	}
+	if !request.ValidateLoginIdentifier(req.Identifier) {
+		utils.BadRequest(c, "Số CMND/CCCD đăng nhập phải bao gồm đúng 9 hoặc 12 chữ số")
 		return
 	}
 	ip := c.ClientIP()

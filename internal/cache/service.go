@@ -340,3 +340,38 @@ func (s *Service) Close() {
 		log.Println("[cache] Redis connection closed")
 	}
 }
+
+// Client returns the underlying redis.Client if enabled, or nil.
+func (s *Service) Client() *redis.Client {
+	if s == nil || !s.enabled {
+		return nil
+	}
+	return s.client
+}
+
+// Publish sends a message to the specified Redis Pub/Sub channel.
+func (s *Service) Publish(ctx context.Context, channel string, message any) error {
+	if s == nil || !s.enabled || s.client == nil {
+		return nil
+	}
+	var data any = message
+	switch m := message.(type) {
+	case string, []byte:
+		data = m
+	default:
+		b, err := json.Marshal(m)
+		if err != nil {
+			return fmt.Errorf("cache: publish marshal error: %w", err)
+		}
+		data = b
+	}
+	return s.client.Publish(ctx, channel, data).Err()
+}
+
+// Subscribe opens a subscription on the specified Redis Pub/Sub channels.
+func (s *Service) Subscribe(ctx context.Context, channels ...string) *redis.PubSub {
+	if s == nil || !s.enabled || s.client == nil {
+		return nil
+	}
+	return s.client.Subscribe(ctx, channels...)
+}

@@ -38,6 +38,11 @@ func Created(c *gin.Context, data any) {
 	c.JSON(http.StatusCreated, response{Success: true, Data: data})
 }
 
+// Accepted sends a 202 accepted response for asynchronous background tasks.
+func Accepted(c *gin.Context, data any) {
+	c.JSON(http.StatusAccepted, response{Success: true, Data: data})
+}
+
 // BadRequest sends a 400 response with the provided error message.
 func BadRequest(c *gin.Context, msg string) {
 	exception.Send(c, http.StatusBadRequest, msg)

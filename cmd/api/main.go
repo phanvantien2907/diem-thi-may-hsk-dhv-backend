@@ -13,6 +13,10 @@ import (
 	"github.com/hskvinh/backend/internal/auth"
 	"github.com/hskvinh/backend/internal/cache"
 	"github.com/hskvinh/backend/internal/candidate"
+	"github.com/hskvinh/backend/internal/cccd"
+	cccdhandlers "github.com/hskvinh/backend/internal/cccd/handlers"
+	cccdmodels "github.com/hskvinh/backend/internal/cccd/models"
+	cccdworker "github.com/hskvinh/backend/internal/cccd/worker"
 	"github.com/hskvinh/backend/internal/certificate"
 	"github.com/hskvinh/backend/internal/config"
 	"github.com/hskvinh/backend/internal/dashboard"
@@ -123,6 +127,28 @@ func main() {
 	dashSvc := dashboard.NewService(db, auditSvc, hub)
 	dashSvc.SetCache(cacheSvc)
 
+	// ── CCCD OCR/AI Service ──────────────────────────────────────────────
+	cccdCfg := cccd.DefaultConfig()
+	cccdCfg.GeminiAPIKey = cfg.GeminiAPIKey
+	if cfg.GeminiModel != "" {
+		cccdCfg.GeminiModel = cfg.GeminiModel
+	}
+	if cfg.GeminiTimeoutSec > 0 {
+		cccdCfg.GeminiTimeoutSec = cfg.GeminiTimeoutSec
+	}
+	if cfg.CCCDMaxConcurrency > 0 {
+		cccdCfg.MaxConcurrency = cfg.CCCDMaxConcurrency
+	}
+	var cccdExtractor cccd.IdCardExtractor
+	if ext, err := cccd.NewGeminiExtractor(cccdCfg); err == nil {
+		cccdExtractor = ext
+		log.Printf("[main] CCCD Gemini extractor initialized (model=%s)", cccdCfg.GeminiModel)
+	} else {
+		log.Printf("[main] GEMINI_API_KEY not configured (%v); CCCD AI extraction awaits API key", err)
+	}
+	cccdSvc := cccd.NewService(cccdExtractor, cccdCfg, nil)
+	cccdSvc.SetHub(hub)
+
 	// Attach hub to services that need real-time broadcasting
 	regSvc.SetHub(hub)
 	regSvc.SetPaymentCanceller(paySvc)
@@ -147,6 +173,23 @@ func main() {
 	notifH := notification.NewHandler(notifSvc)
 	locH := location.NewHandler(locSvc)
 	dashH := dashboard.NewHandler(dashSvc)
+	cccdHandler := cccd.NewHandler(cccdSvc)
+
+	// ── Real-Time Asynchronous CCCD OCR Pipeline ─────────────────────────
+	pipelineEngine := cccdworker.NewPipelineOCREngine(cccdSvc)
+	cccdWorkerPool := cccdworker.NewWorkerPool(
+		pipelineEngine,
+		cfg.CCCDMaxConcurrency,
+		512,
+		cacheSvc,
+		func(payload cccdmodels.OCREventPayload) {
+			if payload.UserID > 0 && payload.Event != "" {
+				hub.SendToUser(payload.UserID, ws.EventType(payload.Event), payload)
+			}
+		},
+	)
+	cccdUploadH := cccdhandlers.NewUploadHandler(cccdWorkerPool, "")
+	cccdHandler.SetUploadHandler(cccdUploadH)
 
 	// ── Middleware ────────────────────────────────────────────────────────
 	limiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
@@ -192,6 +235,7 @@ func main() {
 	notification.RegisterRoutes(api, notifH, cfg.JWTSecret)
 	location.RegisterRoutes(api, locH, cfg.JWTSecret)
 	dashboard.RegisterRoutes(api, dashH, cfg.JWTSecret)
+	cccd.RegisterRoutes(api, cccdHandler, cfg.JWTSecret)
 
 	// ── WebSocket Route ──────────────────────────────────────────────────
 	wsH := ws.NewHandler(hub, cfg.JWTSecret)
@@ -212,6 +256,13 @@ func main() {
 
 	// ── Background Workers ───────────────────────────────────────────────
 	go notifSvc.StartEventListener(ctx)
+	cccdSvc.StartWorkers(ctx)
+	cccdWorkerPool.Start(ctx)
+
+	if cacheSvc.Enabled() {
+		pubsub := cacheSvc.Subscribe(ctx, cccdworker.DefaultRedisChannel)
+		go hub.ListenRedisPubSub(ctx, pubsub)
+	}
 
 	seatCron := worker.NewSeatReleaseCron(regSvc, hub, 60*time.Second)
 	go seatCron.Start(ctx)

@@ -1,10 +1,13 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // EventType identifies the kind of real-time event.
@@ -25,6 +28,10 @@ const (
 	EventProfileStatusUpdated    EventType = "PROFILE_STATUS_UPDATED"    // Trạng thái thẩm định hồ sơ thí sinh thay đổi (verified/pending/rejected)
 	EventForceLogout             EventType = "FORCE_LOGOUT"              // Cưỡng chế đăng xuất ngay lập tức khi tài khoản bị vô hiệu hóa
 	EventShiftChanged            EventType = "SHIFT_CHANGED"             // Ca thi của thí sinh được quản trị viên điều chuyển
+	EventCCCDExtracted           EventType = "CCCD_EXTRACTED"            // Kết quả trích xuất OCR/AI CCCD bất đồng bộ hoàn tất
+	EventOCRProgress             EventType = "ocr_progress"              // Tiến trình xử lý OCR (QUEUED, PROCESSING)
+	EventOCRCompleted            EventType = "ocr_completed"             // Trích xuất văn bản CCCD thành công
+	EventOCRFailed               EventType = "ocr_failed"                // Trích xuất văn bản CCCD thất bại
 )
 
 // Resilience, Buffer, and Custom WebSocket Close Code constants.
@@ -490,4 +497,48 @@ func (h *Hub) UserConnectionCount(userID int64) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.userClients[userID])
+}
+
+// ListenRedisPubSub subscribes to Redis Pub/Sub channels (e.g. cccd:ocr_events) and forwards
+// incoming real-time OCR and system events to target user connections via SendToUser.
+func (h *Hub) ListenRedisPubSub(ctx context.Context, pubsub *redis.PubSub) {
+	if pubsub == nil {
+		return
+	}
+	defer pubsub.Close()
+	ch := pubsub.Channel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if msg == nil || msg.Payload == "" {
+				continue
+			}
+
+			var envelope struct {
+				Event     string          `json:"event"`
+				TaskID    string          `json:"task_id"`
+				UserID    int64           `json:"user_id"`
+				Status    string          `json:"status"`
+				Progress  int             `json:"progress"`
+				Data      json.RawMessage `json:"data,omitempty"`
+				Error     string          `json:"error,omitempty"`
+				Timestamp string          `json:"timestamp"`
+			}
+			if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
+				log.Printf("[ws.hub] redis pubsub unmarshal error: %v (raw: %s)", err, msg.Payload)
+				continue
+			}
+
+			if envelope.UserID > 0 && envelope.Event != "" {
+				// Re-dispatch targeted event to all active client tabs for this user
+				h.SendToUser(envelope.UserID, EventType(envelope.Event), envelope)
+			}
+		}
+	}
 }

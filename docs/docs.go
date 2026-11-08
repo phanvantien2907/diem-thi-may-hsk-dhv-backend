@@ -4579,7 +4579,7 @@ const docTemplate = `{
         },
         "/auth/login": {
             "post": {
-                "description": "Xác thực người dùng và trả về JWT Tokens (Access/Refresh).",
+                "description": "Xác thực người dùng bằng CMND (9 số), CCCD (12 số) hoặc Email và trả về JWT Tokens (Access/Refresh).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4817,7 +4817,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
-                "description": "Tạo một tài khoản thí sinh mới trong hệ thống.",
+                "description": "Tạo một tài khoản thí sinh mới trong hệ thống (hỗ trợ cả CMND 9 số và CCCD 12 số).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4899,6 +4899,182 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cccd/extract": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Nhận file ảnh qua multipart/form-data (trường ` + "`" + `image` + "`" + ` hoặc ` + "`" + `file` + "`" + `). Mặc định trả về 202 Accepted ngay lập tức và đẩy kết quả qua WebSocket event ` + "`" + `CCCD_EXTRACTED` + "`" + `; có thể tra cứu lại qua ` + "`" + `GET /cccd/jobs/{id}` + "`" + `. Truyền ` + "`" + `?sync=true` + "`" + ` để chờ kết quả trực tiếp (có thể vượt quá WriteTimeout của server với ảnh khó).",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CCCD OCR"
+                ],
+                "summary": "Trích xuất thông tin CCCD/CMND/Thẻ căn cước bằng AI (bất đồng bộ 202 Accepted)",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Ảnh mặt trước hoặc mặt sau CCCD/CMND",
+                        "name": "image",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Chờ kết quả đồng bộ (mặc định false)",
+                        "name": "sync",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Mã định danh tác vụ do client tự sinh (tùy chọn)",
+                        "name": "X-Request-ID",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Kết quả trích xuất đồng bộ (khi sync=true)",
+                        "schema": {
+                            "$ref": "#/definitions/response.IdCardResponseDTO"
+                        }
+                    },
+                    "202": {
+                        "description": "Đã tiếp nhận xử lý bất đồng bộ",
+                        "schema": {
+                            "$ref": "#/definitions/response.AsyncJobResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Thiếu ảnh hoặc ảnh vượt dung lượng",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Hàng đợi xử lý đang quá tải",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cccd/jobs/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Chỉ chủ sở hữu tác vụ mới tra cứu được. Tác vụ tự hết hạn sau 10 phút.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CCCD OCR"
+                ],
+                "summary": "Tra cứu trạng thái tác vụ đọc CCCD theo request_id",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Request ID của tác vụ",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Trạng thái và kết quả trích xuất",
+                        "schema": {
+                            "$ref": "#/definitions/response.AsyncJobResponseDTO"
+                        }
+                    },
+                    "404": {
+                        "description": "Không tìm thấy hoặc đã hết hạn",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/cccd/upload": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tiếp nhận ảnh CCCD mặt trước/mặt sau từ ổ đĩa cục bộ của người dùng. Kiểm tra nhanh định dạng và kích thước, lưu vào phân vùng tạm an toàn, tạo task_id và trả về 202 Accepted ngay lập tức. Kết quả trích xuất dạng chữ (không có sinh trắc học/khuôn mặt) được đẩy qua WebSocket.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CCCD OCR"
+                ],
+                "summary": "Tải lên ảnh CCCD xử lý bất đồng bộ siêu tốc (\u003c 50ms)",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Ảnh CCCD/CMND (.jpg, .jpeg, .png)",
+                        "name": "image",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Tiếp nhận tác vụ thành công",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "File không hợp lệ hoặc quá dung lượng",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Chưa xác thực",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Hàng đợi xử lý quá tải",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7135,6 +7311,119 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "enum.CardType": {
+            "type": "string",
+            "enum": [
+                "old",
+                "old_back",
+                "new",
+                "new_back"
+            ],
+            "x-enum-comments": {
+                "CardTypeNew": "mặt trước CMND 12 số / CCCD / Căn cước 2023",
+                "CardTypeNewBack": "mặt sau CMND 12 số / CCCD / Căn cước 2023",
+                "CardTypeOld": "mặt trước CMND 9 số",
+                "CardTypeOldBack": "mặt sau CMND 9 số"
+            },
+            "x-enum-descriptions": [
+                "mặt trước CMND 9 số",
+                "mặt sau CMND 9 số",
+                "mặt trước CMND 12 số / CCCD / Căn cước 2023",
+                "mặt sau CMND 12 số / CCCD / Căn cước 2023"
+            ],
+            "x-enum-varnames": [
+                "CardTypeOld",
+                "CardTypeOldBack",
+                "CardTypeNew",
+                "CardTypeNewBack"
+            ]
+        },
+        "enum.CardTypeDetail": {
+            "type": "string",
+            "enum": [
+                "cmnd_09_front",
+                "cmnd_12_front",
+                "cccd_12_front",
+                "old_back",
+                "new_back",
+                "can_cuoc_2023_front",
+                "can_cuoc_2023_back"
+            ],
+            "x-enum-varnames": [
+                "CardDetailCMND09Front",
+                "CardDetailCMND12Front",
+                "CardDetailCCCD12Front",
+                "CardDetailOldBack",
+                "CardDetailNewBack",
+                "CardDetailCanCuoc2023Front",
+                "CardDetailCanCuoc2023Back"
+            ]
+        },
+        "enum.Decision": {
+            "type": "string",
+            "enum": [
+                "accept",
+                "review"
+            ],
+            "x-enum-comments": {
+                "DecisionAccept": "mọi trường bắt buộc đều ok, có thể tự điền form",
+                "DecisionReview": "điền form nhưng yêu cầu người dùng kiểm tra/sửa"
+            },
+            "x-enum-descriptions": [
+                "mọi trường bắt buộc đều ok, có thể tự điền form",
+                "điền form nhưng yêu cầu người dùng kiểm tra/sửa"
+            ],
+            "x-enum-varnames": [
+                "DecisionAccept",
+                "DecisionReview"
+            ]
+        },
+        "enum.FieldStatus": {
+            "type": "string",
+            "enum": [
+                "ok",
+                "review",
+                "invalid",
+                "missing",
+                "n/a"
+            ],
+            "x-enum-comments": {
+                "StatusInvalid": "vi phạm luật cứng (sai độ dài, ngày tương lai...)",
+                "StatusMissing": "trường có trên mặt thẻ nhưng không đọc được",
+                "StatusNotPresent": "trường không tồn tại trên loại thẻ/mặt này",
+                "StatusOK": "đọc được và qua hết các kiểm tra",
+                "StatusReview": "nên để người dùng xem lại"
+            },
+            "x-enum-descriptions": [
+                "đọc được và qua hết các kiểm tra",
+                "nên để người dùng xem lại",
+                "vi phạm luật cứng (sai độ dài, ngày tương lai...)",
+                "trường có trên mặt thẻ nhưng không đọc được",
+                "trường không tồn tại trên loại thẻ/mặt này"
+            ],
+            "x-enum-varnames": [
+                "StatusOK",
+                "StatusReview",
+                "StatusInvalid",
+                "StatusMissing",
+                "StatusNotPresent"
+            ]
+        },
+        "enum.JobStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "processing",
+                "completed",
+                "failed"
+            ],
+            "x-enum-varnames": [
+                "JobStatusPending",
+                "JobStatusProcessing",
+                "JobStatusCompleted",
+                "JobStatusFailed"
+            ]
+        },
         "request.AdminCancelPaymentRequestDTO": {
             "type": "object",
             "required": [
@@ -8002,7 +8291,6 @@ const docTemplate = `{
             ],
             "properties": {
                 "identifier": {
-                    "description": "Can be Email or CCCD",
                     "type": "string"
                 },
                 "password": {
@@ -8459,6 +8747,55 @@ const docTemplate = `{
                 }
             }
         },
+        "response.AddressEntitiesDTO": {
+            "type": "object",
+            "properties": {
+                "district": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "province": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "street": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "ward": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                }
+            }
+        },
+        "response.AsyncJobResponseDTO": {
+            "type": "object",
+            "properties": {
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "data": {
+                    "$ref": "#/definitions/response.IdCardResponseDTO"
+                },
+                "elapsed_ms": {
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/enum.JobStatus"
+                }
+            }
+        },
         "response.DocumentResponseDTO": {
             "type": "object",
             "properties": {
@@ -8650,6 +8987,29 @@ const docTemplate = `{
                 }
             }
         },
+        "response.FieldValueDTO": {
+            "type": "object",
+            "properties": {
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "label": {
+                    "type": "string"
+                },
+                "prob": {
+                    "type": "number"
+                },
+                "status": {
+                    "$ref": "#/definitions/enum.FieldStatus"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
         "response.GenerateSeatsResponseDTO": {
             "type": "object",
             "properties": {
@@ -8658,6 +9018,106 @@ const docTemplate = `{
                 },
                 "session_id": {
                     "type": "integer"
+                }
+            }
+        },
+        "response.IdCardDataDTO": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "address_entities": {
+                    "$ref": "#/definitions/response.AddressEntitiesDTO"
+                },
+                "decision": {
+                    "description": "Kết luận",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/enum.Decision"
+                        }
+                    ]
+                },
+                "dob": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "doe": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "ethnicity": {
+                    "description": "Mặt sau",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/response.FieldValueDTO"
+                        }
+                    ]
+                },
+                "features": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "home": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "id": {
+                    "description": "Mặt trước",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/response.FieldValueDTO"
+                        }
+                    ]
+                },
+                "issue_date": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "issue_loc": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "name": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "nationality": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "religion": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "sex": {
+                    "$ref": "#/definitions/response.FieldValueDTO"
+                },
+                "type": {
+                    "$ref": "#/definitions/enum.CardType"
+                },
+                "type_new": {
+                    "$ref": "#/definitions/enum.CardTypeDetail"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "response.IdCardResponseDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/response.IdCardDataDTO"
+                    }
+                },
+                "elapsedMs": {
+                    "type": "integer"
+                },
+                "errorCode": {
+                    "type": "integer"
+                },
+                "errorMessage": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
                 }
             }
         },

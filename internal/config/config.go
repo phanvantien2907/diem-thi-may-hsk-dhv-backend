@@ -53,6 +53,12 @@ type Config struct {
 
 	// Google Cloud Vision API
 	GoogleCloudCredentialsPath string
+
+	// Gemini AI / CCCD OCR Service
+	GeminiAPIKey       string
+	GeminiModel        string
+	GeminiTimeoutSec   float64
+	CCCDMaxConcurrency int
 }
 
 // Load reads configuration from the .env file and environment variables.
@@ -75,11 +81,22 @@ func Load() (*Config, error) {
 		PayOSChecksumKey:         getEnv("PAY_OS_CHECKSUM_KEY", ""),
 		CORSAllowedOrigins:       strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 		GoogleCloudCredentialsPath: getEnv("GOOGLE_CLOUD_CREDENTIALS_PATH", ""),
+		GeminiAPIKey:               getEnv("GEMINI_API_KEY", ""),
+		GeminiModel:                getEnv("GEMINI_MODEL", "gemini-3-flash-preview"),
 		RedisAddr:                  getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:              getEnv("REDIS_PASSWORD", ""),
 	}
 
 	var err error
+
+	cfg.GeminiTimeoutSec, _ = strconv.ParseFloat(getEnv("GEMINI_TIMEOUT_S", "45"), 64)
+	if cfg.GeminiTimeoutSec <= 0 {
+		cfg.GeminiTimeoutSec = 45.0
+	}
+	cfg.CCCDMaxConcurrency, _ = strconv.Atoi(getEnv("CCCD_MAX_CONCURRENCY", "4"))
+	if cfg.CCCDMaxConcurrency <= 0 {
+		cfg.CCCDMaxConcurrency = 4
+	}
 
 	cfg.RedisDB, _ = strconv.Atoi(getEnv("REDIS_DB", "0"))
 

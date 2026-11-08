@@ -43,6 +43,7 @@ internal/
 ├── audit/                  # Cross-cutting audit log domain (only domain with an exported interface)
 ├── auth/                   # Account management, JWT issuance, session management
 ├── candidate/              # Candidate profile, identity documents, admin review/listing, metrics, and PDF export
+├── cccd/                   # CCCD/CMND AI OCR extraction (Gemini), 2-pass cross-validation, async worker pool
 ├── certificate/            # Certificate issuance and delivery
 ├── config/                 # Configuration loading (config.go)
 ├── dashboard/              # Admin dashboard analytics, live sessions, suspicious payments, manual actions
@@ -525,7 +526,7 @@ Known roles seeded in `002_seed_data.sql`: `admin`, `candidate`.
 - Never expose bcrypt hashes or internal error details to clients.
 - Login failures always return generic "thông tin đăng nhập không chính xác" — do not distinguish between "user not found" and "wrong password."
 - Account status `locked` prevents normal access. The `pending` status is no longer enforced at login (OTP verification was removed).
-- **Authentication Identifiers:** Candidates login using CCCD (12 digits) or Email.
+- **Authentication Identifiers:** Candidates register and login using legacy 9-digit CMND or modern 12-digit CCCD (strictly validated by `^(\d{9}|\d{12})$` via `cccd_or_cmnd` tag) or Email.
 - **Passwords:** Must contain both letters and numbers, minimum 8 characters, at least one uppercase letter, and at least one special symbol (!, @, #, etc).
 
 ---

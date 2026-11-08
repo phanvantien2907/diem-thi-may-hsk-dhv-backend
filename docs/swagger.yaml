@@ -1,5 +1,97 @@
 basePath: /api/v1
 definitions:
+  enum.CardType:
+    enum:
+    - old
+    - old_back
+    - new
+    - new_back
+    type: string
+    x-enum-comments:
+      CardTypeNew: mặt trước CMND 12 số / CCCD / Căn cước 2023
+      CardTypeNewBack: mặt sau CMND 12 số / CCCD / Căn cước 2023
+      CardTypeOld: mặt trước CMND 9 số
+      CardTypeOldBack: mặt sau CMND 9 số
+    x-enum-descriptions:
+    - mặt trước CMND 9 số
+    - mặt sau CMND 9 số
+    - mặt trước CMND 12 số / CCCD / Căn cước 2023
+    - mặt sau CMND 12 số / CCCD / Căn cước 2023
+    x-enum-varnames:
+    - CardTypeOld
+    - CardTypeOldBack
+    - CardTypeNew
+    - CardTypeNewBack
+  enum.CardTypeDetail:
+    enum:
+    - cmnd_09_front
+    - cmnd_12_front
+    - cccd_12_front
+    - old_back
+    - new_back
+    - can_cuoc_2023_front
+    - can_cuoc_2023_back
+    type: string
+    x-enum-varnames:
+    - CardDetailCMND09Front
+    - CardDetailCMND12Front
+    - CardDetailCCCD12Front
+    - CardDetailOldBack
+    - CardDetailNewBack
+    - CardDetailCanCuoc2023Front
+    - CardDetailCanCuoc2023Back
+  enum.Decision:
+    enum:
+    - accept
+    - review
+    type: string
+    x-enum-comments:
+      DecisionAccept: mọi trường bắt buộc đều ok, có thể tự điền form
+      DecisionReview: điền form nhưng yêu cầu người dùng kiểm tra/sửa
+    x-enum-descriptions:
+    - mọi trường bắt buộc đều ok, có thể tự điền form
+    - điền form nhưng yêu cầu người dùng kiểm tra/sửa
+    x-enum-varnames:
+    - DecisionAccept
+    - DecisionReview
+  enum.FieldStatus:
+    enum:
+    - ok
+    - review
+    - invalid
+    - missing
+    - n/a
+    type: string
+    x-enum-comments:
+      StatusInvalid: vi phạm luật cứng (sai độ dài, ngày tương lai...)
+      StatusMissing: trường có trên mặt thẻ nhưng không đọc được
+      StatusNotPresent: trường không tồn tại trên loại thẻ/mặt này
+      StatusOK: đọc được và qua hết các kiểm tra
+      StatusReview: nên để người dùng xem lại
+    x-enum-descriptions:
+    - đọc được và qua hết các kiểm tra
+    - nên để người dùng xem lại
+    - vi phạm luật cứng (sai độ dài, ngày tương lai...)
+    - trường có trên mặt thẻ nhưng không đọc được
+    - trường không tồn tại trên loại thẻ/mặt này
+    x-enum-varnames:
+    - StatusOK
+    - StatusReview
+    - StatusInvalid
+    - StatusMissing
+    - StatusNotPresent
+  enum.JobStatus:
+    enum:
+    - pending
+    - processing
+    - completed
+    - failed
+    type: string
+    x-enum-varnames:
+    - JobStatusPending
+    - JobStatusProcessing
+    - JobStatusCompleted
+    - JobStatusFailed
   request.AdminCancelPaymentRequestDTO:
     properties:
       evidence_urls:
@@ -614,7 +706,6 @@ definitions:
   request.LoginRequestDTO:
     properties:
       identifier:
-        description: Can be Email or CCCD
         type: string
       password:
         type: string
@@ -932,6 +1023,38 @@ definitions:
         description: YYYY-MM-DD — required when certificate_no is used
         type: string
     type: object
+  response.AddressEntitiesDTO:
+    properties:
+      district:
+        $ref: '#/definitions/response.FieldValueDTO'
+      province:
+        $ref: '#/definitions/response.FieldValueDTO'
+      street:
+        $ref: '#/definitions/response.FieldValueDTO'
+      ward:
+        $ref: '#/definitions/response.FieldValueDTO'
+    type: object
+  response.AsyncJobResponseDTO:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      data:
+        $ref: '#/definitions/response.IdCardResponseDTO'
+      elapsed_ms:
+        type: integer
+      error:
+        type: string
+      error_code:
+        type: integer
+      message:
+        type: string
+      request_id:
+        type: string
+      status:
+        $ref: '#/definitions/enum.JobStatus'
+    type: object
   response.DocumentResponseDTO:
     properties:
       address_detail:
@@ -1058,12 +1181,89 @@ definitions:
       stored_status:
         type: string
     type: object
+  response.FieldValueDTO:
+    properties:
+      issues:
+        items:
+          type: string
+        type: array
+      label:
+        type: string
+      prob:
+        type: number
+      status:
+        $ref: '#/definitions/enum.FieldStatus'
+      value:
+        type: string
+    type: object
   response.GenerateSeatsResponseDTO:
     properties:
       created_seats:
         type: integer
       session_id:
         type: integer
+    type: object
+  response.IdCardDataDTO:
+    properties:
+      address:
+        $ref: '#/definitions/response.FieldValueDTO'
+      address_entities:
+        $ref: '#/definitions/response.AddressEntitiesDTO'
+      decision:
+        allOf:
+        - $ref: '#/definitions/enum.Decision'
+        description: Kết luận
+      dob:
+        $ref: '#/definitions/response.FieldValueDTO'
+      doe:
+        $ref: '#/definitions/response.FieldValueDTO'
+      ethnicity:
+        allOf:
+        - $ref: '#/definitions/response.FieldValueDTO'
+        description: Mặt sau
+      features:
+        $ref: '#/definitions/response.FieldValueDTO'
+      home:
+        $ref: '#/definitions/response.FieldValueDTO'
+      id:
+        allOf:
+        - $ref: '#/definitions/response.FieldValueDTO'
+        description: Mặt trước
+      issue_date:
+        $ref: '#/definitions/response.FieldValueDTO'
+      issue_loc:
+        $ref: '#/definitions/response.FieldValueDTO'
+      name:
+        $ref: '#/definitions/response.FieldValueDTO'
+      nationality:
+        $ref: '#/definitions/response.FieldValueDTO'
+      religion:
+        $ref: '#/definitions/response.FieldValueDTO'
+      sex:
+        $ref: '#/definitions/response.FieldValueDTO'
+      type:
+        $ref: '#/definitions/enum.CardType'
+      type_new:
+        $ref: '#/definitions/enum.CardTypeDetail'
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  response.IdCardResponseDTO:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/response.IdCardDataDTO'
+        type: array
+      elapsedMs:
+        type: integer
+      errorCode:
+        type: integer
+      errorMessage:
+        type: string
+      requestId:
+        type: string
     type: object
   response.PortraitValidationResponseDTO:
     properties:
@@ -4156,7 +4356,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Xác thực người dùng và trả về JWT Tokens (Access/Refresh).
+      description: Xác thực người dùng bằng CMND (9 số), CCCD (12 số) hoặc Email và
+        trả về JWT Tokens (Access/Refresh).
       parameters:
       - description: Dữ liệu yêu cầu
         in: body
@@ -4315,7 +4516,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Tạo một tài khoản thí sinh mới trong hệ thống.
+      description: Tạo một tài khoản thí sinh mới trong hệ thống (hỗ trợ cả CMND 9
+        số và CCCD 12 số).
       parameters:
       - description: Dữ liệu yêu cầu
         in: body
@@ -4372,6 +4574,130 @@ paths:
       summary: GetUploadSignature
       tags:
       - Candidate
+  /cccd/extract:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Nhận file ảnh qua multipart/form-data (trường `image` hoặc `file`).
+        Mặc định trả về 202 Accepted ngay lập tức và đẩy kết quả qua WebSocket event
+        `CCCD_EXTRACTED`; có thể tra cứu lại qua `GET /cccd/jobs/{id}`. Truyền `?sync=true`
+        để chờ kết quả trực tiếp (có thể vượt quá WriteTimeout của server với ảnh
+        khó).
+      parameters:
+      - description: Ảnh mặt trước hoặc mặt sau CCCD/CMND
+        in: formData
+        name: image
+        required: true
+        type: file
+      - description: Chờ kết quả đồng bộ (mặc định false)
+        in: query
+        name: sync
+        type: boolean
+      - description: Mã định danh tác vụ do client tự sinh (tùy chọn)
+        in: header
+        name: X-Request-ID
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Kết quả trích xuất đồng bộ (khi sync=true)
+          schema:
+            $ref: '#/definitions/response.IdCardResponseDTO'
+        "202":
+          description: Đã tiếp nhận xử lý bất đồng bộ
+          schema:
+            $ref: '#/definitions/response.AsyncJobResponseDTO'
+        "400":
+          description: Thiếu ảnh hoặc ảnh vượt dung lượng
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Hàng đợi xử lý đang quá tải
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trích xuất thông tin CCCD/CMND/Thẻ căn cước bằng AI (bất đồng bộ 202
+        Accepted)
+      tags:
+      - CCCD OCR
+  /cccd/jobs/{id}:
+    get:
+      description: Chỉ chủ sở hữu tác vụ mới tra cứu được. Tác vụ tự hết hạn sau 10
+        phút.
+      parameters:
+      - description: Request ID của tác vụ
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Trạng thái và kết quả trích xuất
+          schema:
+            $ref: '#/definitions/response.AsyncJobResponseDTO'
+        "404":
+          description: Không tìm thấy hoặc đã hết hạn
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tra cứu trạng thái tác vụ đọc CCCD theo request_id
+      tags:
+      - CCCD OCR
+  /cccd/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Tiếp nhận ảnh CCCD mặt trước/mặt sau từ ổ đĩa cục bộ của người
+        dùng. Kiểm tra nhanh định dạng và kích thước, lưu vào phân vùng tạm an toàn,
+        tạo task_id và trả về 202 Accepted ngay lập tức. Kết quả trích xuất dạng chữ
+        (không có sinh trắc học/khuôn mặt) được đẩy qua WebSocket.
+      parameters:
+      - description: Ảnh CCCD/CMND (.jpg, .jpeg, .png)
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Tiếp nhận tác vụ thành công
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: File không hợp lệ hoặc quá dung lượng
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Chưa xác thực
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Hàng đợi xử lý quá tải
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Tải lên ảnh CCCD xử lý bất đồng bộ siêu tốc (< 50ms)
+      tags:
+      - CCCD OCR
   /exam-sessions:
     get:
       description: Chỉ trả về ca thi đã công khai (kể cả ca hẹn giờ đã tới thời điểm

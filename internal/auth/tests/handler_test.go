@@ -73,10 +73,45 @@ func TestHandlerRegister(t *testing.T) {
 			wantStatus: http.StatusConflict,
 		},
 		{
-			name:       "invalid CCCD length",
+			name:       "invalid CCCD length (3 digits)",
 			body:       `{"cccd":"123", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
 			setupMock:  func(mock sqlmock.Sqlmock) {},
 			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid CCCD length (10 digits - neither 9 nor 12)",
+			body:       `{"cccd":"0123456789", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
+			setupMock:  func(mock sqlmock.Sqlmock) {},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid CCCD length (11 digits - neither 9 nor 12)",
+			body:       `{"cccd":"01234567891", "phone":"0987654321", "full_name":"Test User", "email":"test@example.com", "password":"Password123!"}`,
+			setupMock:  func(mock sqlmock.Sqlmock) {},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "happy path - legacy 9-digit CMND registration",
+			body: `{"cccd":"187654321", "phone":"0987654321", "full_name":"Nguyen Van Cu", "email":"cmnd9@example.com", "password":"Password123!"}`,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT account_username, account_email FROM accounts`).
+					WithArgs("187654321", "cmnd9@example.com").
+					WillReturnRows(sqlmock.NewRows([]string{"account_username", "account_email"}))
+
+				mock.ExpectQuery(`SELECT role_id FROM roles WHERE role_code = 'candidate'`).
+					WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow(1))
+
+				mock.ExpectBegin()
+				mock.ExpectQuery(`INSERT INTO accounts`).
+					WithArgs(1, "187654321", "Nguyen Van Cu", sqlmock.AnyArg(), "cmnd9@example.com", "0987654321").
+					WillReturnRows(sqlmock.NewRows([]string{
+						"account_id", "account_role_id", "account_username", "account_full_name",
+						"account_email", "account_phone", "account_status",
+						"account_last_login_at", "account_created_at", "account_updated_at",
+					}).AddRow(2, 1, "187654321", "Nguyen Van Cu", "cmnd9@example.com", "0987654321", "active", nil, time.Now(), time.Now()))
+				mock.ExpectCommit()
+			},
+			wantStatus: http.StatusCreated,
 		},
 		{
 			name:       "weak password",
@@ -139,7 +174,7 @@ func TestHandlerLogin(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "valid struct - mocked failure (wrong password)",
+			name: "valid 12-digit CCCD struct - mocked failure (wrong password)",
 			body: `{"identifier":"012345678912", "password":"WrongPassword123!"}`,
 			setupMock: func(mock sqlmock.Sqlmock) {
 				// The Login query expects to find the user by CCCD or Email
@@ -155,6 +190,29 @@ func TestHandlerLogin(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantStatus: http.StatusUnauthorized, // utils.Unauthorized is returned
+		},
+		{
+			name: "valid 9-digit CMND login - mocked failure (wrong password)",
+			body: `{"identifier":"187654321", "password":"WrongPassword123!"}`,
+			setupMock: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT account_id`).
+					WithArgs("187654321").
+					WillReturnRows(sqlmock.NewRows([]string{
+						"account_id", "account_password_hash", "account_status",
+						"account_failed_login_count", "account_locked_until", "account_must_change_password",
+					}).AddRow(2, "$2a$10$invalidhash", "active", 0, nil, false))
+
+				mock.ExpectExec(`UPDATE accounts SET account_failed_login_count = \$1 WHERE account_id = \$2`).
+					WithArgs(1, 2).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "invalid 10-digit numeric login identifier rejected early",
+			body:       `{"identifier":"0123456789", "password":"Password123!"}`,
+			setupMock:  func(mock sqlmock.Sqlmock) {},
+			wantStatus: http.StatusBadRequest,
 		},
 	}
 
