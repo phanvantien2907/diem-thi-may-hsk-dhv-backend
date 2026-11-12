@@ -23,7 +23,9 @@ var (
 	reYMD           = regexp.MustCompile(`(\d{4})\D+(\d{1,2})\D+(\d{1,2})`)
 	reCompactDate   = regexp.MustCompile(`^\d{8}$`)
 	reDigitRun      = regexp.MustCompile(`[0-9OoIl|SBZ]{1,4}`)
-	reNonAlphaNum   = regexp.MustCompile(`[^a-z0-9]+`)
+	reEthnicityPrefix = regexp.MustCompile(`(?i)^(dân\s*tộc|dan\s*toc|ethnicity)\s*[:.\-]?\s*`)
+	reReligionPrefix  = regexp.MustCompile(`(?i)^(tôn\s*giáo|ton\s*giao|religion)\s*[:.\-]?\s*`)
+	reNonAlphaNum     = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
 var placeholders = map[string]struct{}{
@@ -313,6 +315,37 @@ func NormalizeNationality(value *string) *string {
 		return &vn
 	}
 	return NormalizeTitle(text)
+}
+
+// NormalizeEthnicity strips "Dân tộc:" prefixes and title-cases the ethnic group name.
+func NormalizeEthnicity(value *string) *string {
+	text := CleanText(value)
+	if text == nil {
+		return nil
+	}
+	stripped := strings.TrimSpace(reEthnicityPrefix.ReplaceAllString(*text, ""))
+	if stripped == "" {
+		return nil
+	}
+	return NormalizeTitle(&stripped)
+}
+
+// NormalizeReligion strips "Tôn giáo:" prefixes and normalizes "Không" or title-cases the religion name.
+func NormalizeReligion(value *string) *string {
+	text := CleanText(value)
+	if text == nil {
+		return nil
+	}
+	stripped := strings.TrimSpace(reReligionPrefix.ReplaceAllString(*text, ""))
+	if stripped == "" {
+		return nil
+	}
+	key := strings.ToLower(StripAccents(stripped))
+	if key == "khong" || key == "khong co" || key == "none" {
+		khong := "Không"
+		return &khong
+	}
+	return NormalizeTitle(&stripped)
 }
 
 // Squash strips accents, lowercases, and keeps only alphanumeric tokens separated by single spaces.

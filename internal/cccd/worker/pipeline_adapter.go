@@ -70,6 +70,15 @@ func (e *PipelineOCREngine) ExtractText(ctx context.Context, filePath string) (*
 		res.Sex = *card.Sex.Value
 		res.Gender = *card.Sex.Value
 	}
+	if card.Ethnicity.Value != nil {
+		res.Ethnicity = *card.Ethnicity.Value
+	}
+	if card.Religion.Value != nil {
+		res.Religion = *card.Religion.Value
+	}
+	if card.Nationality.Value != nil {
+		res.Nationality = *card.Nationality.Value
+	}
 	if card.Address.Value != nil {
 		res.Address = *card.Address.Value
 	}

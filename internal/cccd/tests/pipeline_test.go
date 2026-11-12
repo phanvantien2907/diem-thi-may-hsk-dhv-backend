@@ -498,3 +498,90 @@ func TestPipeline_SHA256DeduplicationSavesTokens(t *testing.T) {
 		t.Fatalf("expected SHA-256 deduplication cache to invoke Gemini only once for identical image, got %d calls", len(ex.calls))
 	}
 }
+
+func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) {
+	// 1. Mock 9-digit CMND response: missing gender (null), includes ethnicity & religion with prefixes
+	cmndJSON := `{
+		"is_id_card": true,
+		"all_corners_visible": true,
+		"side": "front",
+		"card_title": "GIẤY CHỨNG MINH NHÂN DÂN",
+		"id_number": "188020231",
+		"full_name": "HOÀNG MINH TRUNG",
+		"dob": "24/09/1987",
+		"gender": null,
+		"ethnicity": "Dân tộc: Kinh",
+		"religion": "Tôn giáo: Không",
+		"home": "Hưng Nguyên, Nghệ An",
+		"address": "Số 15 Quang Trung, P. Quang Trung, TP. Vinh, Nghệ An",
+		"address_province": "Nghệ An",
+		"address_district": "TP. Vinh",
+		"address_ward": "P. Quang Trung",
+		"address_detail": "Số 15 Quang Trung",
+		"uncertain_fields": []
+	}`
+	rawCMND, err := cccd.ParseRawExtractionJSON(cmndJSON)
+	if err != nil {
+		t.Fatalf("ParseRawExtractionJSON for 9-digit CMND failed: %v", err)
+	}
+	if rawCMND.ID == nil || *rawCMND.ID != "188020231" {
+		t.Fatalf("expected coalesced ID='188020231', got %v", rawCMND.ID)
+	}
+	if rawCMND.Sex != nil || rawCMND.Gender != nil {
+		t.Fatalf("expected nil gender/sex for 9-digit CMND, got sex=%v gender=%v", rawCMND.Sex, rawCMND.Gender)
+	}
+
+	builtCMND, err := cccd.BuildCard(rawCMND, testToday)
+	if err != nil {
+		t.Fatalf("BuildCard for 9-digit CMND failed: %v", err)
+	}
+	if builtCMND.Data.Ethnicity.Value == nil || *builtCMND.Data.Ethnicity.Value != "Kinh" {
+		t.Fatalf("expected Ethnicity='Kinh' preserved on 9-digit CMND, got %+v", builtCMND.Data.Ethnicity)
+	}
+	if builtCMND.Data.Religion.Value == nil || *builtCMND.Data.Religion.Value != "Không" {
+		t.Fatalf("expected Religion='Không' preserved on 9-digit CMND, got %+v", builtCMND.Data.Religion)
+	}
+	if builtCMND.Data.Sex.Value != nil {
+		t.Fatalf("expected nil Sex on 9-digit CMND, got %v", *builtCMND.Data.Sex.Value)
+	}
+
+	// 2. Mock 12-digit CCCD response: includes gender, ethnicity, religion, and address parts
+	cccdJSON := `{
+		"is_id_card": true,
+		"all_corners_visible": true,
+		"side": "front",
+		"card_title": "CĂN CƯỚC CÔNG DÂN",
+		"id_number": "040087001234",
+		"full_name": "HOÀNG MINH TRUNG",
+		"dob": "24/09/1987",
+		"gender": "Nam",
+		"ethnicity": "Kinh",
+		"religion": "Không",
+		"nationality": "Việt Nam",
+		"home": "Hưng Nguyên, Nghệ An",
+		"address": "P. Hà Huy Tập, TP. Vinh, Nghệ An",
+		"address_province": "Nghệ An",
+		"address_district": "TP. Vinh",
+		"address_ward": "P. Hà Huy Tập",
+		"address_detail": "",
+		"doe": "24/09/2027",
+		"uncertain_fields": []
+	}`
+	rawCCCD, err := cccd.ParseRawExtractionJSON(cccdJSON)
+	if err != nil {
+		t.Fatalf("ParseRawExtractionJSON for 12-digit CCCD failed: %v", err)
+	}
+	builtCCCD, err := cccd.BuildCard(rawCCCD, testToday)
+	if err != nil {
+		t.Fatalf("BuildCard for 12-digit CCCD failed: %v", err)
+	}
+	if builtCCCD.Data.Sex.Value == nil || *builtCCCD.Data.Sex.Value != "Nam" {
+		t.Fatalf("expected Sex='Nam' on 12-digit CCCD, got %+v", builtCCCD.Data.Sex)
+	}
+	if builtCCCD.Data.Ethnicity.Value == nil || *builtCCCD.Data.Ethnicity.Value != "Kinh" {
+		t.Fatalf("expected Ethnicity='Kinh' on 12-digit CCCD, got %+v", builtCCCD.Data.Ethnicity)
+	}
+	if builtCCCD.Data.Religion.Value == nil || *builtCCCD.Data.Religion.Value != "Không" {
+		t.Fatalf("expected Religion='Không' on 12-digit CCCD, got %+v", builtCCCD.Data.Religion)
+	}
+}

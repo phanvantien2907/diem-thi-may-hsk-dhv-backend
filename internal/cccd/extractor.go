@@ -331,12 +331,19 @@ func rawExtractionResponseSchema() map[string]any {
 			"card_title":          nullableStr,
 			"side":                nullableStr,
 			"id":                  nullableStr,
+			"id_number":           nullableStr,
 			"name":                nullableStr,
+			"full_name":           nullableStr,
 			"dob":                 nullableStr,
 			"sex":                 nullableStr,
+			"gender":              nullableStr,
 			"nationality":         nullableStr,
 			"home":                nullableStr,
 			"address":             nullableStr,
+			"address_province":    nullableStr,
+			"address_district":    nullableStr,
+			"address_ward":        nullableStr,
+			"address_detail":      nullableStr,
 			"address_entities": map[string]any{
 				"type":     "OBJECT",
 				"nullable": true,
@@ -364,6 +371,16 @@ func rawExtractionResponseSchema() map[string]any {
 			"is_screen_photo",
 			"is_photocopy",
 			"is_blurry_or_glare",
+			"id_number",
+			"full_name",
+			"dob",
+			"gender",
+			"ethnicity",
+			"religion",
+			"address_province",
+			"address_district",
+			"address_ward",
+			"address_detail",
 			"uncertain_fields",
 		},
 	}
@@ -459,6 +476,41 @@ func ParseRawExtractionJSON(text string) (entities.RawExtraction, error) {
 	var out entities.RawExtraction
 	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
 		return entities.RawExtraction{}, NewPipelineError(ErrCodeExtractionBadOutput, "Kết quả đọc giấy tờ sai cấu trúc", err)
+	}
+	if out.ID == nil && out.IDNumber != nil {
+		out.ID = out.IDNumber
+	} else if out.IDNumber == nil && out.ID != nil {
+		out.IDNumber = out.ID
+	}
+	if out.Name == nil && out.FullName != nil {
+		out.Name = out.FullName
+	} else if out.FullName == nil && out.Name != nil {
+		out.FullName = out.Name
+	}
+	if out.Sex == nil && out.Gender != nil {
+		out.Sex = out.Gender
+	} else if out.Gender == nil && out.Sex != nil {
+		out.Gender = out.Sex
+	}
+	if out.AddressEntities.Province == nil && out.AddressProvince != nil {
+		out.AddressEntities.Province = out.AddressProvince
+	} else if out.AddressProvince == nil && out.AddressEntities.Province != nil {
+		out.AddressProvince = out.AddressEntities.Province
+	}
+	if out.AddressEntities.District == nil && out.AddressDistrict != nil {
+		out.AddressEntities.District = out.AddressDistrict
+	} else if out.AddressDistrict == nil && out.AddressEntities.District != nil {
+		out.AddressDistrict = out.AddressEntities.District
+	}
+	if out.AddressEntities.Ward == nil && out.AddressWard != nil {
+		out.AddressEntities.Ward = out.AddressWard
+	} else if out.AddressWard == nil && out.AddressEntities.Ward != nil {
+		out.AddressWard = out.AddressEntities.Ward
+	}
+	if out.AddressEntities.Street == nil && out.AddressDetail != nil {
+		out.AddressEntities.Street = out.AddressDetail
+	} else if out.AddressDetail == nil && out.AddressEntities.Street != nil {
+		out.AddressDetail = out.AddressEntities.Street
 	}
 	if out.UncertainFields == nil {
 		out.UncertainFields = []string{}

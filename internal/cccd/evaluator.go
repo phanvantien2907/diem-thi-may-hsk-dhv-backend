@@ -321,11 +321,24 @@ func BuildCard(raw entities.RawExtraction, today time.Time, mediaWarnings ...str
 	warnings := append([]string{}, mediaWarnings...)
 	forceReview := false
 
-	// 1. Normalize each field
-	idVal, idNotes := NormalizeID(raw.ID)
-	sexVal, sexUnknown := NormalizeSex(raw.Sex)
-	nameRaw := CleanText(raw.Name)
-	nameVal := NormalizeName(raw.Name)
+	// 1. Normalize each field (coalescing flat alias keys and canonical keys)
+	rawID := raw.ID
+	if rawID == nil {
+		rawID = raw.IDNumber
+	}
+	rawName := raw.Name
+	if rawName == nil {
+		rawName = raw.FullName
+	}
+	rawSex := raw.Sex
+	if rawSex == nil {
+		rawSex = raw.Gender
+	}
+
+	idVal, idNotes := NormalizeID(rawID)
+	sexVal, sexUnknown := NormalizeSex(rawSex)
+	nameRaw := CleanText(rawName)
+	nameVal := NormalizeName(rawName)
 	dobVal, dobD, dobBad := NormalizeDate(raw.DOB)
 	doeVal, doeD, doeIndef, doeBad := NormalizeDOE(raw.DOE)
 	issueVal, issueD, issueBad := NormalizeDate(raw.IssueDate)
@@ -339,8 +352,8 @@ func BuildCard(raw entities.RawExtraction, today time.Time, mediaWarnings ...str
 		"home":        NormalizePlaceText(raw.Home),
 		"address":     NormalizePlaceText(raw.Address),
 		"doe":         doeVal,
-		"ethnicity":   NormalizeTitle(raw.Ethnicity),
-		"religion":    NormalizeTitle(raw.Religion),
+		"ethnicity":   NormalizeEthnicity(raw.Ethnicity),
+		"religion":    NormalizeReligion(raw.Religion),
 		"features":    CleanText(raw.Features),
 		"issue_date":  issueVal,
 		"issue_loc":   CleanText(raw.IssueLoc),
@@ -359,13 +372,26 @@ func BuildCard(raw entities.RawExtraction, today time.Time, mediaWarnings ...str
 		expected[f] = struct{}{}
 	}
 
+	// Preserve non-empty optional auxiliary fields (ethnicity, religion, issue_loc)
+	// when physically present on the scanned card (e.g. front-side CMND/CCCD variants)
+	preserveIfPresent := map[string]bool{
+		"ethnicity": true,
+		"religion":  true,
+		"issue_loc": true,
+	}
+
 	// 2. Initialize FieldValue map
 	fields := make(map[string]*entities.FieldValueEntity, len(allFieldNames))
 	for _, name := range allFieldNames {
 		lbl := GetFieldLabel(detail, name)
 		if _, isExp := expected[name]; !isExp {
-			fv := newFieldValue(nil, 0.0, StatusNotPresent, lbl)
-			fields[name] = &fv
+			if preserveIfPresent[name] && values[name] != nil && *values[name] != "" {
+				fv := newFieldValue(values[name], BaseProb, StatusOK, lbl)
+				fields[name] = &fv
+			} else {
+				fv := newFieldValue(nil, 0.0, StatusNotPresent, lbl)
+				fields[name] = &fv
+			}
 		} else if values[name] == nil || *values[name] == "" {
 			fv := newFieldValue(nil, 0.0, StatusMissing, lbl)
 			fields[name] = &fv
@@ -691,11 +717,27 @@ func buildAddressEntities(raw entities.RawExtraction, address entities.FieldValu
 	}
 
 	src := raw.AddressEntities
+	provSrc := src.Province
+	if provSrc == nil {
+		provSrc = raw.AddressProvince
+	}
+	distSrc := src.District
+	if distSrc == nil {
+		distSrc = raw.AddressDistrict
+	}
+	wardSrc := src.Ward
+	if wardSrc == nil {
+		wardSrc = raw.AddressWard
+	}
+	streetSrc := src.Street
+	if streetSrc == nil {
+		streetSrc = raw.AddressDetail
+	}
 	parts := map[string]*string{
-		"province": CleanText(src.Province),
-		"district": CleanText(src.District),
-		"ward":     CleanText(src.Ward),
-		"street":   CleanText(src.Street),
+		"province": CleanText(provSrc),
+		"district": CleanText(distSrc),
+		"ward":     CleanText(wardSrc),
+		"street":   CleanText(streetSrc),
 	}
 
 	addrSquashed := ""

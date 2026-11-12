@@ -22,12 +22,19 @@ type RawExtraction struct {
 	CardTitle         *string            `json:"card_title"`
 	Side              *string            `json:"side"`
 	ID                *string            `json:"id"`
+	IDNumber          *string            `json:"id_number"`
 	Name              *string            `json:"name"`
+	FullName          *string            `json:"full_name"`
 	DOB               *string            `json:"dob"`
 	Sex               *string            `json:"sex"`
+	Gender            *string            `json:"gender"`
 	Nationality       *string            `json:"nationality"`
 	Home              *string            `json:"home"`
 	Address           *string            `json:"address"`
+	AddressProvince   *string            `json:"address_province"`
+	AddressDistrict   *string            `json:"address_district"`
+	AddressWard       *string            `json:"address_ward"`
+	AddressDetail     *string            `json:"address_detail"`
 	AddressEntities   RawAddressEntities `json:"address_entities"`
 	DOE               *string            `json:"doe"`
 	Ethnicity         *string            `json:"ethnicity"`

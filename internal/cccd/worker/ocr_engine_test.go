@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -301,6 +302,52 @@ func TestWorkerPool_BackSideEmitsOCRBackCompleted(t *testing.T) {
 	}
 	if completedMsg.Data == nil || completedMsg.Data.IssueDate != "10/05/2021" || completedMsg.Data.PlaceOfIssue != "Cục Cảnh sát QLHC về TTXH" {
 		t.Fatalf("unexpected back-side data: %+v", completedMsg.Data)
+	}
+}
+
+func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
+	// 9-digit CMND: missing gender, prefixes on ethnicity & religion
+	cmnd := worker.StandardizeOCRResult(&models.OCRResultData{
+		IDNumber:  "188020231",
+		FullName:  "hoàng minh trung",
+		DOB:       "24/09/1987",
+		Gender:    "",
+		Ethnicity: "Dân tộc: Kinh",
+		Religion:  "Tôn giáo: Không",
+		Address:   "P. Hà Huy Tập, TP. Vinh, Nghệ An",
+	})
+	if cmnd.Gender != "" {
+		t.Fatalf("expected empty Gender for 9-digit CMND without gender on card, got %q", cmnd.Gender)
+	}
+	if cmnd.Ethnicity != "Kinh" || cmnd.Religion != "Không" {
+		t.Fatalf("expected Ethnicity='Kinh' and Religion='Không', got Ethnicity=%q Religion=%q", cmnd.Ethnicity, cmnd.Religion)
+	}
+
+	rawBytes, err := json.Marshal(cmnd)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	var asMap map[string]any
+	if err := json.Unmarshal(rawBytes, &asMap); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	requiredKeys := []string{
+		"id_number",
+		"full_name",
+		"dob",
+		"gender",
+		"ethnicity",
+		"religion",
+		"address_province",
+		"address_district",
+		"address_ward",
+		"address_detail",
+	}
+	for _, key := range requiredKeys {
+		if _, exists := asMap[key]; !exists {
+			t.Fatalf("expected marshaled JSON to always contain key %q, got JSON: %s", key, string(rawBytes))
+		}
 	}
 }
 

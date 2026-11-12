@@ -23,13 +23,16 @@ type OCRResultData struct {
 	IDNumber        string `json:"id_number"`
 	FullName        string `json:"full_name"`
 	DOB             string `json:"dob"`
-	Gender          string `json:"gender,omitempty"`
+	Gender          string `json:"gender"`
 	Sex             string `json:"sex,omitempty"`
+	Ethnicity       string `json:"ethnicity"`
+	Religion        string `json:"religion"`
+	Nationality     string `json:"nationality,omitempty"`
 	Address         string `json:"address,omitempty"`
-	AddressProvince string `json:"address_province,omitempty"`
-	AddressDistrict string `json:"address_district,omitempty"`
-	AddressWard     string `json:"address_ward,omitempty"`
-	AddressDetail   string `json:"address_detail,omitempty"`
+	AddressProvince string `json:"address_province"`
+	AddressDistrict string `json:"address_district"`
+	AddressWard     string `json:"address_ward"`
+	AddressDetail   string `json:"address_detail"`
 	HomeTown        string `json:"home_town,omitempty"`
 	IssueDate       string `json:"issue_date,omitempty"`
 	PlaceOfIssue    string `json:"place_of_issue,omitempty"`

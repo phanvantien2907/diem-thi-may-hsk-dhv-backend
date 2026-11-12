@@ -305,8 +305,10 @@ func (m *MockOCREngine) ExtractText(_ context.Context, filePath string) (*models
 
 // regexStrictID matches strictly 12-digit CCCD or 9-digit CMND numbers.
 var (
-	regexStrictID      = regexp.MustCompile(`^(\d{9}|\d{12})$`)
-	regexExtractIDLine = regexp.MustCompile(`(?i)(?:số|so|no|id)?[:\s]*\b(\d{12}|\d{9})\b`)
+	regexStrictID        = regexp.MustCompile(`^(\d{9}|\d{12})$`)
+	regexExtractIDLine   = regexp.MustCompile(`(?i)(?:số|so|no|id)?[:\s]*\b(\d{12}|\d{9})\b`)
+	regexEthnicityPrefix = regexp.MustCompile(`(?i)^(dân\s*tộc|dan\s*toc|ethnicity)\s*[:.\-]?\s*`)
+	regexReligionPrefix  = regexp.MustCompile(`(?i)^(tôn\s*giáo|ton\s*giao|religion)\s*[:.\-]?\s*`)
 )
 
 // StandardizeOCRResult normalizes extracted OCR fields and ensures 9/12-digit ID compliance.
@@ -346,6 +348,10 @@ func StandardizeOCRResult(res *models.OCRResultData) *models.OCRResultData {
 			}
 		}
 	}
+
+	res.Ethnicity = normalizeEthnicityField(res.Ethnicity)
+	res.Religion = normalizeReligionField(res.Religion)
+	res.Nationality = strings.TrimSpace(res.Nationality)
 
 	res.Address = strings.TrimSpace(res.Address)
 	res.AddressProvince = strings.TrimSpace(res.AddressProvince)
@@ -399,6 +405,33 @@ func splitVietnameseAddressFallback(fullAddress string) (province, district, war
 		return parts[2], parts[1], parts[0], ""
 	}
 	return parts[n-1], parts[n-2], parts[n-3], strings.Join(parts[:n-3], ", ")
+}
+
+func normalizeEthnicityField(raw string) string {
+	trimmed := strings.TrimSpace(regexEthnicityPrefix.ReplaceAllString(strings.TrimSpace(raw), ""))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") || strings.EqualFold(trimmed, "n/a") {
+		return ""
+	}
+	words := strings.Fields(trimmed)
+	for i, w := range words {
+		runes := []rune(w)
+		if len(runes) > 0 {
+			words[i] = strings.ToUpper(string(runes[0])) + strings.ToLower(string(runes[1:]))
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func normalizeReligionField(raw string) string {
+	trimmed := strings.TrimSpace(regexReligionPrefix.ReplaceAllString(strings.TrimSpace(raw), ""))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") || strings.EqualFold(trimmed, "n/a") {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	if lower == "không" || lower == "khong" || lower == "none" || lower == "không có" || lower == "khong co" {
+		return "Không"
+	}
+	return trimmed
 }
 
 func normalizePlaceOfIssue(raw string) string {
