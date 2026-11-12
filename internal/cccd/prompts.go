@@ -30,8 +30,8 @@ NGUYÊN TẮC BẮT BUỘC
    - Trường không có vật lý trên mặt thẻ hoặc hoàn toàn không đọc được -> trả về null (hoặc "") — TUYỆT ĐỐI KHÔNG bỏ qua khóa JSON và KHÔNG tự bịa dữ liệu.
    - Đọc được nhưng không chắc (mờ, lóa, bị che) -> vẫn điền giá trị bạn đọc được và thêm tên trường đó vào uncertain_fields.
 3. PHÂN BIỆT RÕ CMND 9 SỐ VÀ CCCD 12 SỐ:
-   - CMND 9 số (Chứng minh nhân dân cũ): Có thể có "Dân tộc" (ethnicity) và "Tôn giáo" (religion), nhưng KHÔNG CÓ "Giới tính" (gender/sex). Bắt buộc trả gender: null và sex: null cho CMND 9 số.
-   - CCCD 12 số / Thẻ căn cước: Có "Giới tính" ("Nam" hoặc "Nữ"). Nếu trên thẻ có in "Dân tộc" hoặc "Tôn giáo" thì trích xuất chính xác; nếu không in trên mặt thẻ đang chụp thì trả null.
+   - CMND 9 số (Chứng minh nhân dân cũ 9 chữ số): Mặt trước KHÔNG CÓ mục Giới tính. BẮT BUỘC trả về gender: null và sex: null. TUYỆT ĐỐI KHÔNG đoán, KHÔNG suy luận, KHÔNG hallucinate giới tính từ họ tên hay bất kỳ nguồn nào.
+   - CCCD 12 số (kể cả mẫu mã vạch cũ 2014, gắn chip, hay Thẻ căn cước mới): Mặt trước CÓ mục Giới tính / Sex. BẮT BUỘC định vị và trích xuất chính xác "Nam" hoặc "Nữ".
 4. Chuẩn hóa giá trị Dân tộc (ethnicity) và Tôn giáo (religion):
    - Chỉ lấy giá trị thực tế, loại bỏ tiền tố nhãn như "Dân tộc:", "Tôn giáo:" (ví dụ: "Dân tộc: Kinh" -> "Kinh", "Tôn giáo: Không" -> "Không").
 5. Giữ nguyên dấu tiếng Việt. Họ tên chép IN HOA như trên thẻ vào cả name và full_name.
@@ -71,7 +71,9 @@ B. CCCD MẪU CŨ & CMND 9/12 SỐ (Trước 07/2024, tiêu đề "CĂN CƯỚC 
   + id / id_number: "Số" / "Số CCCD" / "Số CMND"
   + name / full_name: "Họ và tên" / "Họ tên"
   + dob: "Ngày sinh" / "Sinh ngày"
-  + sex / gender: "Giới tính" (trên CMND 9 số không có -> để null)
+  + sex / gender:
+    * Với CMND 9 số: Mặt trước KHÔNG có mục Giới tính -> BẮT BUỘC trả về null.
+    * Với CCCD 12 số (kể cả mẫu mã vạch cũ 2014): Định vị rõ mục "Giới tính" / "Sex" và trích xuất "Nam" hoặc "Nữ".
   + nationality: "Quốc tịch"
   + ethnicity: "Dân tộc" (nếu có in trên mặt thẻ)
   + religion: "Tôn giáo" (nếu có in trên mặt thẻ)

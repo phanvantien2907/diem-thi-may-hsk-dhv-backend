@@ -336,7 +336,11 @@ func StandardizeOCRResult(res *models.OCRResultData) *models.OCRResultData {
 	} else if res.Sex == "" && res.Gender != "" {
 		res.Sex = res.Gender
 	}
-	if res.Gender == "" && len(cleanedID) == 12 {
+	// Strict safeguard: 9-digit CMND physically has no printed gender; never auto-infer
+	if len(cleanedID) == 9 {
+		res.Gender = ""
+		res.Sex = ""
+	} else if res.Gender == "" && len(cleanedID) == 12 {
 		digit := cleanedID[3]
 		if digit >= '0' && digit <= '9' {
 			if (digit-'0')%2 == 0 {

@@ -349,6 +349,23 @@ func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
 			t.Fatalf("expected marshaled JSON to always contain key %q, got JSON: %s", key, string(rawBytes))
 		}
 	}
+
+	// Verify 12-digit CCCD with empty gender derives gender from digit 3
+	cccd12Male := worker.StandardizeOCRResult(&models.OCRResultData{
+		IDNumber: "038090012345", // digit 3 is 0 -> Nam
+		FullName: "NGUYEN VAN A",
+	})
+	if cccd12Male.Gender != "Nam" || cccd12Male.Sex != "Nam" {
+		t.Fatalf("expected 12-digit CCCD (digit 3=0) to have Gender='Nam', got %q", cccd12Male.Gender)
+	}
+
+	cccd12Female := worker.StandardizeOCRResult(&models.OCRResultData{
+		IDNumber: "038195012345", // digit 3 is 1 -> Nữ
+		FullName: "TRAN THI B",
+	})
+	if cccd12Female.Gender != "Nữ" || cccd12Female.Sex != "Nữ" {
+		t.Fatalf("expected 12-digit CCCD (digit 3=1) to have Gender='Nữ', got %q", cccd12Female.Gender)
+	}
 }
 
 
