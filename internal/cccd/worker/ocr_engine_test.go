@@ -368,4 +368,75 @@ func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
 	}
 }
 
+type blockingCancelEngine struct {
+	started chan struct{}
+}
+
+func (b *blockingCancelEngine) ExtractText(ctx context.Context, _ string) (*models.OCRResultData, error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestWorkerPool_ContextCancellationAbortsProcessing(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "ocr_cancel_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	filePath := filepath.Join(tempDir, "cancel_test.jpg")
+	if err := os.WriteFile(filePath, []byte("cancel-test-bytes"), 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mockPub := &mockRedisPublisher{}
+	engine := &blockingCancelEngine{started: make(chan struct{})}
+
+	wp := worker.NewWorkerPool(engine, 1, 10, mockPub, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wp.Start(ctx)
+
+	taskCtx, taskCancel := context.WithCancel(context.Background())
+	task := models.OCRTask{
+		TaskID:    "task-cancel-1",
+		UserID:    505,
+		FilePath:  filePath,
+		Ctx:       taskCtx,
+		Cancel:    taskCancel,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := wp.Enqueue(task); err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+
+	// Wait for engine to start processing
+	select {
+	case <-engine.started:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for engine to start")
+	}
+
+	// Simulate client disconnection / tab closure by cancelling task
+	wp.CancelTask("task-cancel-1")
+
+	// Wait for processing cleanup
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify temp file was cleaned up
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("expected temp file to be removed after cancellation, but it exists")
+	}
+
+	// Verify no COMPLETED event was emitted
+	for _, m := range mockPub.getMessages() {
+		if m.TaskID == "task-cancel-1" && m.Status == models.StatusCompleted {
+			t.Fatalf("unexpected COMPLETED event after cancellation: %+v", m)
+		}
+	}
+}
+
+
 

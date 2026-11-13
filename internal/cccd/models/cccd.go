@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // OCRStatus defines the progress states of an asynchronous CCCD text extraction task.
 type OCRStatus string
@@ -44,20 +47,24 @@ type OCREventPayload struct {
 	Event     string         `json:"event"` // "ocr_progress", "ocr_completed", "ocr_back_completed", "ocr_failed"
 	TaskID    string         `json:"task_id"`
 	UserID    int64          `json:"user_id"`
-	Side      string         `json:"side,omitempty"`   // "front" | "back"
-	Status    OCRStatus      `json:"status"`           // QUEUED, PROCESSING, COMPLETED, FAILED
-	Progress  int            `json:"progress"`         // 0 - 100
+	Side      string         `json:"side,omitempty"`       // "front" | "back"
+	Status    OCRStatus      `json:"status"`               // QUEUED, PROCESSING, COMPLETED, FAILED
+	Progress  int            `json:"progress"`             // 0 - 100
 	Data      *OCRResultData `json:"data,omitempty"`
+	ErrorCode string         `json:"error_code,omitempty"` // e.g. "API_UNAVAILABLE", "TIMEOUT", "INVALID_IMAGE"
+	Message   string         `json:"message,omitempty"`
 	Error     string         `json:"error,omitempty"`
 	Timestamp time.Time      `json:"timestamp"`
 }
 
 // OCRTask represents a unit of work inside the Go Worker Pool queue.
 type OCRTask struct {
-	TaskID    string    `json:"task_id"`
-	UserID    int64     `json:"user_id"`
-	Side      string    `json:"side,omitempty"` // "front" | "back"
-	FilePath  string    `json:"file_path"`
-	CreatedAt time.Time `json:"created_at"`
+	TaskID    string             `json:"task_id"`
+	UserID    int64              `json:"user_id"`
+	Side      string             `json:"side,omitempty"` // "front" | "back"
+	FilePath  string             `json:"file_path"`
+	CreatedAt time.Time          `json:"created_at"`
+	Ctx       context.Context    `json:"-"`
+	Cancel    context.CancelFunc `json:"-"`
 }
 

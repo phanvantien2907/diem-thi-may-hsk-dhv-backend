@@ -29,12 +29,12 @@ func DefaultConfig() Config {
 		GeminiTimeoutSec:     45.0,
 		GeminiMaxRetries:     2,
 		MaxUploadBytes:       5 * 1024 * 1024, // 5 MB
-		MinImageWidth:        640,
-		MinImageHeight:       480,
+		MinImageWidth:        0,               // Relaxed: allow arbitrary resolutions and orientations
+		MinImageHeight:       0,               // Relaxed: allow portrait/square orientations
 		MaxImageEdge:         1600,
-		MinSharpness:         20.0,
-		MinBrightness:        35.0,
-		MaxBrightness:        225.0,
+		MinSharpness:         0.0,             // Relaxed: let Gemini Vision handle camera noise
+		MinBrightness:        0.0,             // Relaxed: let Gemini Vision handle dim lighting
+		MaxBrightness:        255.0,
 		MaxConcurrency:       4,
 		SecondPassOnConflict: true,
 	}

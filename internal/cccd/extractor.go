@@ -186,6 +186,10 @@ func (g *GeminiExtractor) Extract(ctx context.Context, image entities.PreparedIm
 	var lastStatus int
 
 	for _, candidateModel := range candidates {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return entities.RawExtraction{}, context.Canceled
+		}
+
 		g.mu.RLock()
 		baseURL := g.baseURL
 		g.mu.RUnlock()
@@ -194,10 +198,18 @@ func (g *GeminiExtractor) Extract(ctx context.Context, image entities.PreparedIm
 
 		shouldTryNextModel := false
 		for attempt := 0; attempt <= g.maxRetries; attempt++ {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return entities.RawExtraction{}, context.Canceled
+			}
+
 			rawText, statusCode, callErr := g.doCall(ctx, candidateModel, endpoint, reqBody)
 			if callErr == nil {
 				g.setActiveModel(candidateModel)
 				return ParseRawExtractionJSON(rawText)
+			}
+
+			if errors.Is(callErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+				return entities.RawExtraction{}, context.Canceled
 			}
 
 			// If a model rejects system_instruction / response_mime_type with 400, try compatible Vision body once
@@ -207,6 +219,9 @@ func (g *GeminiExtractor) Extract(ctx context.Context, image entities.PreparedIm
 						g.setActiveModel(candidateModel)
 						return ParseRawExtractionJSON(compatText)
 					} else {
+						if errors.Is(compatCallErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+							return entities.RawExtraction{}, context.Canceled
+						}
 						statusCode = compatStatus
 						callErr = compatCallErr
 					}
@@ -243,7 +258,7 @@ func (g *GeminiExtractor) Extract(ctx context.Context, image entities.PreparedIm
 				}
 				select {
 				case <-ctx.Done():
-					return entities.RawExtraction{}, NewPipelineError(ErrCodeExtractionTimeout, "Không kết nối được dịch vụ đọc giấy tờ", ctx.Err())
+					return entities.RawExtraction{}, context.Canceled
 				case <-time.After(waitDur):
 				}
 			}
@@ -270,6 +285,10 @@ func (g *GeminiExtractor) doCall(ctx context.Context, modelName string, endpoint
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || (ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled)) {
+			log.Printf("[cccd.extractor] gemini request canceled by context (model=%s)", modelName)
+			return "", 0, context.Canceled
+		}
 		var netErr net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
 			log.Printf("[cccd.extractor] gemini timeout (model=%s): %v", modelName, err)

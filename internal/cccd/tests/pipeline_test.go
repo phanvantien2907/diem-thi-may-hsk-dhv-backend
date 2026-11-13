@@ -126,15 +126,35 @@ func TestPipeline_ImageErrors(t *testing.T) {
 	if resp := svc.Process(context.Background(), []byte("not an image at all"), ""); resp.ErrorCode != int(cccd.ErrCodeInvalidImage) {
 		t.Fatalf("expected ErrCodeInvalidImage, got %d", resp.ErrorCode)
 	}
-	if resp := svc.Process(context.Background(), makeJPEGBytes(t, 300, 200), ""); resp.ErrorCode != int(cccd.ErrCodeImageTooSmall) {
-		t.Fatalf("expected ErrCodeImageTooSmall, got %d", resp.ErrorCode)
-	}
 	oversized := bytes.Repeat([]byte("x"), cfg.MaxUploadBytes+1)
 	if resp := svc.Process(context.Background(), oversized, ""); resp.ErrorCode != int(cccd.ErrCodeFileTooLarge) {
 		t.Fatalf("expected ErrCodeFileTooLarge, got %d", resp.ErrorCode)
 	}
 	if len(ex.calls) != 0 {
 		t.Fatalf("expected 0 Gemini calls when image validation fails, got %d", len(ex.calls))
+	}
+}
+
+func TestPipeline_AcceptsArbitraryResolutionsAndOrientations(t *testing.T) {
+	cfg := testConfig()
+	svc, ex := makeService(cfg, rawCCCDFront())
+
+	// Test portrait / small / arbitrary dimensions like cmnd-test.jpeg (474x646), cmnd-test-2.jpeg (480x640), cmnd-test-3.jpeg (677x453), or 300x200
+	testDims := [][2]int{
+		{300, 200},
+		{474, 646},
+		{480, 640},
+		{677, 453},
+	}
+	for _, dim := range testDims {
+		w, h := dim[0], dim[1]
+		resp := svc.Process(context.Background(), makeJPEGBytes(t, w, h), "")
+		if resp.ErrorCode != 0 {
+			t.Fatalf("expected resolution %dx%d to be accepted without ErrCodeImageTooSmall, got %d (%s)", w, h, resp.ErrorCode, resp.ErrorMessage)
+		}
+	}
+	if len(ex.calls) != len(testDims) {
+		t.Fatalf("expected %d extractor calls, got %d", len(testDims), len(ex.calls))
 	}
 }
 

@@ -49,10 +49,10 @@ func PrepareImage(raw []byte, cfg Config) (entities.PreparedImage, error) {
 	w := bounds.Dx()
 	h := bounds.Dy()
 
-	if (cfg.MinImageWidth > 0 && w < cfg.MinImageWidth) || (cfg.MinImageHeight > 0 && h < cfg.MinImageHeight) {
+	if w <= 0 || h <= 0 {
 		return entities.PreparedImage{}, NewPipelineError(
-			ErrCodeImageTooSmall,
-			fmt.Sprintf("Độ phân giải quá thấp (tối thiểu %dx%d)", cfg.MinImageWidth, cfg.MinImageHeight),
+			ErrCodeBadImageData,
+			"File ảnh không có kích thước hợp lệ",
 		)
 	}
 

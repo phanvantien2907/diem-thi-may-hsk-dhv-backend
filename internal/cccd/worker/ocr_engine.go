@@ -37,17 +37,19 @@ type EventDispatcher func(payload models.OCREventPayload)
 
 // WorkerPool manages background worker goroutines that process OCR tasks asynchronously.
 type WorkerPool struct {
-	engine     OCREngine
-	queue      chan models.OCRTask
-	redisSvc   RedisPublisher
-	dispatcher EventDispatcher
-	channel    string
-	workers    int
-	wg         sync.WaitGroup
-	mu         sync.Mutex
-	started    bool
-	tasksMu    sync.RWMutex
-	tasks      map[string]models.OCREventPayload
+	engine        OCREngine
+	queue         chan models.OCRTask
+	redisSvc      RedisPublisher
+	dispatcher    EventDispatcher
+	channel       string
+	workers       int
+	wg            sync.WaitGroup
+	mu            sync.Mutex
+	started       bool
+	tasksMu       sync.RWMutex
+	tasks         map[string]models.OCREventPayload
+	cancelsMu     sync.Mutex
+	activeCancels map[string]context.CancelFunc
 }
 
 // NewWorkerPool constructs a production-ready WorkerPool.
@@ -65,13 +67,14 @@ func NewWorkerPool(
 		queueSize = DefaultQueueSize
 	}
 	return &WorkerPool{
-		engine:     engine,
-		queue:      make(chan models.OCRTask, queueSize),
-		redisSvc:   redisSvc,
-		dispatcher: dispatcher,
-		channel:    DefaultRedisChannel,
-		workers:    concurrency,
-		tasks:      make(map[string]models.OCREventPayload),
+		engine:        engine,
+		queue:         make(chan models.OCRTask, queueSize),
+		redisSvc:      redisSvc,
+		dispatcher:    dispatcher,
+		channel:       DefaultRedisChannel,
+		workers:       concurrency,
+		tasks:         make(map[string]models.OCREventPayload),
+		activeCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -134,6 +137,34 @@ func (wp *WorkerPool) workerLoop(ctx context.Context, workerID int) {
 	}
 }
 
+// CancelTask cancels an in-flight OCR task by its taskID.
+func (wp *WorkerPool) CancelTask(taskID string) {
+	wp.cancelsMu.Lock()
+	cancel, ok := wp.activeCancels[taskID]
+	delete(wp.activeCancels, taskID)
+	wp.cancelsMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
+// CancelUserTasks cancels all in-flight OCR tasks for a specific userID.
+func (wp *WorkerPool) CancelUserTasks(userID int64) {
+	wp.cancelsMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(wp.activeCancels))
+	for id, cancel := range wp.activeCancels {
+		if cancel != nil {
+			cancels = append(cancels, cancel)
+		}
+		delete(wp.activeCancels, id)
+	}
+	wp.cancelsMu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 	// Clean up temporary image file after processing completes or fails
 	defer func() {
@@ -142,6 +173,26 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 				log.Printf("[ocr_worker] error removing temp file %s: %v", task.FilePath, err)
 			}
 		}
+	}()
+
+	taskCtx := task.Ctx
+	if taskCtx == nil {
+		var cancel context.CancelFunc
+		taskCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
+		task.Cancel = cancel
+	}
+	if task.Cancel != nil {
+		defer task.Cancel()
+	}
+
+	wp.cancelsMu.Lock()
+	wp.activeCancels[task.TaskID] = task.Cancel
+	wp.cancelsMu.Unlock()
+
+	defer func() {
+		wp.cancelsMu.Lock()
+		delete(wp.activeCancels, task.TaskID)
+		wp.cancelsMu.Unlock()
 	}()
 
 	// 1. Transition: PROCESSING
@@ -154,9 +205,13 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 		Timestamp: time.Now().UTC(),
 	})
 
-	// 2. Perform text extraction
-	res, err := wp.engine.ExtractText(ctx, task.FilePath)
+	// 2. Perform text extraction using task-scoped context (cancellable)
+	res, err := wp.engine.ExtractText(taskCtx, task.FilePath)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || (taskCtx.Err() != nil && errors.Is(taskCtx.Err(), context.Canceled)) {
+			log.Printf("[ocr_worker] task %s cancelled mid-processing by client disconnect", task.TaskID)
+			return
+		}
 		log.Printf("[ocr_worker] task %s failed: %v", task.TaskID, err)
 		wp.emitEvent(models.OCREventPayload{
 			Event:     "ocr_failed",
@@ -164,6 +219,8 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 			UserID:    task.UserID,
 			Status:    models.StatusFailed,
 			Progress:  0,
+			ErrorCode: "API_UNAVAILABLE",
+			Message:   "Dịch vụ bận, vui lòng thử lại hoặc nhập thủ công.",
 			Error:     err.Error(),
 			Timestamp: time.Now().UTC(),
 		})

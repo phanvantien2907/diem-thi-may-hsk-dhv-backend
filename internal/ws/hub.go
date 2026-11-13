@@ -79,10 +79,18 @@ type Hub struct {
 	register    chan *Client
 	unregister  chan *Client
 
-	throttleMu     sync.Mutex
-	throttleQueue  map[string]throttledItem
-	throttleWindow time.Duration
-	tickets        *TicketStore
+	throttleMu         sync.Mutex
+	throttleQueue      map[string]throttledItem
+	throttleWindow     time.Duration
+	tickets            *TicketStore
+	onUserDisconnected func(userID int64)
+}
+
+// SetOnUserDisconnected registers a callback invoked when all WebSocket connections for a user are closed.
+func (h *Hub) SetOnUserDisconnected(fn func(userID int64)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onUserDisconnected = fn
 }
 
 // NewHub creates and initializes a new Hub with a built-in TicketStore and throttle buffer.
@@ -169,10 +177,18 @@ func (h *Hub) UnregisterClient(client *Client) {
 	}
 	h.mu.Lock()
 	removed := h.removeClientLocked(client)
+	var onDisconnect func(userID int64)
+	userID := client.UserID
+	if removed && userID > 0 && len(h.userClients[userID]) == 0 {
+		onDisconnect = h.onUserDisconnected
+	}
 	total := len(h.clients)
 	h.mu.Unlock()
 	if removed {
 		log.Printf("[ws] client disconnected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
+		if onDisconnect != nil {
+			onDisconnect(userID)
+		}
 	}
 }
 
