@@ -206,7 +206,7 @@ func (g *GeminiExtractor) Extract(ctx context.Context, image entities.PreparedIm
 		baseURL := g.baseURL
 		g.mu.RUnlock()
 
-		endpoint := fmt.Sprintf("%s/%s:generateContent?key=%s", baseURL, candidateModel, g.apiKey)
+		endpoint := fmt.Sprintf("%s/%s:generateContent", baseURL, candidateModel)
 
 		shouldTryNextModel := false
 		for attempt := 0; attempt <= g.maxRetries; attempt++ {

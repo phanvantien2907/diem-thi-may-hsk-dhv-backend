@@ -50,7 +50,7 @@ internal/
 ├── database/               # PostgreSQL connection pool (postgres.go)
 ├── exam/                   # Exam types, sessions, seat generation (room data is internal-only)
 ├── exception/              # RESTful unified exception and error response format
-├── location/               # Provinces and wards (public reference data)
+├── location/               # Provinces, districts, wards, dual-version (v1/v2) address matcher & embedded snapshots
 ├── media/                  # Cloudinary file upload/delete service (shared infrastructure)
 ├── middleware/              # auth.go, cors.go, logger.go, ratelimit.go
 ├── notification/           # System notifications
@@ -58,8 +58,8 @@ internal/
 ├── registration/           # Exam registration and seat reservation
 ├── result/                 # Exam results and recheck requests
 ├── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
-├── worker/                 # Background workers (PayOS expired transaction sync, seat cleanup)
-└── ws/                     # WebSocket hub and client connections for real-time dashboard events
+├── worker/                 # Background workers (PayOS expired transaction sync, seat cleanup, geospatial sync cron)
+└── ws/                     # WebSocket hub, one-time tickets (user & guest), and real-time event delivery
 
 migrations/
 ├── 000001_schema.up.sql          # Full DB schema (applied first)
@@ -334,8 +334,14 @@ All API routes are mounted under `/api/v1`.
 | location | GET | `/locations/provinces` | public |
 | location | GET | `/locations/provinces/:id/wards` | public |
 | location | GET | `/locations/wards/:id/delivery-coverage` | public |
+| location | POST | `/locations/resolve-address` | public |
 | location | GET | `/admin/locations/stats/candidates-by-province` | JWT + admin |
 | location | POST | `/admin/locations/wards/:id/merge` | JWT + admin |
+| location | POST | `/admin/locations/clear-cache` | JWT + admin |
+| location | POST | `/admin/locations/sync` | JWT + admin |
+| cccd | POST | `/cccd/upload` | JWT or Guest Ticket |
+| cccd | POST | `/cccd/extract` | JWT |
+| cccd | GET | `/cccd/jobs/:id` | JWT |
 | audit | GET | `/admin/audit-logs` | JWT + admin |
 | dashboard | GET | `/admin/metrics/overview` | JWT + admin |
 | dashboard | GET | `/admin/metrics/revenue-chart` | JWT + admin |
@@ -348,6 +354,8 @@ All API routes are mounted under `/api/v1`.
 | dashboard | GET | `/admin/logs/recent` | JWT + admin |
 | dashboard | POST | `/admin/system/clear-cache` | JWT + admin |
 | dashboard | GET | `/admin/users/me/audit-log` | JWT + admin |
+| ws | POST | `/ws/ticket` | JWT |
+| ws | POST | `/ws/guest-ticket` | public (rate-limited) |
 | ws | GET | `/ws/dashboard` | JWT + admin |
 
 ### Response envelope
@@ -664,8 +672,10 @@ func ToSomeResponseDTO(e SomeEntity) response.SomeResponseDTO {
 | `CORS()` | `cors.go` | Permissive CORS headers; short-circuits `OPTIONS` with 204. |
 | `Logger()` | `logger.go` | Custom format: `timestamp \| IP \| METHOD path \| status \| latency`. |
 | `gin.Recovery()` | Gin built-in | Recovers panics, returns 500. |
-| `limiter.RateLimit()` | `ratelimit.go` | Per-IP token bucket. Responds 429. Background cleanup every 5 min. |
+| `limiter.RateLimit()` | `ratelimit.go` | Per-IP token bucket. Responds 429. Background cleanup every 5 min (stopped via `limiter.Stop()`). |
+| `limiter.RateLimitByAccountAndIP()` | `ratelimit.go` | Dual token bucket enforcing both per-IP and per-`user_id` limits (e.g., 3 req/min, burst 5 on `/cccd/upload` and `/cccd/extract`). |
 | `JWTAuth(secret)` | `auth.go` | Validates Bearer token; sets `user_id` (int64) and `user_role` (string) on Gin context. |
+| `JWTAuthOrGuestTicket(secret, ticketMgr)` | `auth.go` | Accepts either a valid Bearer JWT or an `X-Guest-Ticket` / `guest_ticket` token (negative `user_id`) for guest-first OCR onboarding. |
 | `RequireRole(roles...)` | `auth.go` | Enforces role membership; must follow `JWTAuth`. |
 
 Global middleware order (in `main.go`): `CORS → Logger → Recovery → RateLimit`.
@@ -770,7 +780,7 @@ exceptions (`EXAM_SESSION_NOT_FOUND`, `EXAM_SESSION_CANCELLED`,
 
 ### In-memory rate limiter
 
-`RateLimiter` is a `sync.Mutex`-protected token bucket keyed by client IP. It is process-local (not distributed). A background cleanup goroutine removes stale entries every 5 minutes — started in `NewRateLimiter`, runs for the process lifetime.
+`RateLimiter` is a `sync.Mutex`-protected token bucket keyed by client IP (`RateLimit()`) or by both client IP and authenticated/guest account ID (`RateLimitByAccountAndIP()`). It is process-local (not distributed). A background cleanup goroutine removes stale entries every 5 minutes — started in `NewRateLimiter` and cleanly terminated via `limiter.Stop()`.
 
 ### Rules for new goroutines
 
@@ -1194,6 +1204,12 @@ complete/unpublish/cancel/reschedule/close cascades with sqlmock), and
 `handler_state_test.go` (the HTTP 409 `INVALID_STATE_TRANSITION` envelope, 400
 and 404 mappings).
 
+CCCD/CMND OCR, WebSocket Hub, Geospatial Address Resolution, and Rate Limiter resilience are covered by:
+- `internal/cccd/tests/pipeline_test.go`, `internal/cccd/worker/ocr_engine_test.go`, `internal/cccd/handlers/cccd_upload_test.go`
+- `internal/ws/tests/hub_ocr_test.go`, `internal/ws/tests/hub_resilience_test.go`
+- `internal/location/matcher/address_resolver_test.go`, `internal/location/sync_test.go`, `internal/location/tests/service_test.go`
+- `internal/middleware/tests/ratelimit_test.go`
+
 ---
 
 ## 26. Docker & Container Size Optimization Rules
@@ -1376,20 +1392,18 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 
 ## 33. WebSocket Real-time Event Hub (`internal/ws`)
 
-1. **Architecture:**
-   - `ws.Hub` maintains active WebSocket connections authenticated via admin JWT token.
-   - Mounted at `GET /api/v1/ws/dashboard`.
-   - Thread-safe registration, unregistration, and broadcast mechanisms using Go channels and goroutines.
+1. **Architecture & One-Time Ticket Handshake:**
+   - `ws.Hub` maintains active WebSocket connections mapped per `userID` (`map[int64]map[*Client]bool`, max 5 concurrent connections per user; oldest connection evicted with close code `4002` when a 6th tab opens).
+   - Authenticated users exchange their JWT at `POST /api/v1/ws/ticket` for a 30-second one-time ticket (`?ticket=<id>`); unauthenticated guests on the registration page obtain a scoped negative-userID ticket at `POST /api/v1/ws/guest-ticket`. Passing raw `?token=<jwt>` in the query string is rejected with HTTP 401.
+   - Mounted at `GET /ws` (all authenticated/guest users) and `GET /api/v1/ws/dashboard` (admin).
+   - Thread-safe registration, unregistration, broadcast, and clean shutdown via `Hub.Stop()`.
 
-2. **Supported Events:**
-   - `payment_confirmed`: Triggered when a payment succeeds (webhook or manual approve), includes `session_id`.
-   - `registration_created`: Triggered when a candidate reserves a seat (`pending_payment`), includes `session_id`.
-   - `registration_cancelled`: Triggered when a registration is cancelled (by candidate or admin), includes `session_id`.
-   - `registration_transferred`: Triggered when a registration is moved between exam sessions (`from_session_id`, `to_session_id`).
-   - `dashboard_metrics_updated`: Triggered when background workers sync and expire stale payments or release held seats, alerting connected clients to refresh view.
-
-3. **Client Integration:**
-   - Frontend admins connect on dashboard mount and automatically receive live events to update UI state without continuous polling.
+2. **Supported Events & Delivery Guarantees:**
+   - Dashboard events: `payment_confirmed`, `registration_created`, `registration_cancelled`, `registration_transferred`, `dashboard_metrics_updated`.
+   - Candidate & Account events: `NOTIFICATION_PAYLOAD`, `notification_read`, `PROFILE_STATUS_UPDATED`, `SHIFT_CHANGED`, `FORCE_LOGOUT`.
+   - Real-time OCR events: `ocr_progress` (`QUEUED` 10%, `PROCESSING` 55%), `ocr_completed` (`side: "front"`), `ocr_back_completed` (`side: "back"`), `ocr_failed`, and `CCCD_EXTRACTED`.
+   - **Redis Pub/Sub Deduplication & Null-Data Guard:** `SendToUser` records locally dispatched OCR events (`recordLocalOCRDispatch` with a 5s TTL window) so `ListenRedisPubSub` on the same instance never delivers duplicate frames to local clients, and `ListenRedisPubSub` drops `ocr_completed` / `ocr_back_completed` frames whose `Data` is empty or `null` (preventing Redis status-only broadcasts from clobbering extracted OCR payloads).
+   - **Disconnect & Slow-Client Eviction Callbacks:** `Hub.AddOnUserDisconnected` fires when a user's last active connection closes — both on normal unregister and when a slow client (`Send` buffer full) is evicted in `dispatchBroadcastBytes`, `SendToUser`, `SendToUsers`, or `SendToRole` (`notifyDisconnectedUsers`).
 
 ---
 
@@ -1399,7 +1413,9 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
    - Runs ticker-based background tasks to maintain data consistency:
      - Expire pending PayOS payments that exceeded the 15-minute payment window.
      - Release expired seat reservations back to `available` status atomically.
+     - `GeospatialSyncCron` (`internal/worker/geospatial_sync_cron.go`): Synchronizes dual-version administrative divisions (`v1` pre-merger: 63 provinces, 696 districts, 10,051 wards; `v2` post-merger: 34 provinces, 3,321 wards) on startup (when incomplete) and every 24h. Guarded by `syncMu`, `io.LimitReader` (15 MB), and minimum dataset thresholds (`MinExpectedProvinces = 34`, `MinExpectedSyncedWards = 1000`) with automatic fallback to `//go:embed` snapshots (`internal/location/data/`).
    - Triggers real-time WebSocket broadcast notifications whenever stale payments/seats are reclaimed.
+   - `notifSvc.StartEventListener` must be started **exactly once** in `cmd/api/main.go`.
 
 2. **Concurrency Rules:**
    - Workers must respect graceful shutdown using `context.Context`.
@@ -1438,3 +1454,32 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 5. **Registration Idempotency & Race Condition (Double-Click Prevention):**
    - `POST /api/v1/me/registrations` supports the `Idempotency-Key: <uuid>` header. When provided, the first successful booking result is stored in Redis under `hsk:idemp:reg:<candidate_id>:<idempotency_key>` for 5 minutes. Subsequent duplicate requests bypass DB calls and return the cached registration.
    - Graceful Duplicate Fallback: If `fn_book_exam_seat` throws `DUPLICATE_REGISTRATION` (e.g. concurrent race condition or missing header), the service verifies whether the candidate already has an active `pending_payment` registration for this session; if found, it returns that registration with HTTP 200/201 instead of surfacing a 409 Conflict.
+
+---
+
+## 37. CCCD/CMND AI OCR Pipeline, Zero-Disk Privacy & Dual-Version Address Resolution (`internal/cccd`, `internal/location/matcher`)
+
+1. **Strict Monotonic WebSocket Event Ordering (`internal/cccd/worker/ocr_engine.go`):**
+   - `WorkerPool.Enqueue` reserves capacity via `queueSlots chan struct{}`, initializes the task status record, and emits `StatusQueued (10%)` **before** sending the task to `wp.queue`.
+   - `emitEvent` enforces a monotonic rank check (`statusOrderRank`: `QUEUED (1) < PROCESSING (2) < COMPLETED/FAILED (3)`) so an out-of-order late event can never regress task state.
+2. **Zero-Disk In-Memory Processing, Magic-Byte Validation & Decree 13/2023 Privacy:**
+   - All image uploads (`/api/v1/cccd/upload` and `/api/v1/cccd/extract`) inspect the first 512 bytes via `ValidateImageMagicBytes` (`http.DetectContentType` + JPEG/PNG/GIF magic signatures) and `image.DecodeConfig` (`maxAllowedImagePixels = 40,000,000` decompression-bomb guard), bounded by `io.LimitReader`.
+   - Sensitive identity images are processed strictly in RAM (`[]byte`) and are **never** written to `/tmp/cccd_uploads` or disk.
+   - Cache keys are versioned (`ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)`), expire after **3 minutes** via O(1) lazy checks + a 60s background eviction ticker, and are purged immediately after the first completed read (**Single-Read Auto-Purge**).
+   - Redis Pub/Sub (`cccd:ocr_events`) carries `Data: nil` (zero PII on Redis); extracted PII is delivered exclusively over the user's direct WebSocket connection.
+   - Never include real ID photos, real names, or real 9/12-digit ID numbers in code, tests, fixtures, docs, or commits — use synthetic fixtures (`123456789`, `001099000001`, `040203000001`, `NGUYỄN VĂN A`, `TRẦN THỊ B`).
+3. **Strict Job Ownership, Collision Guard & Blast-Radius Isolation:**
+   - `Service.GetJob(requestID, userID)` and `WorkerPool.GetTaskStatus(requestID, userID)` reject `userID <= 0 || rec.UserID <= 0 || rec.UserID != userID`.
+   - `Service.EnqueueAsync` regenerates `requestID` on collision so a client-supplied `X-Request-ID` can never overwrite or hijack another user's job, and deletes `s.jobs[requestID]` if `s.jobQueue` is full.
+   - `CancelUserTasks(userID)` ignores `userID <= 0` (`if userID <= 0 { return }`), registers task cancel functions at `Enqueue` time so queued tasks are also cancelled before calling Gemini if the user disconnects, and only cancels tasks belonging to that exact `userID`.
+4. **No Fabricated Fields & Invalid-Status Omission:**
+   - `StandardizeOCRResult` never fabricates `Gender`/`Sex` from the 4th digit of a 12-digit CCCD (nor for a 9-digit CMND) when the OCR engine did not read the sex field.
+   - `PipelineOCREngine.ExtractText` filters all fields through `validFieldString`, omitting any field whose `Status == enum.StatusInvalid` (e.g., a year-only DOB `"1999"`) so invalid partial values do not fail the entire card extraction.
+5. **Credential Transport, Error Redaction & Panic Recovery:**
+   - `GeminiExtractor.Extract` passes the Gemini API key **exclusively** via the `x-goog-api-key` HTTP header — never in the URL query string (`?key=...`), preventing `*url.Error` from leaking secrets on network timeouts.
+   - `WorkerPool.processTask` sanitizes errors via `sanitizeWorkerError` before emitting `ocr_failed` and wraps `ExtractText` with `defer recover()` so a panicking engine never kills a worker goroutine.
+   - `Service.Process` (`?sync=true`) selects on `s.sem <- struct{}{}` vs `<-ctx.Done()` so semaphore contention respects request cancellation.
+6. **Dual-Version (v1/v2) Address Resolution & Ambiguity Gate (`internal/location/matcher/address_resolver.go`):**
+   - `CombinedAddressScore` ($0.65 \times \text{normalized} + 0.35 \times \text{diacritic}$) preserves Vietnamese tones/diacritics (`"Thanh"` $\ne$ `"Thạnh"`). When $\ge 2$ administrative candidates exceed threshold and the top-2 score delta is $< 0.05$, the resolver returns `status: "requires_confirmation"` with `candidates: [...]` instead of guessing.
+   - `collectWardCandidates` excludes the province segment (`parts[n-1]`) and, when $n \ge 3$, excludes the district segment (`parts[n-2]`) so a legacy district name (e.g., `"Huyện Nam Đàn"`) is never misclassified as a post-merger `v2` ward (`"Xã Nam Đàn"`), ensuring legacy `v1` wards (`"Xã Khánh Sơn"`) properly resolve through the `v1 -> v2` merger table (`"Xã Thiên Nhẫn"`).
+   - `POST /api/v1/locations/resolve-address` enforces a `512`-character maximum per address field (`HTTP 400`) and throttles `RefreshResolverDBBindings` to at most once every 60 seconds. `POST /api/v1/admin/locations/clear-cache` is strictly Admin-only.

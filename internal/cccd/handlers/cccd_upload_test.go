@@ -221,4 +221,3 @@ func TestUpload_InvalidExtension_Returns400(t *testing.T) {
 		t.Fatalf("expected 400 Bad Request for pdf, got %d", w.Code)
 	}
 }
-

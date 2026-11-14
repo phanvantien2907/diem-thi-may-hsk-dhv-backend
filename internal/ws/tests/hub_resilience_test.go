@@ -206,6 +206,11 @@ func TestMaxConnectionsPerUser_EvictsOldest(t *testing.T) {
 				_, _, rErr := first.ReadMessage()
 				evictErrCh <- rErr
 			}(c)
+			// Ensure the 1st connection is registered in Hub before dialing subsequent connections
+			regWait := time.Now().Add(500 * time.Millisecond)
+			for hub.UserConnectionCount(userID) < 1 && time.Now().Before(regWait) {
+				time.Sleep(2 * time.Millisecond)
+			}
 		}
 	}
 

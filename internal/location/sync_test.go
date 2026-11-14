@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,3 +87,57 @@ func TestResolveAddressHandler_ValidAndEmptyRequests(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, wEmpty.Code)
 }
 
+// H-09: Verify (1) public /locations/clear-cache is not exposed without Admin JWT,
+// (2) oversized /locations/resolve-address payloads (>512 chars) are rejected with 400,
+// and (3) OpenAPI returning HTTP 200 with empty [] does not wipe out DefaultResolver.
+func TestLocation_H09_SecurityBoundsAndEmptySyncGuard(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := NewService(nil, nil)
+	h := NewHandler(svc)
+
+	router := gin.New()
+	v1 := router.Group("/api/v1")
+	RegisterRoutes(v1, h, "test-jwt-secret-32-bytes-minimum!")
+
+	// 1. Unauthenticated POST /api/v1/locations/clear-cache must NOT succeed with 200 OK
+	clearReq := httptest.NewRequest(http.MethodPost, "/api/v1/locations/clear-cache", nil)
+	wClear := httptest.NewRecorder()
+	router.ServeHTTP(wClear, clearReq)
+	assert.NotEqual(t, http.StatusOK, wClear.Code, "public /locations/clear-cache should not be accessible without admin auth")
+
+	// 2. Oversized address input (10 KB) on POST /api/v1/locations/resolve-address must return 400 Bad Request
+	hugeAddr, _ := json.Marshal(request.ResolveAddressRequestDTO{
+		Address: strings.Repeat("A", 10000),
+	})
+	hugeReq := httptest.NewRequest(http.MethodPost, "/api/v1/locations/resolve-address", bytes.NewReader(hugeAddr))
+	hugeReq.Header.Set("Content-Type", "application/json")
+	wHuge := httptest.NewRecorder()
+	router.ServeHTTP(wHuge, hugeReq)
+	assert.Equal(t, http.StatusBadRequest, wHuge.Code, "oversized address input must be rejected with 400 Bad Request")
+
+	// 3. Upstream returning HTTP 200 with empty JSON array `[]` must fallback to embedded snapshot instead of wiping DefaultResolver
+	emptyRoundTripper := roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Content-Type", "application/json")
+		rec.WriteHeader(http.StatusOK)
+		_, _ = rec.WriteString(`[]`)
+		return rec.Result(), nil
+	})
+	res, err := svc.SyncGeospatialDataWithOptions(context.Background(), GeospatialSyncOptions{
+		V1URL:          "http://empty.local/api/?depth=3",
+		V2ProvincesURL: "http://empty.local/api/v2/p/?depth=3",
+		V2WardsURL:     "http://empty.local/api/v2/w/",
+		HTTPClient:     &http.Client{Transport: emptyRoundTripper},
+		MaxAttempts:    1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "snapshot_fallback", res.Source, "empty [] upstream payload must fallback to embedded snapshot")
+	assert.GreaterOrEqual(t, res.V2Provinces, MinExpectedProvinces)
+	assert.GreaterOrEqual(t, res.V2Wards, MinExpectedSyncedWards)
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}

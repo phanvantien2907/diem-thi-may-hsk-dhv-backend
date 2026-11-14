@@ -58,4 +58,3 @@ func (c *GeospatialSyncCron) tick(ctx context.Context) {
 	log.Printf("[worker] geospatial sync: loaded %d provinces, %d districts, %d wards (v1) and %d wards (v2) from %s",
 		res.V1Provinces, res.Districts, res.V1Wards, res.V2Wards, res.Source)
 }
-

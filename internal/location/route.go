@@ -15,7 +15,6 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		loc.GET("/provinces/:id/wards", h.ListWards)
 		loc.GET("/wards/:id/delivery-coverage", h.GetWardDeliveryCoverage)
 		loc.POST("/resolve-address", h.ResolveAddress)
-		loc.POST("/clear-cache", h.ClearCache)
 	}
 
 	// ── Admin (JWT + admin role required) ──────────────────────────────────

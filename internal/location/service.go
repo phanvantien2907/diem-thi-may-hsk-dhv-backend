@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hskvinh/backend/internal/audit"
@@ -23,9 +24,12 @@ const (
 
 // Service handles province and ward lookups.
 type Service struct {
-	db       *sql.DB
-	auditSvc audit.Service
-	cacheSvc *cache.Service
+	db                *sql.DB
+	auditSvc          audit.Service
+	cacheSvc          *cache.Service
+	syncMu            sync.Mutex
+	dbBindRefreshMu   sync.Mutex
+	lastDBBindRefresh time.Time
 }
 
 // NewService creates a location Service.

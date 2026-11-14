@@ -22,6 +22,8 @@ type RateLimiter struct {
 	visitors map[string]*visitor
 	rps      float64 // refill rate: tokens per second
 	burst    float64 // bucket capacity
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewRateLimiter creates a new RateLimiter and starts a background cleanup goroutine.
@@ -30,9 +32,17 @@ func NewRateLimiter(rps, burst int) *RateLimiter {
 		visitors: make(map[string]*visitor),
 		rps:      float64(rps),
 		burst:    float64(burst),
+		stopCh:   make(chan struct{}),
 	}
 	go rl.cleanupLoop()
 	return rl
+}
+
+// Stop terminates the background cleanup goroutine cleanly.
+func (rl *RateLimiter) Stop() {
+	rl.stopOnce.Do(func() {
+		close(rl.stopCh)
+	})
 }
 
 // allow returns true when the request from the given IP is within the rate limit.
@@ -70,16 +80,21 @@ func (rl *RateLimiter) allow(ip string) bool {
 func (rl *RateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for ip, v := range rl.visitors {
-			v.mu.Lock()
-			if time.Since(v.lastSeen) > 10*time.Minute {
-				delete(rl.visitors, ip)
+	for {
+		select {
+		case <-rl.stopCh:
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			for ip, v := range rl.visitors {
+				v.mu.Lock()
+				if time.Since(v.lastSeen) > 10*time.Minute {
+					delete(rl.visitors, ip)
+				}
+				v.mu.Unlock()
 			}
-			v.mu.Unlock()
+			rl.mu.Unlock()
 		}
-		rl.mu.Unlock()
 	}
 }
 

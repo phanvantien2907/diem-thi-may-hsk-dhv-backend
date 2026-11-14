@@ -192,6 +192,9 @@ func (s *Service) SyncGeospatialData(ctx context.Context) (*GeospatialSyncResult
 
 // SyncGeospatialDataWithOptions runs a dual-version sync using caller-supplied options (useful for tests).
 func (s *Service) SyncGeospatialDataWithOptions(ctx context.Context, opts GeospatialSyncOptions) (*GeospatialSyncResult, error) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 15 * time.Second}
 	}
@@ -239,6 +242,32 @@ func (s *Service) SyncGeospatialDataWithOptions(ctx context.Context, opts Geospa
 	}
 	if err := json.Unmarshal(v2WardBytes, &v2Wards); err != nil {
 		return nil, fmt.Errorf("decode v2 wards: %w", err)
+	}
+
+	// Guard against upstream returning HTTP 200 with empty [] or truncated dataset
+	if source == "openapi" && (len(v1Provs) == 0 || len(v2Provs) < MinExpectedProvinces || len(v2Wards) < MinExpectedSyncedWards) {
+		log.Printf("[geospatial] remote payload below minimum threshold (v1=%d, v2p=%d, v2w=%d); recovering from embedded snapshot",
+			len(v1Provs), len(v2Provs), len(v2Wards))
+		source = "snapshot_fallback"
+		v1Bytes = data.V1SnapshotJSON
+		v2ProvBytes = data.V2ProvincesSnapshotJSON
+		v2WardBytes = data.V2WardsSnapshotJSON
+		resolver, err = matcher.NewAddressResolverFromSnapshots(v1Bytes, v2ProvBytes, v2WardBytes)
+		if err != nil {
+			return nil, fmt.Errorf("load fallback geospatial data: %w", err)
+		}
+		v1Provs = nil
+		v2Provs = nil
+		v2Wards = nil
+		if err := json.Unmarshal(v1Bytes, &v1Provs); err != nil {
+			return nil, fmt.Errorf("decode fallback v1 provinces: %w", err)
+		}
+		if err := json.Unmarshal(v2ProvBytes, &v2Provs); err != nil {
+			return nil, fmt.Errorf("decode fallback v2 provinces: %w", err)
+		}
+		if err := json.Unmarshal(v2WardBytes, &v2Wards); err != nil {
+			return nil, fmt.Errorf("decode fallback v2 wards: %w", err)
+		}
 	}
 
 	res := &GeospatialSyncResult{
@@ -573,14 +602,23 @@ func (s *Service) ResolveAddress(ctx context.Context, req request.ResolveAddress
 		strings.TrimSpace(req.AddressDetail),
 	)
 	if res.Matched && res.ProvinceID == 0 && s.db != nil {
-		_ = s.RefreshResolverDBBindings(ctx)
-		res = matcher.DefaultResolver().Resolve(
-			strings.TrimSpace(req.Address),
-			strings.TrimSpace(req.AddressProvince),
-			strings.TrimSpace(req.AddressDistrict),
-			strings.TrimSpace(req.AddressWard),
-			strings.TrimSpace(req.AddressDetail),
-		)
+		s.dbBindRefreshMu.Lock()
+		shouldRefresh := time.Since(s.lastDBBindRefresh) > 60*time.Second
+		if shouldRefresh {
+			s.lastDBBindRefresh = time.Now()
+		}
+		s.dbBindRefreshMu.Unlock()
+
+		if shouldRefresh {
+			_ = s.RefreshResolverDBBindings(ctx)
+			res = matcher.DefaultResolver().Resolve(
+				strings.TrimSpace(req.Address),
+				strings.TrimSpace(req.AddressProvince),
+				strings.TrimSpace(req.AddressDistrict),
+				strings.TrimSpace(req.AddressWard),
+				strings.TrimSpace(req.AddressDetail),
+			)
+		}
 	}
 	return res
 }

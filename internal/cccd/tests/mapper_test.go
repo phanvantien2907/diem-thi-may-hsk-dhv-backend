@@ -56,4 +56,3 @@ func TestMapper_AsyncJobResponseDTO_Failed(t *testing.T) {
 		t.Fatal("nil job must map to nil")
 	}
 }
-

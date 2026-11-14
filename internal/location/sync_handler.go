@@ -8,12 +8,22 @@ import (
 	"github.com/hskvinh/backend/internal/utils"
 )
 
+const maxResolveAddressFieldLen = 512
+
 // ResolveAddress POST /api/v1/locations/resolve-address
 // Resolves raw Vietnamese addresses (including pre-merger CMND addresses) to dual-version units.
 func (h *Handler) ResolveAddress(c *gin.Context) {
 	var req request.ResolveAddressRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "Dữ liệu địa chỉ không hợp lệ")
+		return
+	}
+	if len(req.Address) > maxResolveAddressFieldLen ||
+		len(req.AddressProvince) > maxResolveAddressFieldLen ||
+		len(req.AddressDistrict) > maxResolveAddressFieldLen ||
+		len(req.AddressWard) > maxResolveAddressFieldLen ||
+		len(req.AddressDetail) > maxResolveAddressFieldLen {
+		utils.BadRequest(c, "Dữ liệu địa chỉ vượt quá độ dài cho phép")
 		return
 	}
 	if strings.TrimSpace(req.Address) == "" &&
@@ -37,4 +47,3 @@ func (h *Handler) SyncGeospatial(c *gin.Context) {
 	}
 	utils.OK(c, res)
 }
-

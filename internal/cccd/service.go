@@ -176,12 +176,15 @@ func (s *Service) evictExpired(now time.Time) {
 	s.dedupMu.Unlock()
 }
 
-// CancelUserTasks cancels all in-flight asynchronous OCR tasks belonging to userID.
+// CancelUserTasks cancels all in-flight asynchronous OCR tasks belonging to a positive userID.
 func (s *Service) CancelUserTasks(userID int64) {
+	if userID <= 0 {
+		return
+	}
 	s.cancelsMu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(s.activeCancels))
 	for reqID, entry := range s.activeCancels {
-		if userID <= 0 || entry.userID == userID {
+		if entry.userID == userID {
 			if entry.cancel != nil {
 				cancels = append(cancels, entry.cancel)
 			}
@@ -215,7 +218,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 			s.cancelsMu.Unlock()
 
 			started := time.Now()
-			result, err := s.run(jobCtx, task.imageBytes)
+			result, err := s.safeRun(jobCtx, task.imageBytes)
 			elapsed := time.Since(started).Milliseconds()
 			cancel()
 
@@ -233,7 +236,7 @@ func (s *Service) workerLoop(ctx context.Context) {
 			var wsPayload *response.IdCardResponseDTO
 
 			s.jobsMu.Lock()
-			if rec, ok := s.jobs[task.requestID]; ok {
+			if rec, ok := s.jobs[task.requestID]; ok && rec.UserID == task.userID {
 				rec.UpdatedAt = now
 				rec.CompletedAt = &now
 				rec.ElapsedMs = elapsed
@@ -280,11 +283,14 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 	if _, _, err := ValidateImageMagicBytes(imageBytes); err != nil {
 		return nil, err
 	}
+	now := time.Now().UTC()
+	s.jobsMu.Lock()
 	if requestID == "" {
 		requestID = generateRequestID()
+	} else if _, exists := s.jobs[requestID]; exists {
+		// Prevent cross-user job hijack via duplicate/colliding X-Request-ID
+		requestID = generateRequestID()
 	}
-
-	now := time.Now().UTC()
 	rec := &entities.AsyncJobRecord{
 		RequestID: requestID,
 		UserID:    userID,
@@ -292,9 +298,6 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-
-	// O(1) write without full-map scan (cleanup handled lazily on GetJob + 60s janitor ticker)
-	s.jobsMu.Lock()
 	s.jobs[requestID] = rec
 	s.jobsMu.Unlock()
 
@@ -307,11 +310,14 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 	}:
 		return rec, nil
 	default:
+		s.jobsMu.Lock()
+		delete(s.jobs, requestID)
+		s.jobsMu.Unlock()
 		return nil, NewPipelineError(ErrCodeExtractionFailed, "Dịch vụ đọc giấy tờ đang lỗi hoặc quá tải")
 	}
 }
 
-// GetJob retrieves an AsyncJobRecord by requestID, enforcing user ownership when userID > 0,
+// GetJob retrieves an AsyncJobRecord by requestID, strictly enforcing positive user ownership,
 // O(1) lazy expiration (max 3-minute TTL), and single-read auto-purge for completed/failed jobs.
 func (s *Service) GetJob(requestID string, userID int64) (*entities.AsyncJobRecord, bool) {
 	now := time.Now().UTC()
@@ -326,7 +332,7 @@ func (s *Service) GetJob(requestID string, userID int64) (*entities.AsyncJobReco
 		delete(s.jobs, requestID)
 		return nil, false
 	}
-	if userID > 0 && rec.UserID > 0 && rec.UserID != userID {
+	if userID <= 0 || rec.UserID <= 0 || rec.UserID != userID {
 		return nil, false
 	}
 	copyRec := *rec
@@ -344,10 +350,15 @@ func (s *Service) Process(ctx context.Context, imageBytes []byte, requestID stri
 	}
 	started := time.Now()
 
-	s.sem <- struct{}{}
+	select {
+	case s.sem <- struct{}{}:
+	case <-ctx.Done():
+		elapsed := time.Since(started).Milliseconds()
+		return ToErrorIdCardResponseDTO(ErrCodeExtractionTimeout, "Không kết nối được dịch vụ đọc giấy tờ", requestID, elapsed)
+	}
 	defer func() { <-s.sem }()
 
-	result, err := s.run(ctx, imageBytes)
+	result, err := s.safeRun(ctx, imageBytes)
 	elapsed := time.Since(started).Milliseconds()
 
 	if err != nil {
@@ -373,6 +384,17 @@ func (s *Service) activeModelName() string {
 		}
 	}
 	return NormalizeGeminiModelName(s.cfg.GeminiModel)
+}
+
+func (s *Service) safeRun(ctx context.Context, imageBytes []byte) (res *entities.BuildResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[cccd.pipeline] recovered panic during extraction: %v", r)
+			res = nil
+			err = NewPipelineError(ErrCodeInternal, "Lỗi hệ thống")
+		}
+	}()
+	return s.run(ctx, imageBytes)
 }
 
 func (s *Service) run(ctx context.Context, imageBytes []byte) (*entities.BuildResult, error) {

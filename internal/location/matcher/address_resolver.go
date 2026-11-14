@@ -1179,8 +1179,17 @@ func collectWardCandidates(wardHint, fullAddress string) []string {
 	add(wardHint)
 	_, _, segWard, _ := splitAddressSegments(fullAddress)
 	add(segWard)
-	for _, seg := range splitNonEmptyParts(fullAddress) {
-		add(seg)
+	parts := splitNonEmptyParts(fullAddress)
+	limit := len(parts)
+	if limit >= 3 {
+		// Exclude district (parts[n-2]) and province (parts[n-1]) segments from ward candidates
+		limit -= 2
+	} else if limit == 2 {
+		// Exclude province (parts[1]) segment from ward candidates
+		limit = 1
+	}
+	for i := 0; i < limit; i++ {
+		add(parts[i])
 	}
 	return out
 }
@@ -1531,4 +1540,3 @@ func CombinedAddressScore(rawQuery, normQuery, diacriticQuery, rawCand, normCand
 	}
 	return combined
 }
-

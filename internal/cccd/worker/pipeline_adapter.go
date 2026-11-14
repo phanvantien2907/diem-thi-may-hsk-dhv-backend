@@ -6,8 +6,16 @@ import (
 	"strings"
 
 	"github.com/hskvinh/backend/internal/cccd/dto/response"
+	"github.com/hskvinh/backend/internal/cccd/enum"
 	"github.com/hskvinh/backend/internal/cccd/models"
 )
+
+func validFieldString(f response.FieldValueDTO) string {
+	if f.Value == nil || f.Status == enum.StatusInvalid {
+		return ""
+	}
+	return *f.Value
+}
 
 // PipelineProcessor abstracts the full text extraction and cross-validation pipeline.
 type PipelineProcessor interface {
@@ -55,56 +63,25 @@ func (e *PipelineOCREngine) ExtractText(ctx context.Context, imageBytes []byte) 
 		res.Side = "back"
 	}
 
-	if card.ID.Value != nil {
-		res.IDNumber = *card.ID.Value
+	res.IDNumber = validFieldString(card.ID)
+	res.FullName = validFieldString(card.Name)
+	res.DOB = validFieldString(card.DOB)
+	if sexVal := validFieldString(card.Sex); sexVal != "" {
+		res.Sex = sexVal
+		res.Gender = sexVal
 	}
-	if card.Name.Value != nil {
-		res.FullName = *card.Name.Value
-	}
-	if card.DOB.Value != nil {
-		res.DOB = *card.DOB.Value
-	}
-	if card.Sex.Value != nil {
-		res.Sex = *card.Sex.Value
-		res.Gender = *card.Sex.Value
-	}
-	if card.Ethnicity.Value != nil {
-		res.Ethnicity = *card.Ethnicity.Value
-	}
-	if card.Religion.Value != nil {
-		res.Religion = *card.Religion.Value
-	}
-	if card.Nationality.Value != nil {
-		res.Nationality = *card.Nationality.Value
-	}
-	if card.Address.Value != nil {
-		res.Address = *card.Address.Value
-	}
-	if card.AddressEntities.Province.Value != nil {
-		res.AddressProvince = *card.AddressEntities.Province.Value
-	}
-	if card.AddressEntities.District.Value != nil {
-		res.AddressDistrict = *card.AddressEntities.District.Value
-	}
-	if card.AddressEntities.Ward.Value != nil {
-		res.AddressWard = *card.AddressEntities.Ward.Value
-	}
-	if card.AddressEntities.Street.Value != nil {
-		res.AddressDetail = *card.AddressEntities.Street.Value
-	}
-	if card.Home.Value != nil {
-		res.HomeTown = *card.Home.Value
-	}
-	if card.IssueDate.Value != nil {
-		res.IssueDate = *card.IssueDate.Value
-	}
-	if card.IssueLoc.Value != nil {
-		res.PlaceOfIssue = *card.IssueLoc.Value
-	}
-	if card.DOE.Value != nil {
-		res.ExpiryDate = *card.DOE.Value
-	}
+	res.Ethnicity = validFieldString(card.Ethnicity)
+	res.Religion = validFieldString(card.Religion)
+	res.Nationality = validFieldString(card.Nationality)
+	res.Address = validFieldString(card.Address)
+	res.AddressProvince = validFieldString(card.AddressEntities.Province)
+	res.AddressDistrict = validFieldString(card.AddressEntities.District)
+	res.AddressWard = validFieldString(card.AddressEntities.Ward)
+	res.AddressDetail = validFieldString(card.AddressEntities.Street)
+	res.HomeTown = validFieldString(card.Home)
+	res.IssueDate = validFieldString(card.IssueDate)
+	res.PlaceOfIssue = validFieldString(card.IssueLoc)
+	res.ExpiryDate = validFieldString(card.DOE)
 
 	return StandardizeOCRResult(res), nil
 }
-

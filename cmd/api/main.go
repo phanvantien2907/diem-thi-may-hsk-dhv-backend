@@ -155,7 +155,6 @@ func main() {
 	paySvc.SetHub(hub)
 	authSvc.SetHub(hub)
 	notifSvc.SetHub(hub)
-	go notifSvc.StartEventListener(context.Background())
 	candSvc.SetNotificationPublisher(notifSvc)
 	paySvc.SetNotificationPublisher(notifSvc)
 	examSvc.SetNotificationPublisher(notifSvc)

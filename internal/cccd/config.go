@@ -32,8 +32,8 @@ func DefaultConfig() Config {
 		MinImageWidth:        0,               // Relaxed: allow arbitrary resolutions and orientations
 		MinImageHeight:       0,               // Relaxed: allow portrait/square orientations
 		MaxImageEdge:         1600,
-		MinSharpness:         0.0,             // Relaxed: let Gemini Vision handle camera noise
-		MinBrightness:        0.0,             // Relaxed: let Gemini Vision handle dim lighting
+		MinSharpness:         0.0, // Relaxed: let Gemini Vision handle camera noise
+		MinBrightness:        0.0, // Relaxed: let Gemini Vision handle dim lighting
 		MaxBrightness:        255.0,
 		MaxConcurrency:       4,
 		SecondPassOnConflict: true,

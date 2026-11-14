@@ -47,6 +47,7 @@ type activeTaskCancel struct {
 type WorkerPool struct {
 	engine        OCREngine
 	queue         chan models.OCRTask
+	queueSlots    chan struct{}
 	redisSvc      RedisPublisher
 	dispatcher    EventDispatcher
 	channel       string
@@ -77,6 +78,7 @@ func NewWorkerPool(
 	return &WorkerPool{
 		engine:        engine,
 		queue:         make(chan models.OCRTask, queueSize),
+		queueSlots:    make(chan struct{}, queueSize),
 		redisSvc:      redisSvc,
 		dispatcher:    dispatcher,
 		channel:       DefaultRedisChannel,
@@ -97,22 +99,40 @@ func (wp *WorkerPool) SetChannel(channel string) {
 // Returns an error if the queue is saturated.
 func (wp *WorkerPool) Enqueue(task models.OCRTask) error {
 	select {
-	case wp.queue <- task:
-		// Emit initial QUEUED event immediately upon enqueue
-		wp.emitEvent(models.OCREventPayload{
-			Event:     "ocr_progress",
-			RequestID: task.TaskID,
-			TaskID:    task.TaskID,
-			AccountID: task.UserID,
-			UserID:    task.UserID,
-			Status:    models.StatusQueued,
-			Progress:  10,
-			Timestamp: time.Now().UTC(),
-		})
-		return nil
+	case wp.queueSlots <- struct{}{}:
 	default:
 		return errors.New("ocr worker queue is full")
 	}
+
+	if task.Ctx == nil {
+		task.Ctx, task.Cancel = context.WithCancel(context.Background())
+	} else if task.Cancel == nil {
+		task.Ctx, task.Cancel = context.WithCancel(task.Ctx)
+	}
+	if task.TaskID != "" {
+		wp.cancelsMu.Lock()
+		wp.activeCancels[task.TaskID] = activeTaskCancel{
+			userID: task.UserID,
+			cancel: task.Cancel,
+		}
+		wp.cancelsMu.Unlock()
+	}
+
+	// Emit initial QUEUED event BEFORE handing the task to worker goroutines
+	// so PROCESSING / COMPLETED can never race ahead of QUEUED.
+	wp.emitEvent(models.OCREventPayload{
+		Event:     "ocr_progress",
+		RequestID: task.TaskID,
+		TaskID:    task.TaskID,
+		AccountID: task.UserID,
+		UserID:    task.UserID,
+		Status:    models.StatusQueued,
+		Progress:  10,
+		Timestamp: time.Now().UTC(),
+	})
+
+	wp.queue <- task
+	return nil
 }
 
 // Start launches the worker goroutines and the 60s background janitor ticker.
@@ -166,12 +186,13 @@ func (wp *WorkerPool) workerLoop(ctx context.Context, workerID int) {
 			if !ok {
 				return
 			}
+			<-wp.queueSlots
 			wp.processTask(ctx, task)
 		}
 	}
 }
 
-// CancelTask cancels an in-flight OCR task by its taskID.
+// CancelTask cancels an in-flight or queued OCR task by its taskID.
 func (wp *WorkerPool) CancelTask(taskID string) {
 	wp.cancelsMu.Lock()
 	entry, ok := wp.activeCancels[taskID]
@@ -182,13 +203,15 @@ func (wp *WorkerPool) CancelTask(taskID string) {
 	}
 }
 
-// CancelUserTasks cancels all in-flight OCR tasks belonging to a specific userID
-// (or all active tasks if userID <= 0).
+// CancelUserTasks cancels all queued and in-flight OCR tasks belonging to a specific positive userID.
 func (wp *WorkerPool) CancelUserTasks(userID int64) {
+	if userID <= 0 {
+		return
+	}
 	wp.cancelsMu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(wp.activeCancels))
 	for id, entry := range wp.activeCancels {
-		if userID <= 0 || entry.userID == userID {
+		if entry.userID == userID {
 			if entry.cancel != nil {
 				cancels = append(cancels, entry.cancel)
 			}
@@ -202,6 +225,24 @@ func (wp *WorkerPool) CancelUserTasks(userID int64) {
 	}
 }
 
+func sanitizeWorkerError(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	raw := err.Error()
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "http://") ||
+		strings.Contains(lower, "https://") ||
+		strings.Contains(lower, "key=") ||
+		strings.Contains(raw, "AIza") ||
+		strings.Contains(lower, "dial tcp") ||
+		strings.Contains(lower, "local ocr execution error") ||
+		strings.Contains(lower, "panic") {
+		return fallback
+	}
+	return raw
+}
+
 func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 	// Zero-Disk Policy: clear in-memory image buffer immediately when worker finishes
 	defer func() {
@@ -211,28 +252,61 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 		task.ImageBytes = nil
 	}()
 
-	taskCtx := task.Ctx
-	if taskCtx == nil {
-		var cancel context.CancelFunc
-		taskCtx, cancel = context.WithTimeout(ctx, 60*time.Second)
-		task.Cancel = cancel
-	}
-	if task.Cancel != nil {
-		defer task.Cancel()
-	}
-
-	wp.cancelsMu.Lock()
-	wp.activeCancels[task.TaskID] = activeTaskCancel{
-		userID: task.UserID,
-		cancel: task.Cancel,
-	}
-	wp.cancelsMu.Unlock()
-
 	defer func() {
 		wp.cancelsMu.Lock()
 		delete(wp.activeCancels, task.TaskID)
 		wp.cancelsMu.Unlock()
 	}()
+
+	if task.Cancel != nil {
+		defer task.Cancel()
+	}
+
+	// Recover from any unexpected panic inside OCREngine so the worker goroutine stays alive
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[ocr_worker] recovered panic in task %s: %v", task.TaskID, r)
+			const safeMsg = "Dịch vụ bận, vui lòng thử lại hoặc nhập thủ công."
+			wp.emitEvent(models.OCREventPayload{
+				Event:     "ocr_failed",
+				RequestID: task.TaskID,
+				TaskID:    task.TaskID,
+				AccountID: task.UserID,
+				UserID:    task.UserID,
+				Status:    models.StatusFailed,
+				Progress:  0,
+				ErrorCode: "API_UNAVAILABLE",
+				Message:   safeMsg,
+				Error:     safeMsg,
+				Timestamp: time.Now().UTC(),
+			})
+		}
+	}()
+
+	// Skip immediately if the task was cancelled while sitting in the queue
+	if task.Ctx != nil && task.Ctx.Err() != nil {
+		log.Printf("[ocr_worker] task %s cancelled while queued before processing", task.TaskID)
+		return
+	}
+
+	baseCtx := task.Ctx
+	if baseCtx == nil {
+		baseCtx = ctx
+	}
+	taskCtx, timeoutCancel := context.WithTimeout(baseCtx, 60*time.Second)
+	defer timeoutCancel()
+
+	wp.cancelsMu.Lock()
+	wp.activeCancels[task.TaskID] = activeTaskCancel{
+		userID: task.UserID,
+		cancel: func() {
+			if task.Cancel != nil {
+				task.Cancel()
+			}
+			timeoutCancel()
+		},
+	}
+	wp.cancelsMu.Unlock()
 
 	// 1. Transition: PROCESSING
 	wp.emitEvent(models.OCREventPayload{
@@ -254,6 +328,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 			return
 		}
 		log.Printf("[ocr_worker] task %s failed: %v", task.TaskID, err)
+		const safeMsg = "Dịch vụ bận, vui lòng thử lại hoặc nhập thủ công."
 		wp.emitEvent(models.OCREventPayload{
 			Event:     "ocr_failed",
 			RequestID: task.TaskID,
@@ -263,8 +338,8 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 			Status:    models.StatusFailed,
 			Progress:  0,
 			ErrorCode: "API_UNAVAILABLE",
-			Message:   "Dịch vụ bận, vui lòng thử lại hoặc nhập thủ công.",
-			Error:     err.Error(),
+			Message:   safeMsg,
+			Error:     sanitizeWorkerError(err, safeMsg),
 			Timestamp: time.Now().UTC(),
 		})
 		return
@@ -300,6 +375,19 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 	log.Printf("[ocr_worker] task %s (%s) completed successfully for user %d", task.TaskID, eventName, task.UserID)
 }
 
+func statusOrderRank(s models.OCRStatus) int {
+	switch s {
+	case models.StatusQueued:
+		return 1
+	case models.StatusProcessing:
+		return 2
+	case models.StatusCompleted, models.StatusFailed:
+		return 3
+	default:
+		return 0
+	}
+}
+
 func (wp *WorkerPool) emitEvent(payload models.OCREventPayload) {
 	if payload.RequestID == "" {
 		payload.RequestID = payload.TaskID
@@ -308,10 +396,12 @@ func (wp *WorkerPool) emitEvent(payload models.OCREventPayload) {
 		payload.AccountID = payload.UserID
 	}
 
-	// O(1) ephemeral store write (cleanup is handled lazily on GetTaskStatus + 60s janitor ticker)
+	// O(1) ephemeral store write with monotonic status guard (prevents stale state overwrite)
 	if payload.TaskID != "" {
 		wp.tasksMu.Lock()
-		wp.tasks[payload.TaskID] = payload
+		if existing, exists := wp.tasks[payload.TaskID]; !exists || statusOrderRank(payload.Status) >= statusOrderRank(existing.Status) {
+			wp.tasks[payload.TaskID] = payload
+		}
 		wp.tasksMu.Unlock()
 	}
 
@@ -348,7 +438,7 @@ func (wp *WorkerPool) GetTaskStatus(taskID string, userID int64) (models.OCREven
 		delete(wp.tasks, taskID)
 		return models.OCREventPayload{}, false
 	}
-	if userID > 0 && rec.UserID > 0 && rec.UserID != userID {
+	if userID <= 0 || rec.UserID <= 0 || rec.UserID != userID {
 		return models.OCREventPayload{}, false
 	}
 	// Single-read ephemeral store: auto-purge completed PII payload immediately upon read
@@ -453,20 +543,10 @@ func StandardizeOCRResult(res *models.OCRResultData) *models.OCRResultData {
 		res.Sex = res.Gender
 	}
 	// Strict safeguard: 9-digit CMND physically has no printed gender; never auto-infer
+	// and never fabricate gender from 12-digit ID numbers when sex is unread.
 	if len(cleanedID) == 9 {
 		res.Gender = ""
 		res.Sex = ""
-	} else if res.Gender == "" && len(cleanedID) == 12 {
-		digit := cleanedID[3]
-		if digit >= '0' && digit <= '9' {
-			if (digit-'0')%2 == 0 {
-				res.Gender = "Nam"
-				res.Sex = "Nam"
-			} else {
-				res.Gender = "Nữ"
-				res.Sex = "Nữ"
-			}
-		}
 	}
 
 	res.Ethnicity = normalizeEthnicityField(res.Ethnicity)
@@ -651,4 +731,3 @@ func parseRawOCRText(text string) *models.OCRResultData {
 
 	return StandardizeOCRResult(res)
 }
-

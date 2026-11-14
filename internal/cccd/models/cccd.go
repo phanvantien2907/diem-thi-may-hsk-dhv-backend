@@ -60,9 +60,9 @@ type OCREventPayload struct {
 	TaskID    string         `json:"task_id"`
 	AccountID int64          `json:"account_id,omitempty"`
 	UserID    int64          `json:"user_id"`
-	Side      string         `json:"side,omitempty"`       // "front" | "back"
-	Status    OCRStatus      `json:"status"`               // QUEUED, PROCESSING, COMPLETED, FAILED
-	Progress  int            `json:"progress"`             // 0 - 100
+	Side      string         `json:"side,omitempty"` // "front" | "back"
+	Status    OCRStatus      `json:"status"`         // QUEUED, PROCESSING, COMPLETED, FAILED
+	Progress  int            `json:"progress"`       // 0 - 100
 	Data      *OCRResultData `json:"data,omitempty"`
 	ErrorCode string         `json:"error_code,omitempty"` // e.g. "API_UNAVAILABLE", "TIMEOUT", "INVALID_IMAGE"
 	Message   string         `json:"message,omitempty"`
@@ -81,4 +81,3 @@ type OCRTask struct {
 	Ctx        context.Context    `json:"-"`
 	Cancel     context.CancelFunc `json:"-"`
 }
-

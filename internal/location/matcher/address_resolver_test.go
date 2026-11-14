@@ -168,4 +168,15 @@ func TestAddressResolver_AmbiguousDiacritics(t *testing.T) {
 	require.Len(t, resConflictingTone.Candidates, 2)
 }
 
+// H-07: Verify that when a 4-part address ("Xóm 3, Xã Khánh Sơn, Nam Đàn, Nghệ An") contains a legacy v1 ward
+// ("Xã Khánh Sơn") that is not a v2 ward name, the resolver does NOT feed the district segment ("Nam Đàn")
+// into v2 ward matching and falsely match v2 "Xã Nam Đàn" as a non-legacy v2_exact match.
+func TestAddressResolver_H07_DoesNotMatchDistrictSegmentAsV2Ward(t *testing.T) {
+	resolver := DefaultResolver()
+	require.NotNil(t, resolver)
 
+	res := resolver.Resolve("Xóm 3, Xã Khánh Sơn, Nam Đàn, Nghệ An", "", "", "", "")
+	assert.True(t, res.Matched)
+	assert.True(t, res.IsLegacyAddress, "expected legacy v1 ward 'Xã Khánh Sơn' to be detected as legacy address, got MatchSource=%s WardName=%s", res.MatchSource, res.WardName)
+	assert.Equal(t, "Xã Khánh Sơn", res.LegacyWardName)
+}

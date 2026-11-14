@@ -3,10 +3,22 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.2.11
+> **Phiên bản:** v1.2.12
 > **Cập nhật lần cuối:** 2026-11-14
 
 ## Changelog
+
+### v1.2.12 (2026-11-14)
+- 🛡️ **CCCD/CMND OCR Pipeline Bug-Hunt, Concurrency Hardening & Geospatial Precision (`H-01` → `H-10`)**:
+  - **H-01 — Đảm bảo thứ tự sự kiện WebSocket nghiêm ngặt (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`)**: Bổ sung semaphore `queueSlots` trong `WorkerPool.Enqueue` để giữ chỗ hàng đợi, ghi nhận trạng thái và phát `ocr_progress (QUEUED, 10%)` **trước** khi đẩy tác vụ vào `wp.queue`, kết hợp chốt chặn thứ bậc đơn điệu `statusOrderRank` trong `emitEvent`, triệt tiêu hoàn toàn hiện tượng sự kiện `QUEUED (10%)` đến sau `COMPLETED (100%)`.
+  - **H-02 — Chống nhân đôi sự kiện & Chống ghi đè `data: null` qua Redis Pub/Sub (`internal/ws/hub.go`)**: Bổ sung bộ lọc chống trùng lặp cục bộ `recordLocalOCRDispatch` / `wasOCRDispatchedLocally` (cửa sổ 5 giây) trong `SendToUser` và chặn `ListenRedisPubSub` phát lại các sự kiện `ocr_completed` / `ocr_back_completed` có `Data` rỗng hoặc `null` từ kênh `ws:events`.
+  - **H-03 — Cô lập quyền sở hữu tác vụ & Chống chiếm quyền `X-Request-ID` (`service.go`, `ocr_engine.go`)**: Tự động sinh lại `requestID` mới khi phát hiện trùng lặp trong `EnqueueAsync`; kiểm tra chéo `rec.UserID == task.userID` trong `workerLoop`; bắt buộc `userID <= 0 || rec.UserID <= 0 || rec.UserID != userID` trả lỗi từ chối truy cập tại cả `Service.GetJob` và `WorkerPool.GetTaskStatus`.
+  - **H-04 — Không tự suy diễn Giới tính & Loại bỏ trường `StatusInvalid` (`ocr_engine.go`, `pipeline_adapter.go`)**: Xóa bỏ nhánh tự đoán giới tính từ chữ số thứ 4 của CCCD 12 số khi OCR không đọc được mục Giới tính (`Gender`/`Sex` giữ rỗng `""`); bổ sung `validFieldString` trong `PipelineOCREngine.ExtractText` để bỏ qua mọi trường có `Status == StatusInvalid` (như năm sinh cụt `"1999"`), tránh làm hỏng toàn bộ lượt quét.
+  - **H-05 — Bảo mật Khóa Gemini API & Làm sạch thông báo lỗi (`extractor.go`, `ocr_engine.go`, `location/handler.go`)**: Loại bỏ hoàn toàn query param `?key=...` khỏi URL gọi Gemini API (chỉ truyền qua HTTP header `x-goog-api-key`) để ngăn `*url.Error` làm lộ khóa khi timeout; bổ sung `sanitizeWorkerError` chặn mọi URL, API key (`key=`, `AIza`), lỗi mạng/hệ thống rò rỉ trong frame WebSocket `ocr_failed`; chuẩn hóa thông báo lỗi tiếng Việt tại `MergeWard`.
+  - **H-06 — Giới hạn phạm vi `CancelUserTasks`, Hủy tác vụ từ hàng đợi & Xử lý Slow-Client Eviction (`ocr_engine.go`, `service.go`, `hub.go`)**: Chặn sớm `if userID <= 0 { return }` trong `CancelUserTasks`; đăng ký hàm `cancel` ngay từ lúc `Enqueue` để tác vụ đang xếp hàng cũng bị hủy trước khi gọi Gemini nếu người dùng ngắt kết nối; kích hoạt `notifyDisconnectedUsers` khi kết nối cuối cùng của user bị trục xuất do đầy bộ đệm (`Send` buffer full).
+  - **H-07 — Loại trừ cấp Quận/Huyện khỏi ứng viên Xã/Phường `v2` (`address_resolver.go`)**: Sửa `collectWardCandidates` loại trừ phần tử Tỉnh (`parts[n-1]`) và Quận/Huyện (`parts[n-2]` khi $n \ge 3$), ngăn chặn việc nhận nhầm tên Huyện cũ trùng tên Xã mới (ví dụ `"Xóm 2, Xã Khánh Sơn, Huyện Nam Đàn, Tỉnh Nghệ An"` phải ánh xạ `"Xã Khánh Sơn"` $\rightarrow$ `"Xã Thiên Nhẫn"` kèm `is_legacy_address: true`, không bị khớp nhầm vào `"Xã Nam Đàn"`).
+  - **H-08, H-09, H-10 — Bọc `recover()` chống sập Worker, Khóa bảo mật Location/Sync & Tôn trọng Context trên Semaphore**: Bọc `defer recover()` trong `WorkerPool.processTask` và `Service.safeRun`; xóa bản ghi `s.jobs[requestID]` khi hàng đợi đầy; gỡ bỏ route công khai `/api/v1/locations/clear-cache` (chỉ giữ `/api/v1/admin/locations/clear-cache`); giới hạn 512 ký tự/trường và throttle `RefreshResolverDBBindings` (60s) tại `/api/v1/locations/resolve-address`; khóa `syncMu` và kiểm tra ngưỡng tối thiểu (`MinExpectedProvinces = 34`, `MinExpectedSyncedWards = 1000`) kèm tự động fallback về snapshot nhúng khi upstream trả rỗng `[]`; lắng nghe `<-ctx.Done()` khi chờ semaphore `s.sem` ở chế độ `?sync=true`.
+  - **Kiểm chứng định lượng**: 100% PASS trên 8 packages với `go test -race -count=1` (31.56s, 0 data race) và 50 vòng lặp stress test `go test -race -count=50 -shuffle=on ./internal/cccd/worker/ ./internal/ws/...` (34.47s, ~2.250 lượt chạy test).
 
 ### v1.2.11 (2026-11-14)
 - 🔒 **Security, Privacy (Nghị định 13/2023/NĐ-CP) & OCR Accuracy Hardening**:
@@ -4689,9 +4701,9 @@ transaction PostgreSQL. Không sử dụng Redis.
 
 | | |
 |---|---|
-| **Endpoint** | `POST /api/v1/admin/locations/clear-cache` (Admin)<br>`POST /api/v1/locations/clear-cache` (Công khai / Development) |
-| **Auth** | 🔐 JWT + Admin (với route admin) / 🔓 Public (route dev) |
-| **Use-case** | Xoá toàn bộ cache danh sách tỉnh/thành (`hsk:loc:provinces`), danh sách xã/phường (`hsk:loc:wards:*`), và thông tin giao hàng (`hsk:loc:coverage:*`) trên Redis. Dùng khi cập nhật danh mục địa giới hành chính |
+| **Endpoint** | `POST /api/v1/admin/locations/clear-cache` |
+| **Auth** | 🔐 JWT + Admin |
+| **Use-case** | Xoá toàn bộ cache danh sách tỉnh/thành (`hsk:loc:provinces`), danh sách xã/phường (`hsk:loc:wards:*`), và thông tin giao hàng (`hsk:loc:coverage:*`) trên Redis. Dùng khi cập nhật danh mục địa giới hành chính (Route công khai `/api/v1/locations/clear-cache` đã được gỡ bỏ để chống tấn công làm cạn kiệt cache) |
 
 **Request Body:** Không cần body.
 
@@ -4722,13 +4734,18 @@ transaction PostgreSQL. Không sử dụng Redis.
 
 ```json
 {
-  "address": "Xã Nam Lộc, Huyện Nam Đàn, Nghệ An",
-  "address_province": "Nghệ An",
+  "address": "Xóm 2, Xã Khánh Sơn, Huyện Nam Đàn, Tỉnh Nghệ An",
+  "address_province": "Tỉnh Nghệ An",
   "address_district": "Huyện Nam Đàn",
-  "address_ward": "Xã Nam Lộc",
-  "address_detail": ""
+  "address_ward": "Xã Khánh Sơn",
+  "address_detail": "Xóm 2"
 }
 ```
+
+> **Giới hạn bảo mật & Quy tắc phân tách cấp hành chính (`H-07` & `H-09b`):**
+> - Mỗi trường địa chỉ (`address`, `address_province`, `address_district`, `address_ward`, `address_detail`) có độ dài tối đa **512 ký tự**; nếu vượt quá, API từ chối ngay với `HTTP 400 Bad Request` (`"Địa chỉ đầu vào vượt quá độ dài cho phép"`).
+> - Khi phân tách chuỗi địa chỉ có từ 3 thành phần trở lên (`Thôn/Xóm, Xã/Phường, Quận/Huyện, Tỉnh/Thành phố`), bộ giải mã tự động loại trừ thành phần Tỉnh (`parts[n-1]`) và Quận/Huyện (`parts[n-2]`) khỏi tập ứng viên Xã/Phường `v2`, đảm bảo tên Huyện cũ trùng tên Xã mới (như `"Huyện Nam Đàn"`) không bao giờ che khuất việc ánh xạ Xã cũ (`"Xã Khánh Sơn"` $\rightarrow$ `"Xã Thiên Nhẫn"`).
+> - Thao tác đồng bộ ID từ PostgreSQL (`RefreshResolverDBBindings`) được giới hạn tần suất (throttle) tối đa **1 lần mỗi 60 giây** để bảo vệ cơ sở dữ liệu.
 
 **Response (200 OK):**
 
@@ -4767,7 +4784,7 @@ transaction PostgreSQL. Không sử dụng Redis.
 |---|---|
 | **Endpoint** | `POST /api/v1/admin/locations/sync` |
 | **Auth** | 🔐 JWT + Admin |
-| **Use-case** | Kích hoạt thủ công chu trình đồng bộ địa giới hành chính đa phiên bản (`v1` pre-merger & `v2` post-merger) từ `provinces.open-api.vn` (tự động fallback sang embedded snapshot nếu API ngoài gặp sự cố) và xóa cache Redis |
+| **Use-case** | Kích hoạt thủ công chu trình đồng bộ địa giới hành chính đa phiên bản (`v1` pre-merger & `v2` post-merger) từ `provinces.open-api.vn` (được tuần tự hóa qua `syncMu`, giới hạn đọc `15 MB`, kiểm tra ngưỡng an toàn tối thiểu `MinExpectedProvinces = 34` và `MinExpectedSyncedWards = 1000`; tự động fallback sang embedded snapshot với `"source": "snapshot_fallback"` nếu API ngoài gặp sự cố hoặc trả mảng rỗng `[]`) và xóa cache Redis |
 
 **Request Body:** Không cần body.
 
@@ -6259,9 +6276,13 @@ sequenceDiagram
 - Kết quả tác vụ và bộ nhớ đệm trích xuất lưu **thuần túy trong RAM** (Zero-Disk: tuyệt đối không ghi ảnh tạm ra `/tmp/cccd_uploads` hay ổ cứng, không ghi DB), tự hết hạn tối đa sau **3 phút** (`3 * time.Minute`) và **tự động xóa ngay sau lần đọc hoàn tất đầu tiên (Single-Read Auto-Purge)** qua bộ dọn dẹp nền (60s ticker) kết hợp hết hạn lười O(1).
 - Khóa bộ nhớ đệm SHA-256 có phân tách phiên bản: `ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)` đảm bảo thay đổi model hoặc prompt sẽ vô hiệu hóa cache cũ ngay lập tức.
 - **Rate Limiting kép (Per-Account & Per-IP):** Các endpoint `/api/v1/cccd/upload` và `/api/v1/cccd/extract` được bảo vệ bởi `RateLimitByAccountAndIP` (tối đa **3 yêu cầu/phút**, burst **5** trên mỗi tài khoản và mỗi IP) nhằm ngăn chặn tấn công vét cạn hạn ngạch Gemini API.
-- **Tự động hủy tác vụ khi ngắt WebSocket:** Khi người dùng đóng toàn bộ kết nối WebSocket (`Hub.AddOnUserDisconnected`), hệ thống lập tức gọi `CancelUserTasks(userID)` để hủy context của các yêu cầu Gemini Vision đang chạy.
-- Chỉ **chủ sở hữu** (`account_id` trong JWT hoặc Guest ID âm từ vé tạm thời) mới tra cứu được tác vụ của mình.
-- **Quyền riêng tư (Nghị định 13/2023/NĐ-CP):**
+- **Thứ tự sự kiện WebSocket đơn điệu nghiêm ngặt (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`):** `WorkerPool.Enqueue` giữ chỗ hàng đợi qua `queueSlots` và phát `ocr_progress (QUEUED, 10%)` **trước** khi đẩy tác vụ vào `wp.queue`; đồng thời `emitEvent` kiểm tra thứ bậc `statusOrderRank` và `ws.Hub` chống nhân đôi sự kiện từ Redis Pub/Sub (`recordLocalOCRDispatch`) cũng như chặn các gói tin Redis có `data: null` ghi đè kết quả.
+- **Tự động hủy tác vụ khi ngắt WebSocket hoặc Slow-Client Eviction:** Khi kết nối WebSocket cuối cùng của người dùng đóng (kể cả khi bị trục xuất do đầy bộ đệm `Send` channel), hệ thống lập tức gọi `CancelUserTasks(userID)` (chỉ tác động lên `userID > 0` của chính người dùng đó) để hủy cả tác vụ đang xếp hàng trong `wp.queue` lẫn tác vụ đang gọi Gemini Vision.
+- **Cô lập quyền sở hữu tác vụ & Chống va chạm `X-Request-ID`:** Chỉ **chủ sở hữu** (`userID > 0` và khớp tuyệt đối `rec.UserID == userID`, hoặc Guest ID hợp lệ) mới tra cứu được tác vụ tại `GET /api/v1/cccd/jobs/:id` và `GetTaskStatus`; mọi truy vấn với `userID <= 0` đều bị từ chối. Nếu `X-Request-ID` gửi lên bị trùng với tác vụ đang tồn tại, server tự động sinh lại UUID mới để chống ghi đè/đọc trộm kết quả.
+- **Không tự suy diễn dữ liệu & Loại bỏ trường `invalid`:** Khi thẻ CCCD 12 số hoặc CMND 9 số bị mờ mục Giới tính, hệ thống giữ nguyên chuỗi rỗng `""` (tuyệt đối không tự suy đoán giới tính từ chữ số thứ 4 của mã CCCD 12 số). Các trường bị đánh dấu `Status == "invalid"` (ví dụ ngày sinh chỉ đọc được năm `"1999"`) được tự động lược bỏ qua `validFieldString` để không làm lỗi toàn bộ các trường hợp lệ còn lại.
+- **Quyền riêng tư (Nghị định 13/2023/NĐ-CP) & Bảo mật Khóa AI:**
+  - Khóa `GEMINI_API_KEY` chỉ được truyền qua HTTP header `x-goog-api-key` (không gắn `?key=...` lên URL) để tránh lộ khóa trong `*url.Error` khi timeout.
+  - Mọi thông báo lỗi trong sự kiện `ocr_failed` đều đi qua bộ lọc `sanitizeWorkerError`, ẩn toàn bộ URL nội bộ, khóa bí mật, lỗi mạng/hệ thống và trả về thông điệp tiếng Việt an toàn.
   - Server chỉ log `request_id`, `error_code`, `decision`, `type_new`, `elapsed_ms` — tuyệt đối không log số giấy tờ, họ tên, ngày sinh, địa chỉ.
   - Trên kênh Redis Pub/Sub `cccd:ocr_events`, trường `data` luôn bị xóa (`Data: nil`); Redis chỉ phát tín hiệu trạng thái (`task_id`, `status`, `progress`), còn dữ liệu PII chỉ truyền trực tiếp qua kết nối WebSocket định danh của chính người dùng.
 

@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -705,5 +706,229 @@ func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) 
 	}
 	if builtCCCD.Data.Religion.Value == nil || *builtCCCD.Data.Religion.Value != "Không" {
 		t.Fatalf("expected Religion='Không' on 12-digit CCCD, got %+v", builtCCCD.Data.Religion)
+	}
+}
+
+type gatedExtractor struct {
+	started chan struct{}
+	release chan struct{}
+	raw     entities.RawExtraction
+}
+
+func (g *gatedExtractor) Extract(_ context.Context, _ entities.PreparedImage, _ []string) (entities.RawExtraction, error) {
+	select {
+	case g.started <- struct{}{}:
+	default:
+	}
+	<-g.release
+	return g.raw, nil
+}
+
+// H-03: Verify User B cannot hijack User A's in-flight job by supplying the same X-Request-ID,
+// and GetJob rejects userID <= 0.
+func TestService_H03_CrossUserRequestIDHijackAndZeroUserID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gated := &gatedExtractor{
+		started: make(chan struct{}, 2),
+		release: make(chan struct{}),
+		raw:     rawCCCDFront(),
+	}
+	cfg := testConfig()
+	cfg.MaxConcurrency = 1
+	svc := cccd.NewService(gated, cfg, func() time.Time { return testToday })
+	svc.StartWorkers(ctx)
+
+	imgBytes := makeJPEGBytes(t, 600, 400)
+
+	// 1. User A (777) enqueues with client-supplied requestID "shared-req-id"
+	recA, err := svc.EnqueueAsync(777, imgBytes, "shared-req-id")
+	if err != nil {
+		t.Fatalf("User A EnqueueAsync failed: %v", err)
+	}
+
+	// Wait for User A's worker to start processing
+	select {
+	case <-gated.started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for User A job to start")
+	}
+
+	// 2. GetJob with userID <= 0 must be rejected
+	if _, ok := svc.GetJob(recA.RequestID, 0); ok {
+		t.Fatalf("expected GetJob with userID=0 to be rejected, but it succeeded")
+	}
+	if _, ok := svc.GetJob(recA.RequestID, -1); ok {
+		t.Fatalf("expected GetJob with userID=-1 to be rejected, but it succeeded")
+	}
+
+	// 3. User B (888) attempts to collide with "shared-req-id" while User A's job is in flight
+	recB, err := svc.EnqueueAsync(888, imgBytes, "shared-req-id")
+	if err != nil {
+		t.Fatalf("User B EnqueueAsync failed: %v", err)
+	}
+	if recB.RequestID == recA.RequestID {
+		t.Fatalf("expected colliding requestID from User B to be regenerated, but both got %q", recB.RequestID)
+	}
+
+	// Release workers and verify User A still owns "shared-req-id"
+	close(gated.release)
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if jobA, ok := svc.GetJob(recA.RequestID, 777); ok && jobA.Status == "completed" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected User A (777) to retain ownership and retrieve completed job %q", recA.RequestID)
+}
+
+// H-05a: Verify GeminiExtractor never puts GEMINI_API_KEY in the URL query string (?key=)
+// or leaks it in returned errors when a network failure occurs.
+func TestGeminiExtractor_H05_DoesNotLeakAPIKeyInURLOrError(t *testing.T) {
+	const secretAPIKey = "AIzaSySyntheticTestSecretKey987654"
+	var capturedURL string
+	var capturedHeaderKey string
+
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			capturedURL = r.URL.String()
+			capturedHeaderKey = r.Header.Get("x-goog-api-key")
+			return nil, context.DeadlineExceeded
+		}),
+	}
+
+	cfg := cccd.DefaultConfig()
+	cfg.GeminiAPIKey = secretAPIKey
+	cfg.GeminiMaxRetries = 0
+
+	ext, err := cccd.NewGeminiExtractor(cfg)
+	if err != nil {
+		t.Fatalf("NewGeminiExtractor failed: %v", err)
+	}
+	ext.SetHTTPClient(mockClient)
+
+	_, extractErr := ext.Extract(context.Background(), entities.PreparedImage{
+		Data:   []byte("fake-jpeg"),
+		Mime:   "image/jpeg",
+		Width:  600,
+		Height: 400,
+	}, nil)
+	if extractErr == nil {
+		t.Fatal("expected error from failing transport")
+	}
+
+	if strings.Contains(capturedURL, secretAPIKey) || strings.Contains(capturedURL, "key=") {
+		t.Fatalf("expected request URL NOT to contain API key query parameter, got URL: %s", capturedURL)
+	}
+	if capturedHeaderKey != secretAPIKey {
+		t.Fatalf("expected x-goog-api-key header to be set, got %q", capturedHeaderKey)
+	}
+	if strings.Contains(extractErr.Error(), secretAPIKey) {
+		t.Fatalf("expected returned error NOT to contain secret API key, got: %v", extractErr)
+	}
+}
+
+// H-06a: Verify Service.CancelUserTasks(0) does not cancel other users' active jobs.
+func TestService_H06_CancelUserTasksZeroDoesNotCancelOtherUsers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	blockExt := &blockingExtractor{
+		started:   make(chan struct{}, 1),
+		cancelled: make(chan error, 1),
+	}
+	svc := cccd.NewService(blockExt, testConfig(), func() time.Time { return testToday })
+	svc.StartWorkers(ctx)
+
+	if _, err := svc.EnqueueAsync(777, makeJPEGBytes(t, 600, 400), ""); err != nil {
+		t.Fatalf("EnqueueAsync failed: %v", err)
+	}
+	select {
+	case <-blockExt.started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for worker to start")
+	}
+
+	// Calling CancelUserTasks(0) or CancelUserTasks(-1) must be a no-op
+	svc.CancelUserTasks(0)
+	svc.CancelUserTasks(-1)
+
+	select {
+	case err := <-blockExt.cancelled:
+		t.Fatalf("CancelUserTasks(0/-1) wrongly cancelled User 777's job: %v", err)
+	case <-time.After(50 * time.Millisecond):
+		// Pass: User 777's job was not cancelled
+	}
+}
+
+// H-08b: Verify EnqueueAsync cleans up s.jobs when s.jobQueue is full (no leaked job record).
+func TestService_H08_EnqueueAsyncQueueFullDoesNotLeakJobRecord(t *testing.T) {
+	// Do NOT start workers so jobQueue (capacity 128) fills up
+	svc, _ := makeService(testConfig(), rawCCCDFront())
+	imgBytes := makeJPEGBytes(t, 300, 200)
+
+	for i := 0; i < 128; i++ {
+		if _, err := svc.EnqueueAsync(777, imgBytes, ""); err != nil {
+			t.Fatalf("enqueue %d failed unexpectedly: %v", i, err)
+		}
+	}
+
+	// 129th enqueue must fail because queue is full
+	_, err := svc.EnqueueAsync(777, imgBytes, "overflow-req-id")
+	if err == nil {
+		t.Fatal("expected 129th EnqueueAsync to fail when queue is full")
+	}
+
+	// "overflow-req-id" must NOT remain leaked in s.jobs
+	if _, ok := svc.GetJob("overflow-req-id", 777); ok {
+		t.Fatalf("expected failed EnqueueAsync (queue full) not to leak 'overflow-req-id' in s.jobs")
+	}
+}
+
+// H-10: Verify Service.Process (?sync=true) respects ctx.Done() when semaphore s.sem is full.
+func TestService_H10_ProcessRespectsContextWhenSemaphoreFull(t *testing.T) {
+	blockExt := &blockingExtractor{
+		started:   make(chan struct{}, 2),
+		cancelled: make(chan error, 2),
+	}
+	cfg := testConfig()
+	cfg.MaxConcurrency = 1
+	svc := cccd.NewService(blockExt, cfg, func() time.Time { return testToday })
+
+	imgBytes := makeJPEGBytes(t, 600, 400)
+	imgBytes2 := makeJPEGBytes(t, 640, 420)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	go func() {
+		_ = svc.Process(ctx1, imgBytes, "slot-holder")
+	}()
+
+	select {
+	case <-blockExt.started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for first Process to occupy s.sem")
+	}
+
+	// Second Process call with a 30ms timeout while s.sem is full must return promptly without deadlocking
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel2()
+
+	doneCh := make(chan *cccd.ErrorCode, 1)
+	go func() {
+		resp := svc.Process(ctx2, imgBytes2, "waiting-on-sem")
+		code := cccd.ErrorCode(resp.ErrorCode)
+		doneCh <- &code
+	}()
+
+	select {
+	case code := <-doneCh:
+		if *code != cccd.ErrCodeExtractionTimeout {
+			t.Fatalf("expected ErrCodeExtractionTimeout when ctx expires waiting for s.sem, got %d", *code)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("Service.Process blocked on s.sem ignoring ctx.Done()!")
 	}
 }

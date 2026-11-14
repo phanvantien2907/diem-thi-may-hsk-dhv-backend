@@ -115,7 +115,7 @@ func (h *Handler) MergeWard(c *gin.Context) {
 		return
 	}
 	if err := utils.Validate.Struct(req); err != nil {
-		utils.BadRequest(c, err.Error())
+		utils.BadRequest(c, "Dữ liệu gộp xã/phường không hợp lệ")
 		return
 	}
 
@@ -141,4 +141,3 @@ func (h *Handler) ClearCache(c *gin.Context) {
 	}
 	utils.OK(c, gin.H{"message": "Đã làm mới bộ nhớ đệm địa điểm"})
 }
-

@@ -181,4 +181,3 @@ func TestService_ClearCache(t *testing.T) {
 		t.Fatalf("unexpected error with nil cache: %v", err)
 	}
 }
-

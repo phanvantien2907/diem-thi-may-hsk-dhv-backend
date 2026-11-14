@@ -152,4 +152,3 @@ func (h *Handler) GetJobStatus(c *gin.Context) {
 	}
 	utils.OK(c, ToAsyncJobResponseDTO(job))
 }
-

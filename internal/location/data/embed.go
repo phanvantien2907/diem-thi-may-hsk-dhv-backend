@@ -16,4 +16,3 @@ var V2ProvincesSnapshotJSON []byte
 //
 //go:embed v2_wards_snapshot.json
 var V2WardsSnapshotJSON []byte
-

@@ -101,4 +101,3 @@ func (ts *TicketStore) sweepExpiredLocked(now time.Time) {
 		}
 	}
 }
-

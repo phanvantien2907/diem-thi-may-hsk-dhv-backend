@@ -176,4 +176,3 @@ func (h *UploadHandler) GetTaskStatus(taskID string, userID int64) (models.OCREv
 	}
 	return h.workerPool.GetTaskStatus(taskID, userID)
 }
-

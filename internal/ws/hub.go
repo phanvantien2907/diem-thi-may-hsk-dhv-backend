@@ -85,6 +85,10 @@ type Hub struct {
 	tickets             *TicketStore
 	onUserDisconnected  func(userID int64)
 	disconnectListeners []func(userID int64)
+	stopCh              chan struct{}
+	stopOnce            sync.Once
+	recentOCRDispMu     sync.Mutex
+	recentOCRDispatched map[string]time.Time
 }
 
 // SetOnUserDisconnected registers a callback invoked when all WebSocket connections for a user are closed.
@@ -107,16 +111,25 @@ func (h *Hub) AddOnUserDisconnected(fn func(userID int64)) {
 // NewHub creates and initializes a new Hub with a built-in TicketStore and throttle buffer.
 func NewHub() *Hub {
 	return &Hub{
-		clients:        make(map[*Client]struct{}),
-		userClients:    make(map[int64][]*Client),
-		roleClients:    make(map[string]map[*Client]struct{}),
-		broadcast:      make(chan []byte, 512),
-		register:       make(chan *Client, 128),
-		unregister:     make(chan *Client, 128),
-		throttleQueue:  make(map[string]throttledItem),
-		throttleWindow: DefaultThrottleWindow,
-		tickets:        NewTicketStore(),
+		clients:             make(map[*Client]struct{}),
+		userClients:         make(map[int64][]*Client),
+		roleClients:         make(map[string]map[*Client]struct{}),
+		broadcast:           make(chan []byte, 512),
+		register:            make(chan *Client, 128),
+		unregister:          make(chan *Client, 128),
+		throttleQueue:       make(map[string]throttledItem),
+		throttleWindow:      DefaultThrottleWindow,
+		tickets:             NewTicketStore(),
+		stopCh:              make(chan struct{}),
+		recentOCRDispatched: make(map[string]time.Time),
 	}
+}
+
+// Stop signals the Hub's Run loop to exit cleanly.
+func (h *Hub) Stop() {
+	h.stopOnce.Do(func() {
+		close(h.stopCh)
+	})
 }
 
 // TicketStore returns the Hub's one-time ticket manager.
@@ -262,6 +275,9 @@ func (h *Hub) Run() {
 
 	for {
 		select {
+		case <-h.stopCh:
+			return
+
 		case client := <-h.register:
 			h.RegisterClient(client)
 
@@ -277,8 +293,37 @@ func (h *Hub) Run() {
 	}
 }
 
+func (h *Hub) notifyDisconnectedUsers(userIDs []int64) {
+	if len(userIDs) == 0 {
+		return
+	}
+	h.mu.RLock()
+	onDisconnect := h.onUserDisconnected
+	var listeners []func(userID int64)
+	if len(h.disconnectListeners) > 0 {
+		listeners = make([]func(userID int64), len(h.disconnectListeners))
+		copy(listeners, h.disconnectListeners)
+	}
+	h.mu.RUnlock()
+
+	for _, uid := range userIDs {
+		if uid <= 0 {
+			continue
+		}
+		if onDisconnect != nil {
+			onDisconnect(uid)
+		}
+		for _, fn := range listeners {
+			if fn != nil {
+				fn(uid)
+			}
+		}
+	}
+}
+
 func (h *Hub) dispatchBroadcastBytes(message []byte) {
 	var slowClients []*Client
+	var disconnectedUsers []int64
 
 	h.mu.Lock()
 	for client := range h.clients {
@@ -286,7 +331,9 @@ func (h *Hub) dispatchBroadcastBytes(message []byte) {
 		case client.send <- message:
 		default:
 			// Client send channel buffer (256) is full -> drop slow client immediately
-			h.removeClientLocked(client)
+			if h.removeClientLocked(client) && client.UserID > 0 && len(h.userClients[client.UserID]) == 0 {
+				disconnectedUsers = append(disconnectedUsers, client.UserID)
+			}
 			slowClients = append(slowClients, client)
 		}
 	}
@@ -297,6 +344,7 @@ func (h *Hub) dispatchBroadcastBytes(message []byte) {
 			_ = sc.conn.Close()
 		}
 	}
+	h.notifyDisconnectedUsers(disconnectedUsers)
 }
 
 func marshalEvent(eventType EventType, payload interface{}) ([]byte, bool) {
@@ -371,8 +419,10 @@ func (h *Hub) SendToUser(userID int64, eventType EventType, payload interface{})
 	if !ok {
 		return
 	}
+	h.recordLocalOCRDispatch(eventType, data)
 
 	var slowClients []*Client
+	var disconnectedUsers []int64
 
 	h.mu.Lock()
 	conns := h.userClients[userID]
@@ -388,7 +438,9 @@ func (h *Hub) SendToUser(userID int64, eventType EventType, payload interface{})
 		select {
 		case client.send <- data:
 		default:
-			h.removeClientLocked(client)
+			if h.removeClientLocked(client) && client.UserID > 0 && len(h.userClients[client.UserID]) == 0 {
+				disconnectedUsers = append(disconnectedUsers, client.UserID)
+			}
 			slowClients = append(slowClients, client)
 		}
 	}
@@ -399,6 +451,7 @@ func (h *Hub) SendToUser(userID int64, eventType EventType, payload interface{})
 			_ = sc.conn.Close()
 		}
 	}
+	h.notifyDisconnectedUsers(disconnectedUsers)
 }
 
 // SendToUsers pushes an event to all active WebSocket connections belonging to any user in userIDs.
@@ -412,6 +465,7 @@ func (h *Hub) SendToUsers(userIDs []int64, eventType EventType, payload interfac
 	}
 
 	var slowClients []*Client
+	var disconnectedUsers []int64
 
 	h.mu.Lock()
 	seen := make(map[int64]struct{}, len(userIDs))
@@ -433,7 +487,9 @@ func (h *Hub) SendToUsers(userIDs []int64, eventType EventType, payload interfac
 			select {
 			case client.send <- data:
 			default:
-				h.removeClientLocked(client)
+				if h.removeClientLocked(client) && client.UserID > 0 && len(h.userClients[client.UserID]) == 0 {
+					disconnectedUsers = append(disconnectedUsers, client.UserID)
+				}
 				slowClients = append(slowClients, client)
 			}
 		}
@@ -445,6 +501,7 @@ func (h *Hub) SendToUsers(userIDs []int64, eventType EventType, payload interfac
 			_ = sc.conn.Close()
 		}
 	}
+	h.notifyDisconnectedUsers(disconnectedUsers)
 }
 
 // SendToRole pushes an event to all active WebSocket connections matching the given role.
@@ -458,6 +515,7 @@ func (h *Hub) SendToRole(role string, eventType EventType, payload interface{}) 
 	}
 
 	var slowClients []*Client
+	var disconnectedUsers []int64
 
 	h.mu.Lock()
 	conns, exists := h.roleClients[role]
@@ -469,7 +527,9 @@ func (h *Hub) SendToRole(role string, eventType EventType, payload interface{}) 
 		select {
 		case client.send <- data:
 		default:
-			h.removeClientLocked(client)
+			if h.removeClientLocked(client) && client.UserID > 0 && len(h.userClients[client.UserID]) == 0 {
+				disconnectedUsers = append(disconnectedUsers, client.UserID)
+			}
 			slowClients = append(slowClients, client)
 		}
 	}
@@ -480,6 +540,7 @@ func (h *Hub) SendToRole(role string, eventType EventType, payload interface{}) 
 			_ = sc.conn.Close()
 		}
 	}
+	h.notifyDisconnectedUsers(disconnectedUsers)
 }
 
 // DisconnectUser immediately ranges over and terminates all active WebSocket connections
@@ -552,6 +613,53 @@ func (h *Hub) UserConnectionCount(userID int64) int {
 	return len(h.userClients[userID])
 }
 
+func (h *Hub) recordLocalOCRDispatch(eventType EventType, marshaled []byte) {
+	switch eventType {
+	case EventOCRProgress, EventOCRCompleted, EventOCRFailed, EventType("ocr_back_completed"):
+	default:
+		return
+	}
+	var env struct {
+		Payload struct {
+			TaskID string `json:"task_id"`
+			Status string `json:"status"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(marshaled, &env); err != nil || env.Payload.TaskID == "" {
+		return
+	}
+	now := time.Now()
+	key := string(eventType) + ":" + env.Payload.TaskID + ":" + env.Payload.Status
+	h.recentOCRDispMu.Lock()
+	if len(h.recentOCRDispatched) > 1024 {
+		for k, ts := range h.recentOCRDispatched {
+			if now.Sub(ts) > 3*time.Minute {
+				delete(h.recentOCRDispatched, k)
+			}
+		}
+	}
+	h.recentOCRDispatched[key] = now
+	h.recentOCRDispMu.Unlock()
+}
+
+func (h *Hub) wasOCRDispatchedLocally(event, taskID, status string) bool {
+	if taskID == "" {
+		return false
+	}
+	key := event + ":" + taskID + ":" + status
+	h.recentOCRDispMu.Lock()
+	defer h.recentOCRDispMu.Unlock()
+	ts, exists := h.recentOCRDispatched[key]
+	if !exists {
+		return false
+	}
+	if time.Since(ts) > 3*time.Minute {
+		delete(h.recentOCRDispatched, key)
+		return false
+	}
+	return true
+}
+
 // ListenRedisPubSub subscribes to Redis Pub/Sub channels (e.g. cccd:ocr_events) and forwards
 // incoming real-time OCR and system events to target user connections via SendToUser.
 func (h *Hub) ListenRedisPubSub(ctx context.Context, pubsub *redis.PubSub) {
@@ -585,6 +693,17 @@ func (h *Hub) ListenRedisPubSub(ctx context.Context, pubsub *redis.PubSub) {
 			}
 			if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
 				log.Printf("[ws.hub] redis pubsub unmarshal error: %v (raw: %s)", err, msg.Payload)
+				continue
+			}
+
+			// Never clobber WebSocket clients with a Zero-PII (Data: nil) completion signal from Redis,
+			// and never re-send an OCR event that was already dispatched locally on this Hub instance.
+			if envelope.Event == string(EventOCRCompleted) || envelope.Event == "ocr_back_completed" {
+				if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+					continue
+				}
+			}
+			if h.wasOCRDispatchedLocally(envelope.Event, envelope.TaskID, envelope.Status) {
 				continue
 			}
 
