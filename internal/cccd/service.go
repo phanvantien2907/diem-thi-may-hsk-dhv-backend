@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	defaultJobTTL   = 10 * time.Minute
-	defaultCacheTTL = 15 * time.Minute
+	defaultJobTTL     = 3 * time.Minute // Strict max 3-minute TTL for ephemeral OCR results (Decree 13/2023)
+	defaultCacheTTL   = 3 * time.Minute // Strict max 3-minute TTL for in-memory deduplication cache
+	janitorTickPeriod = 60 * time.Second
 )
 
 type cachedBuildResult struct {
@@ -40,18 +41,46 @@ type asyncTask struct {
 	imageBytes []byte
 }
 
+type activeJobCancel struct {
+	userID int64
+	cancel context.CancelFunc
+}
+
+// ComputeCacheKey computes a versioned SHA-256 cache key over the raw image bytes,
+// the active Gemini model name, the prompt version hash, and the second-pass flag:
+// cache_key = sha256(image_bytes + model_name + prompt_version_hash + second_pass_flag).
+func ComputeCacheKey(imageBytes []byte, modelName string, promptVersionHash string, secondPassFlag bool) string {
+	h := sha256.New()
+	h.Write(imageBytes)
+	h.Write([]byte("|model=" + NormalizeGeminiModelName(modelName)))
+	if promptVersionHash == "" {
+		promptVersionHash = PromptVersionHash()
+	}
+	h.Write([]byte("|prompt=" + promptVersionHash))
+	if secondPassFlag {
+		h.Write([]byte("|second_pass=true"))
+	} else {
+		h.Write([]byte("|second_pass=false"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Service orchestrates image preprocessing, 2-pass Gemini extraction, cross-validation,
 // and asynchronous worker execution with real-time WebSocket push notifications.
 type Service struct {
-	extractor IdCardExtractor
-	cfg       Config
-	todayFn   func() time.Time
-	sem       chan struct{}
-	hub       *ws.Hub
+	extractor         IdCardExtractor
+	cfg               Config
+	promptVersionHash string
+	todayFn           func() time.Time
+	sem               chan struct{}
+	hub               *ws.Hub
 
 	jobQueue chan asyncTask
 	jobsMu   sync.RWMutex
 	jobs     map[string]*entities.AsyncJobRecord
+
+	cancelsMu     sync.Mutex
+	activeCancels map[string]activeJobCancel
 
 	dedupMu  sync.Mutex
 	cache    map[string]cachedBuildResult
@@ -70,15 +99,24 @@ func NewService(extractor IdCardExtractor, cfg Config, todayFn func() time.Time)
 		}
 	}
 	return &Service{
-		extractor: extractor,
-		cfg:       cfg,
-		todayFn:   todayFn,
-		sem:       make(chan struct{}, cfg.MaxConcurrency),
-		jobQueue:  make(chan asyncTask, 128),
-		jobs:      make(map[string]*entities.AsyncJobRecord),
-		cache:     make(map[string]cachedBuildResult),
-		inflight:  make(map[string]*inflightExtraction),
+		extractor:         extractor,
+		cfg:               cfg,
+		promptVersionHash: PromptVersionHash(),
+		todayFn:           todayFn,
+		sem:               make(chan struct{}, cfg.MaxConcurrency),
+		jobQueue:          make(chan asyncTask, 128),
+		jobs:              make(map[string]*entities.AsyncJobRecord),
+		activeCancels:     make(map[string]activeJobCancel),
+		cache:             make(map[string]cachedBuildResult),
+		inflight:          make(map[string]*inflightExtraction),
 	}
+}
+
+// SetPromptVersionHash overrides the active prompt version hash used for cache key computation.
+func (s *Service) SetPromptVersionHash(hash string) {
+	s.dedupMu.Lock()
+	s.promptVersionHash = hash
+	s.dedupMu.Unlock()
 }
 
 // Config returns the service's active configuration.
@@ -86,12 +124,16 @@ func (s *Service) Config() Config {
 	return s.cfg
 }
 
-// SetHub attaches the WebSocket Hub so completed async extraction jobs are pushed to the user in real time.
+// SetHub attaches the WebSocket Hub so completed async extraction jobs are pushed to the user in real time,
+// and registers a disconnect hook to cancel in-flight OCR tasks when the user disconnects.
 func (s *Service) SetHub(hub *ws.Hub) {
 	s.hub = hub
+	if hub != nil {
+		hub.AddOnUserDisconnected(s.CancelUserTasks)
+	}
 }
 
-// StartWorkers launches background goroutine workers that process queued CCCD extraction jobs.
+// StartWorkers launches background goroutine workers and the 60s background janitor ticker.
 func (s *Service) StartWorkers(ctx context.Context) {
 	workerCount := s.cfg.MaxConcurrency
 	if workerCount <= 0 {
@@ -99,6 +141,57 @@ func (s *Service) StartWorkers(ctx context.Context) {
 	}
 	for i := 0; i < workerCount; i++ {
 		go s.workerLoop(ctx)
+	}
+	go s.janitorLoop(ctx)
+}
+
+func (s *Service) janitorLoop(ctx context.Context) {
+	ticker := time.NewTicker(janitorTickPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.evictExpired(now.UTC())
+		}
+	}
+}
+
+func (s *Service) evictExpired(now time.Time) {
+	s.jobsMu.Lock()
+	for id, rec := range s.jobs {
+		if now.Sub(rec.CreatedAt) > defaultJobTTL {
+			delete(s.jobs, id)
+		}
+	}
+	s.jobsMu.Unlock()
+
+	s.dedupMu.Lock()
+	for k, entry := range s.cache {
+		if now.After(entry.expiresAt) {
+			delete(s.cache, k)
+		}
+	}
+	s.dedupMu.Unlock()
+}
+
+// CancelUserTasks cancels all in-flight asynchronous OCR tasks belonging to userID.
+func (s *Service) CancelUserTasks(userID int64) {
+	s.cancelsMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.activeCancels))
+	for reqID, entry := range s.activeCancels {
+		if userID <= 0 || entry.userID == userID {
+			if entry.cancel != nil {
+				cancels = append(cancels, entry.cancel)
+			}
+			delete(s.activeCancels, reqID)
+		}
+	}
+	s.cancelsMu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
 	}
 }
 
@@ -114,10 +207,27 @@ func (s *Service) workerLoop(ctx context.Context) {
 			}
 			jobCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 
+			s.cancelsMu.Lock()
+			s.activeCancels[task.requestID] = activeJobCancel{
+				userID: task.userID,
+				cancel: cancel,
+			}
+			s.cancelsMu.Unlock()
+
 			started := time.Now()
 			result, err := s.run(jobCtx, task.imageBytes)
 			elapsed := time.Since(started).Milliseconds()
 			cancel()
+
+			// Zero out in-memory image slice immediately after processing
+			for i := range task.imageBytes {
+				task.imageBytes[i] = 0
+			}
+			task.imageBytes = nil
+
+			s.cancelsMu.Lock()
+			delete(s.activeCancels, task.requestID)
+			s.cancelsMu.Unlock()
 
 			now := time.Now().UTC()
 			var wsPayload *response.IdCardResponseDTO
@@ -167,6 +277,9 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 		mb := float64(s.cfg.MaxUploadBytes) / (1024.0 * 1024.0)
 		return nil, NewPipelineError(ErrCodeFileTooLarge, fmt.Sprintf("Ảnh vượt quá %g MB", mb))
 	}
+	if _, _, err := ValidateImageMagicBytes(imageBytes); err != nil {
+		return nil, err
+	}
 	if requestID == "" {
 		requestID = generateRequestID()
 	}
@@ -180,8 +293,8 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 		UpdatedAt: now,
 	}
 
+	// O(1) write without full-map scan (cleanup handled lazily on GetJob + 60s janitor ticker)
 	s.jobsMu.Lock()
-	s.sweepExpiredJobsLocked(now)
 	s.jobs[requestID] = rec
 	s.jobsMu.Unlock()
 
@@ -198,28 +311,29 @@ func (s *Service) EnqueueAsync(userID int64, imageBytes []byte, requestID string
 	}
 }
 
-// GetJob retrieves an AsyncJobRecord by requestID, enforcing user ownership when userID > 0.
+// GetJob retrieves an AsyncJobRecord by requestID, enforcing user ownership when userID > 0,
+// O(1) lazy expiration (max 3-minute TTL), and single-read auto-purge for completed/failed jobs.
 func (s *Service) GetJob(requestID string, userID int64) (*entities.AsyncJobRecord, bool) {
-	s.jobsMu.RLock()
-	defer s.jobsMu.RUnlock()
+	now := time.Now().UTC()
+	s.jobsMu.Lock()
+	defer s.jobsMu.Unlock()
 
 	rec, exists := s.jobs[requestID]
 	if !exists {
+		return nil, false
+	}
+	if now.Sub(rec.CreatedAt) > defaultJobTTL {
+		delete(s.jobs, requestID)
 		return nil, false
 	}
 	if userID > 0 && rec.UserID > 0 && rec.UserID != userID {
 		return nil, false
 	}
 	copyRec := *rec
-	return &copyRec, true
-}
-
-func (s *Service) sweepExpiredJobsLocked(now time.Time) {
-	for id, rec := range s.jobs {
-		if now.Sub(rec.CreatedAt) > defaultJobTTL {
-			delete(s.jobs, id)
-		}
+	if rec.Status == enum.JobStatusCompleted || rec.Status == enum.JobStatusFailed {
+		delete(s.jobs, requestID)
 	}
+	return &copyRec, true
 }
 
 // Process executes the full ID card extraction and cross-validation pipeline synchronously.
@@ -252,6 +366,15 @@ func (s *Service) Process(ctx context.Context, imageBytes []byte, requestID stri
 	return ToIdCardResponseDTO(result, requestID, elapsed)
 }
 
+func (s *Service) activeModelName() string {
+	if mn, ok := s.extractor.(ModelNamedExtractor); ok {
+		if m := mn.ModelName(); m != "" {
+			return m
+		}
+	}
+	return NormalizeGeminiModelName(s.cfg.GeminiModel)
+}
+
 func (s *Service) run(ctx context.Context, imageBytes []byte) (*entities.BuildResult, error) {
 	prepared, err := PrepareImage(imageBytes, s.cfg)
 	if err != nil {
@@ -261,20 +384,18 @@ func (s *Service) run(ctx context.Context, imageBytes []byte) (*entities.BuildRe
 		return nil, NewPipelineError(ErrCodeExtractionFailed, "Dịch vụ đọc giấy tờ chưa được cấu hình")
 	}
 
-	hashSum := sha256.Sum256(imageBytes)
-	cacheKey := fmt.Sprintf("%x:%t", hashSum, s.cfg.SecondPassOnConflict)
-
 	now := time.Now()
 	s.dedupMu.Lock()
-	for k, entry := range s.cache {
-		if now.After(entry.expiresAt) {
-			delete(s.cache, k)
+	cacheKey := ComputeCacheKey(imageBytes, s.activeModelName(), s.promptVersionHash, s.cfg.SecondPassOnConflict)
+
+	// O(1) lazy expiration check on the requested key (no full-map loop on hot path)
+	if cached, ok := s.cache[cacheKey]; ok {
+		if now.Before(cached.expiresAt) {
+			s.dedupMu.Unlock()
+			log.Printf("[cccd.pipeline] cache hit (sha256=%s) - saved Gemini API tokens", cacheKey[:12])
+			return cached.result, nil
 		}
-	}
-	if cached, ok := s.cache[cacheKey]; ok && now.Before(cached.expiresAt) {
-		s.dedupMu.Unlock()
-		log.Printf("[cccd.pipeline] cache hit (sha256=%s) - saved Gemini API tokens", cacheKey[:12])
-		return cached.result, nil
+		delete(s.cache, cacheKey)
 	}
 	if flight, ok := s.inflight[cacheKey]; ok {
 		s.dedupMu.Unlock()

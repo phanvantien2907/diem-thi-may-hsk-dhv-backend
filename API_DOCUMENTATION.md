@@ -3,10 +3,18 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.2.10
+> **Phiên bản:** v1.2.11
 > **Cập nhật lần cuối:** 2026-11-14
 
 ## Changelog
+
+### v1.2.11 (2026-11-14)
+- 🔒 **Security, Privacy (Nghị định 13/2023/NĐ-CP) & OCR Accuracy Hardening**:
+  - **Patch 1 — Ambiguity-Safe Address Fuzzy Matching (`address_resolver.go`)**: Bổ sung hàm chấm điểm bảo toàn dấu tiếng Việt `CombinedAddressScore` ($0.65 \times \text{normalized} + 0.35 \times \text{diacritic}$) để phân biệt chính xác các đơn vị hành chính chỉ khác dấu thanh/dấu mũ (`"Thanh"` vs `"Thạnh"`). Triển khai **Ambiguity Gate** ($\Delta < 0.05$ giữa 2 ứng viên đứng đầu đạt ngưỡng): tuyệt đối không tự động chọn mù mà trả về `status: "requires_confirmation"` kèm danh sách `candidates: [...]` (`address_resolution_status` & `address_candidates` trong `OCRResultData`) để người dùng chủ động xác nhận trên giao diện.
+  - **Patch 2 — Magic-Byte Upload Validation & Zero-Disk In-Memory Processing**: Kiểm tra 512 byte đầu bằng `http.DetectContentType` kết hợp `image.DecodeConfig` (`image/jpeg`, `image/png`, `image/gif`), chặn đứng mọi file giả mạo phần mở rộng (`.exe`/`.html`/script đổi tên thành `.jpg`) ngay từ HTTP 400. Loại bỏ hoàn toàn việc ghi file tạm ra `/tmp/cccd_uploads`; toàn bộ luồng upload và worker xử lý ảnh `[]byte` thuần túy trong RAM.
+  - **Patch 3 — Cache Key Versioning, O(1) Eviction, 3-Minute TTL & Zero-PII Redis Pub/Sub**: Khóa cache SHA-256 bao gồm đầy đủ `ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)`. Thay thế cơ chế quét tuyến tính O(N) bằng hết hạn lười O(1) + goroutine dọn dẹp nền mỗi 60 giây. Giảm TTL lưu giữ kết quả OCR/job trong RAM xuống tối đa **3 phút** và tự động xóa ngay sau lần đọc hoàn tất đầu tiên (**Single-Read Auto-Purge**). Trên kênh Redis Pub/Sub `cccd:ocr_events`, loại bỏ hoàn toàn PII (`Data: nil`), chỉ phát tín hiệu tiến trình (`task_id`, `status`, `progress`), còn dữ liệu trích xuất chỉ truyền trực tiếp qua kết nối WebSocket định danh của chính người dùng.
+  - **Patch 4 — Subsystem Hardening (WS Cancel, Bounded Sync Reader & Account+IP Rate Limit)**: Tự động hủy ngay lập tức tác vụ Gemini OCR đang chạy khi người dùng ngắt mọi kết nối WebSocket (`Hub.AddOnUserDisconnected` $\rightarrow$ `CancelUserTasks`); giới hạn đọc phản hồi HTTP tối đa 15 MB (`io.LimitReader`) trong `internal/location/sync.go`; áp dụng Rate Limit kép theo cả `account_id` và địa chỉ IP (`RateLimitByAccountAndIP`: 3 req/phút, burst 5) cho `/api/v1/cccd/upload` và `/api/v1/cccd/extract`.
+  - **Patch 5 — Synthetic Test & Documentation Data Audit**: Chuẩn hóa toàn bộ dữ liệu mẫu trong test suite (`*_test.go`) và tài liệu API sang dữ liệu giả lập chuẩn (`123456789`, `001099000001`, `040203000001`, `NGUYỄN VĂN A`, `TRẦN THỊ B`, `LÊ VĂN C`, `阮文A`).
 
 ### v1.2.10 (2026-11-14)
 - 🌍 **Dual-Version Geospatial Cron Synchronization (`GeospatialSyncCron` & Offline Snapshots)**:
@@ -278,7 +286,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 
 ```json
 {
-  "cccd": "012345678901",
+  "cccd": "001099000001",
   "phone": "0901234567",
   "full_name": "Nguyễn Văn A",
   "email": "nguyenvana@email.com",
@@ -302,7 +310,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
   "data": {
     "account": {
       "id": 1,
-      "username": "012345678901",
+      "username": "001099000001",
       "full_name": "Nguyễn Văn A",
       "email": "nguyenvana@email.com",
       "phone": "0901234567",
@@ -340,7 +348,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 
 ```json
 {
-  "identifier": "012345678901",
+  "identifier": "001099000001",
   "password": "Abc@1234"
 }
 ```
@@ -556,7 +564,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
   "success": true,
   "data": {
     "id": 1,
-    "username": "012345678901",
+    "username": "001099000001",
     "full_name": "Nguyễn Văn A",
     "email": "nguyenvana@email.com",
     "phone": "0901234567",
@@ -763,7 +771,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 ```json
 {
   "confirm_account_id": 50,
-  "confirm_identity": "040123456060",
+  "confirm_identity": "040203000001",
   "reason": "Tài khoản trùng lặp theo yêu cầu xác minh",
   "paid_resolution": "block"
 }
@@ -818,7 +826,7 @@ Khi tạo hoặc thay đổi mật khẩu, **bắt buộc** tuân theo:
 
 ```json
 {
-  "cccd": "034567890123",
+  "cccd": "001099000002",
   "full_name": "Trần Thị B",
   "email": "tranthib@dhv.edu.vn",
   "phone": "0912345678",
@@ -982,9 +990,9 @@ response dưới dạng `full_name_cn`. Tên field phải dùng đúng snake_cas
 Nếu không gửi field này trong PATCH thì giá trị cũ được giữ nguyên; nếu chưa có
 dữ liệu, response trả về `null`.
 
-Giá trị đúng cần gửi là chuỗi tên tiếng Trung, ví dụ `"full_name_cn": "潘文进"`.
+Giá trị đúng cần gửi là chuỗi tên tiếng Trung, ví dụ `"full_name_cn": "阮文A"`.
 Backend cũng tự loại bỏ một lớp dấu ngoặc kép dư thừa nếu client gửi nhầm
-`"full_name_cn": "\"潘文进\""`, để dữ liệu lưu trong database vẫn là `潘文进`.
+`"full_name_cn": "\"阮文A\""`, để dữ liệu lưu trong database vẫn là `阮文A`.
 
 **Hướng dẫn tích hợp Front-end:** `full_name_cn` phải được gửi dưới dạng chuỗi
 Unicode UTF-8 bình thường. Không gọi `JSON.stringify()` riêng cho giá trị này;
@@ -1012,7 +1020,7 @@ font này ở Front-end.
 ```json
 {
   "doc_type": "cccd",
-  "doc_number": "012345678901",
+  "doc_number": "001099000001",
   "issue_date": "2021-06-15",
   "issue_place": "Cục Cảnh sát QLHC về TTXH",
   "front_image_url": "https://res.cloudinary.com/.../front.jpg",
@@ -1044,7 +1052,7 @@ font này ở Front-end.
     "id": 1,
     "candidate_id": 1,
     "doc_type": "cccd",
-    "doc_number": "012345678901",
+    "doc_number": "001099000001",
     "issue_date": "2021-06-15T00:00:00Z",
     "issue_place": "Cục Cảnh sát QLHC về TTXH",
     "front_image_url": "https://res.cloudinary.com/.../front.jpg",
@@ -1139,7 +1147,7 @@ font này ở Front-end.
       "id": 2,
       "candidate_id": 1,
       "doc_type": "cccd",
-      "doc_number": "012345678901",
+      "doc_number": "001099000001",
       "issue_date": "2021-06-15T00:00:00Z",
       "issue_place": "Cục Cảnh sát QLHC về TTXH",
       "front_image_url": "https://res.cloudinary.com/.../front.jpg",
@@ -1365,7 +1373,7 @@ font này ở Front-end.
 
 API bắt buộc nhận `exam_date=YYYY-MM-DD` để xác định đúng đợt thi; đồng thời nhận các query params `status`, `level` và `search` giống API danh sách. `status` nhận `all` (tất cả, mặc định khi bỏ trống), `pending` (chờ duyệt), `verified` (đã duyệt) hoặc `rejected` (từ chối). Response bắt buộc trả về `Content-Type: application/pdf` và `Content-Disposition` với tên file theo trạng thái và ngày thi.
 
-PDF sử dụng font Noto Serif SC Unicode được nhúng trực tiếp vào file (kiểu serif tương tự Times New Roman, hỗ trợ cả tiếng Việt và chữ Hán), không phụ thuộc font hệ thống hoặc container. Toàn bộ nội dung được truyền dưới dạng UTF-8; các tên tiếng Trung như `潘文进` phải hiển thị đúng.
+PDF sử dụng font Noto Serif SC Unicode được nhúng trực tiếp vào file (kiểu serif tương tự Times New Roman, hỗ trợ cả tiếng Việt và chữ Hán), không phụ thuộc font hệ thống hoặc container. Toàn bộ nội dung được truyền dưới dạng UTF-8; các tên tiếng Trung như `阮文A` phải hiển thị đúng.
 
 Tên file được tạo theo quy tắc: tất cả `ds_thi_sinh_{dd-mm-yyyy}.pdf`; chờ duyệt `ds_ho_so_thi_sinh_cho_duyet_{dd-mm-yyyy}.pdf`; đã duyệt `ds_ho_so_thi_sinh_da_duyet_{dd-mm-yyyy}.pdf`; từ chối `ds_ho_so_thi_sinh_tu_choi_{dd-mm-yyyy}.pdf`.
 
@@ -1502,7 +1510,7 @@ bao gồm cả hồ sơ chưa có giấy tờ mới nhất và các hồ sơ có
 {
   "primary_candidate_id": 10,
   "duplicate_candidate_id": 25,
-  "reason": "Gộp 2 hồ sơ trùng số CCCD 038200001234"
+  "reason": "Gộp 2 hồ sơ trùng số CCCD 001099000001"
 }
 ```
 
@@ -1517,7 +1525,7 @@ bao gồm cả hồ sơ chưa có giấy tờ mới nhất và các hồ sơ có
     "duplicate_account_id": 250,
     "moved_registrations_count": 1,
     "cancelled_registrations_count": 1,
-    "reason": "Gộp 2 hồ sơ trùng số CCCD 038200001234"
+    "reason": "Gộp 2 hồ sơ trùng số CCCD 001099000001"
   },
   "error": null,
   "meta": null
@@ -1549,7 +1557,7 @@ bao gồm cả hồ sơ chưa có giấy tờ mới nhất và các hồ sơ có
       "dob": "2000-05-15T00:00:00Z",
       "gender": "male",
       "nationality": "Việt Nam",
-      "doc_number": "012345678901",
+      "doc_number": "001099000001",
       "doc_type": "cccd",
       "portrait_image_url": "https://..."
     }
@@ -6248,19 +6256,24 @@ sequenceDiagram
     FE->>API: (Dự phòng) GET /api/v1/cccd/jobs/:request_id
 ```
 
-- Kết quả tác vụ lưu **trong bộ nhớ** (không ghi DB, không ghi ảnh ra đĩa), tự hết hạn sau **10 phút**.
-- Chỉ **chủ sở hữu** (`account_id` trong JWT) mới tra cứu được tác vụ của mình.
-- **Quyền riêng tư (Nghị định 13/2023):** server chỉ log `request_id`, `error_code`, `decision`, `type_new`, `elapsed_ms` — tuyệt đối không log số giấy tờ, họ tên, ngày sinh, địa chỉ.
+- Kết quả tác vụ và bộ nhớ đệm trích xuất lưu **thuần túy trong RAM** (Zero-Disk: tuyệt đối không ghi ảnh tạm ra `/tmp/cccd_uploads` hay ổ cứng, không ghi DB), tự hết hạn tối đa sau **3 phút** (`3 * time.Minute`) và **tự động xóa ngay sau lần đọc hoàn tất đầu tiên (Single-Read Auto-Purge)** qua bộ dọn dẹp nền (60s ticker) kết hợp hết hạn lười O(1).
+- Khóa bộ nhớ đệm SHA-256 có phân tách phiên bản: `ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)` đảm bảo thay đổi model hoặc prompt sẽ vô hiệu hóa cache cũ ngay lập tức.
+- **Rate Limiting kép (Per-Account & Per-IP):** Các endpoint `/api/v1/cccd/upload` và `/api/v1/cccd/extract` được bảo vệ bởi `RateLimitByAccountAndIP` (tối đa **3 yêu cầu/phút**, burst **5** trên mỗi tài khoản và mỗi IP) nhằm ngăn chặn tấn công vét cạn hạn ngạch Gemini API.
+- **Tự động hủy tác vụ khi ngắt WebSocket:** Khi người dùng đóng toàn bộ kết nối WebSocket (`Hub.AddOnUserDisconnected`), hệ thống lập tức gọi `CancelUserTasks(userID)` để hủy context của các yêu cầu Gemini Vision đang chạy.
+- Chỉ **chủ sở hữu** (`account_id` trong JWT hoặc Guest ID âm từ vé tạm thời) mới tra cứu được tác vụ của mình.
+- **Quyền riêng tư (Nghị định 13/2023/NĐ-CP):**
+  - Server chỉ log `request_id`, `error_code`, `decision`, `type_new`, `elapsed_ms` — tuyệt đối không log số giấy tờ, họ tên, ngày sinh, địa chỉ.
+  - Trên kênh Redis Pub/Sub `cccd:ocr_events`, trường `data` luôn bị xóa (`Data: nil`); Redis chỉ phát tín hiệu trạng thái (`task_id`, `status`, `progress`), còn dữ liệu PII chỉ truyền trực tiếp qua kết nối WebSocket định danh của chính người dùng.
 
 ### 19.2. `POST /api/v1/cccd/upload` — Tải ảnh CCCD xử lý bất đồng bộ siêu tốc (< 50ms)
 
-Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy cục bộ của người dùng, xác thực kích thước và phần mở rộng, lưu tạm thời vào phân vùng an toàn, sinh `task_id` (UUID v4), đẩy vào Go Worker Pool và trả về ngay `202 Accepted`. Tiến trình xử lý (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`) được đẩy thời gian thực qua Redis Pub/Sub và WebSocket Hub.
+Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy cục bộ của người dùng, kiểm tra **Magic Bytes** (512 byte đầu qua `http.DetectContentType` kết hợp `image.DecodeConfig`, chỉ chấp nhận `image/jpeg`, `image/png`, `image/gif`; từ chối ngay với `HTTP 400` nếu tệp thực thi/HTML giả mạo đuôi `.jpg`/`.png`), giữ mảng byte ảnh trong RAM (Zero-Disk), sinh `task_id` (UUID v4), đẩy vào Go Worker Pool và trả về ngay `202 Accepted`. Tiến trình xử lý (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`) được đẩy thời gian thực qua WebSocket Hub.
 
 **Request** — `Content-Type: multipart/form-data`
 
 | Thành phần | Vị trí | Bắt buộc | Mô tả |
 |---|---|---|---|
-| `image` (hoặc `file`) | form-data | ✅ | File ảnh CCCD (.jpg, .jpeg, .png), ≤ 5 MB |
+| `image` (hoặc `file`) | form-data | ✅ | File ảnh CCCD thực sự (`image/jpeg`, `image/png`, `image/gif` xác thực qua magic bytes), ≤ 5 MB |
 | `side` | form-data / query | ❌ | Mặt thẻ cần quét: `"front"` (mặc định, mặt trước) hoặc `"back"` (mặt sau) |
 
 **Response 202 Accepted** (Phản hồi tức thì < 50ms)
@@ -6290,8 +6303,8 @@ Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy 
   "side": "front",
   "data": {
     "side": "front",
-    "id_number": "040203012345",
-    "full_name": "NGUYỄN VĂN AN",
+    "id_number": "040203000001",
+    "full_name": "NGUYỄN VĂN A",
     "dob": "15/03/2003",
     "gender": "Nam",
     "sex": "Nam",
@@ -6303,12 +6316,23 @@ Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy 
     "address_district": "TP. Vinh",
     "address_ward": "P. Hà Huy Tập",
     "address_detail": "Số 12 Lê Lợi",
+    "province_id": 40,
+    "district_id": 412,
+    "ward_id": 16660,
+    "address_resolution_status": "resolved",
+    "address_candidates": [],
     "home_town": "Nghệ An",
     "issue_date": "15/03/2021",
     "expiry_date": "15/03/2028"
   }
 }
 ```
+> **Cơ chế chống nhập nhằng dấu Tiếng Việt (`address_resolution_status = "requires_confirmation"`):**
+> Khi bộ giải địa chỉ (`internal/location/matcher`) phát hiện $\ge 2$ đơn vị hành chính đạt ngưỡng khớp ($\ge 0.80$) nhưng chênh lệch điểm kết hợp bảo toàn dấu (`CombinedAddressScore`) nhỏ hơn `0.05` (ví dụ ảnh mờ dấu giữa `"Xã Bảo Thanh"` và `"Xã Bảo Thạnh"`), hệ thống **không tự động chọn mù** (`ward_id` để trống) mà trả về:
+> - `"address_resolution_status": "requires_confirmation"`
+> - `"address_candidates": [{ "ward_id": 101, "ward_name": "Xã Bảo Thanh", "province_id": 40, "province_name": "Tỉnh Nghệ An", "score": 0.91 }, ...]`
+> Frontend sẽ hiển thị cảnh báo để thí sinh chủ động chọn đúng Xã/Phường trong danh sách gợi ý.
+
 4. Khi hoàn tất mặt sau (`side = "back"`):
 ```json
 {
@@ -6407,8 +6431,8 @@ Dùng khi Frontend bị lỡ event WebSocket (mất kết nối, reload trang).
     {
       "type": "new",
       "type_new": "cccd_12_front",
-      "id":   { "value": "040203012345", "prob": 0.97, "status": "ok", "issues": [], "label": "Số CCCD" },
-      "name": { "value": "NGUYỄN VĂN AN", "prob": 0.97, "status": "ok", "issues": [], "label": "Họ và tên" },
+      "id":   { "value": "040203000001", "prob": 0.97, "status": "ok", "issues": [], "label": "Số CCCD" },
+      "name": { "value": "NGUYỄN VĂN A", "prob": 0.97, "status": "ok", "issues": [], "label": "Họ và tên" },
       "dob":  { "value": "15/03/2003", "prob": 0.97, "status": "ok", "issues": [], "label": "Ngày sinh" },
       "sex":  { "value": "Nam", "prob": 0.97, "status": "ok", "issues": [], "label": "Giới tính" },
       "nationality": { "value": "Việt Nam", "...": "..." },

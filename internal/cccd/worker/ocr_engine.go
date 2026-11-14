@@ -1,11 +1,11 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -20,6 +20,8 @@ const (
 	DefaultRedisChannel = "cccd:ocr_events"
 	DefaultQueueSize    = 512
 	DefaultConcurrency  = 4
+	DefaultTaskTTL      = 3 * time.Minute // Strict max 3-minute TTL for ephemeral OCR state (Decree 13/2023)
+	JanitorInterval     = 60 * time.Second
 )
 
 // RedisPublisher abstracts Redis Pub/Sub publishing.
@@ -27,14 +29,19 @@ type RedisPublisher interface {
 	Publish(ctx context.Context, channel string, message any) error
 }
 
-// OCREngine defines the text extraction capability.
+// OCREngine defines the in-memory text extraction capability (zero disk writes).
 // Strictly extracts textual fields only. NO BIOMETRICS OR FACIAL RECOGNITION.
 type OCREngine interface {
-	ExtractText(ctx context.Context, filePath string) (*models.OCRResultData, error)
+	ExtractText(ctx context.Context, imageBytes []byte) (*models.OCRResultData, error)
 }
 
 // EventDispatcher is an optional callback to notify in-memory components (e.g. WebSocket Hub).
 type EventDispatcher func(payload models.OCREventPayload)
+
+type activeTaskCancel struct {
+	userID int64
+	cancel context.CancelFunc
+}
 
 // WorkerPool manages background worker goroutines that process OCR tasks asynchronously.
 type WorkerPool struct {
@@ -50,7 +57,7 @@ type WorkerPool struct {
 	tasksMu       sync.RWMutex
 	tasks         map[string]models.OCREventPayload
 	cancelsMu     sync.Mutex
-	activeCancels map[string]context.CancelFunc
+	activeCancels map[string]activeTaskCancel
 }
 
 // NewWorkerPool constructs a production-ready WorkerPool.
@@ -75,7 +82,7 @@ func NewWorkerPool(
 		channel:       DefaultRedisChannel,
 		workers:       concurrency,
 		tasks:         make(map[string]models.OCREventPayload),
-		activeCancels: make(map[string]context.CancelFunc),
+		activeCancels: make(map[string]activeTaskCancel),
 	}
 }
 
@@ -94,7 +101,9 @@ func (wp *WorkerPool) Enqueue(task models.OCRTask) error {
 		// Emit initial QUEUED event immediately upon enqueue
 		wp.emitEvent(models.OCREventPayload{
 			Event:     "ocr_progress",
+			RequestID: task.TaskID,
 			TaskID:    task.TaskID,
+			AccountID: task.UserID,
 			UserID:    task.UserID,
 			Status:    models.StatusQueued,
 			Progress:  10,
@@ -106,7 +115,7 @@ func (wp *WorkerPool) Enqueue(task models.OCRTask) error {
 	}
 }
 
-// Start launches the worker goroutines.
+// Start launches the worker goroutines and the 60s background janitor ticker.
 func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.mu.Lock()
 	if wp.started {
@@ -120,7 +129,31 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 		wp.wg.Add(1)
 		go wp.workerLoop(ctx, i+1)
 	}
+	go wp.janitorLoop(ctx)
 	log.Printf("[ocr_worker] started %d background workers for channel %s", wp.workers, wp.channel)
+}
+
+func (wp *WorkerPool) janitorLoop(ctx context.Context) {
+	ticker := time.NewTicker(JanitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			wp.evictExpiredTasks(now.UTC())
+		}
+	}
+}
+
+func (wp *WorkerPool) evictExpiredTasks(now time.Time) {
+	wp.tasksMu.Lock()
+	defer wp.tasksMu.Unlock()
+	for id, rec := range wp.tasks {
+		if now.Sub(rec.Timestamp) > DefaultTaskTTL {
+			delete(wp.tasks, id)
+		}
+	}
 }
 
 func (wp *WorkerPool) workerLoop(ctx context.Context, workerID int) {
@@ -141,23 +174,26 @@ func (wp *WorkerPool) workerLoop(ctx context.Context, workerID int) {
 // CancelTask cancels an in-flight OCR task by its taskID.
 func (wp *WorkerPool) CancelTask(taskID string) {
 	wp.cancelsMu.Lock()
-	cancel, ok := wp.activeCancels[taskID]
+	entry, ok := wp.activeCancels[taskID]
 	delete(wp.activeCancels, taskID)
 	wp.cancelsMu.Unlock()
-	if ok && cancel != nil {
-		cancel()
+	if ok && entry.cancel != nil {
+		entry.cancel()
 	}
 }
 
-// CancelUserTasks cancels all in-flight OCR tasks for a specific userID.
+// CancelUserTasks cancels all in-flight OCR tasks belonging to a specific userID
+// (or all active tasks if userID <= 0).
 func (wp *WorkerPool) CancelUserTasks(userID int64) {
 	wp.cancelsMu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(wp.activeCancels))
-	for id, cancel := range wp.activeCancels {
-		if cancel != nil {
-			cancels = append(cancels, cancel)
+	for id, entry := range wp.activeCancels {
+		if userID <= 0 || entry.userID == userID {
+			if entry.cancel != nil {
+				cancels = append(cancels, entry.cancel)
+			}
+			delete(wp.activeCancels, id)
 		}
-		delete(wp.activeCancels, id)
 	}
 	wp.cancelsMu.Unlock()
 
@@ -167,13 +203,12 @@ func (wp *WorkerPool) CancelUserTasks(userID int64) {
 }
 
 func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
-	// Clean up temporary image file after processing completes or fails
+	// Zero-Disk Policy: clear in-memory image buffer immediately when worker finishes
 	defer func() {
-		if task.FilePath != "" {
-			if err := os.Remove(task.FilePath); err != nil && !os.IsNotExist(err) {
-				log.Printf("[ocr_worker] error removing temp file %s: %v", task.FilePath, err)
-			}
+		for i := range task.ImageBytes {
+			task.ImageBytes[i] = 0
 		}
+		task.ImageBytes = nil
 	}()
 
 	taskCtx := task.Ctx
@@ -187,7 +222,10 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 	}
 
 	wp.cancelsMu.Lock()
-	wp.activeCancels[task.TaskID] = task.Cancel
+	wp.activeCancels[task.TaskID] = activeTaskCancel{
+		userID: task.UserID,
+		cancel: task.Cancel,
+	}
 	wp.cancelsMu.Unlock()
 
 	defer func() {
@@ -199,15 +237,17 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 	// 1. Transition: PROCESSING
 	wp.emitEvent(models.OCREventPayload{
 		Event:     "ocr_progress",
+		RequestID: task.TaskID,
 		TaskID:    task.TaskID,
+		AccountID: task.UserID,
 		UserID:    task.UserID,
 		Status:    models.StatusProcessing,
 		Progress:  50,
 		Timestamp: time.Now().UTC(),
 	})
 
-	// 2. Perform text extraction using task-scoped context (cancellable)
-	res, err := wp.engine.ExtractText(taskCtx, task.FilePath)
+	// 2. Perform in-memory text extraction using task-scoped context (cancellable)
+	res, err := wp.engine.ExtractText(taskCtx, task.ImageBytes)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || (taskCtx.Err() != nil && errors.Is(taskCtx.Err(), context.Canceled)) {
 			log.Printf("[ocr_worker] task %s cancelled mid-processing by client disconnect", task.TaskID)
@@ -216,7 +256,9 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 		log.Printf("[ocr_worker] task %s failed: %v", task.TaskID, err)
 		wp.emitEvent(models.OCREventPayload{
 			Event:     "ocr_failed",
+			RequestID: task.TaskID,
 			TaskID:    task.TaskID,
+			AccountID: task.UserID,
 			UserID:    task.UserID,
 			Status:    models.StatusFailed,
 			Progress:  0,
@@ -245,7 +287,9 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 
 	wp.emitEvent(models.OCREventPayload{
 		Event:     eventName,
+		RequestID: task.TaskID,
 		TaskID:    task.TaskID,
+		AccountID: task.UserID,
 		UserID:    task.UserID,
 		Side:      side,
 		Status:    models.StatusCompleted,
@@ -257,14 +301,16 @@ func (wp *WorkerPool) processTask(ctx context.Context, task models.OCRTask) {
 }
 
 func (wp *WorkerPool) emitEvent(payload models.OCREventPayload) {
+	if payload.RequestID == "" {
+		payload.RequestID = payload.TaskID
+	}
+	if payload.AccountID == 0 {
+		payload.AccountID = payload.UserID
+	}
+
+	// O(1) ephemeral store write (cleanup is handled lazily on GetTaskStatus + 60s janitor ticker)
 	if payload.TaskID != "" {
-		now := time.Now().UTC()
 		wp.tasksMu.Lock()
-		for id, rec := range wp.tasks {
-			if now.Sub(rec.Timestamp) > 10*time.Minute {
-				delete(wp.tasks, id)
-			}
-		}
 		wp.tasks[payload.TaskID] = payload
 		wp.tasksMu.Unlock()
 	}
@@ -272,29 +318,42 @@ func (wp *WorkerPool) emitEvent(payload models.OCREventPayload) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// 1. Publish to Redis Pub/Sub if available
+	// 1. Zero-PII Redis Pub/Sub: never publish raw PII fields (Data) onto shared Redis channel cccd:ocr_events.
 	if wp.redisSvc != nil {
-		if err := wp.redisSvc.Publish(ctx, wp.channel, payload); err != nil {
+		redisSignal := payload
+		redisSignal.Data = nil
+		if err := wp.redisSvc.Publish(ctx, wp.channel, redisSignal); err != nil {
 			log.Printf("[ocr_worker] redis publish error on %s: %v", wp.channel, err)
 		}
 	}
 
-	// 2. Direct in-memory dispatch to Hub (fallback or single-instance notification)
+	// 2. Targeted in-memory dispatch to authenticated user's WebSocket session via Hub.
 	if wp.dispatcher != nil {
 		wp.dispatcher(payload)
 	}
 }
 
 // GetTaskStatus returns the most recent OCREventPayload for a taskID if owned by userID.
+// Enforces O(1) lazy expiration (max 3-minute TTL) and single-read auto-purge for completed PII payloads.
 func (wp *WorkerPool) GetTaskStatus(taskID string, userID int64) (models.OCREventPayload, bool) {
-	wp.tasksMu.RLock()
-	defer wp.tasksMu.RUnlock()
+	now := time.Now().UTC()
+	wp.tasksMu.Lock()
+	defer wp.tasksMu.Unlock()
+
 	rec, ok := wp.tasks[taskID]
 	if !ok {
 		return models.OCREventPayload{}, false
 	}
+	if now.Sub(rec.Timestamp) > DefaultTaskTTL {
+		delete(wp.tasks, taskID)
+		return models.OCREventPayload{}, false
+	}
 	if userID > 0 && rec.UserID > 0 && rec.UserID != userID {
 		return models.OCREventPayload{}, false
+	}
+	// Single-read ephemeral store: auto-purge completed PII payload immediately upon read
+	if rec.Status == models.StatusCompleted || rec.Status == models.StatusFailed {
+		delete(wp.tasks, taskID)
 	}
 	return rec, true
 }
@@ -303,8 +362,7 @@ func (wp *WorkerPool) GetTaskStatus(taskID string, userID int64) (models.OCREven
 // OCREngine Implementations
 // -----------------------------------------------------------------------------
 
-// LocalScriptOCREngine executes a localized inference script or CLI tool (e.g. tesseract CLI).
-// Zero CGO requirement, avoiding compilation issues with CGO_ENABLED=0.
+// LocalScriptOCREngine executes a localized inference script or CLI tool via stdin (zero disk writes).
 type LocalScriptOCREngine struct {
 	commandPath string
 	args        []string
@@ -318,15 +376,15 @@ func NewLocalScriptOCREngine(commandPath string, args ...string) *LocalScriptOCR
 	}
 }
 
-// ExtractText executes the localized CLI script and parses extracted text.
-// Strictly enforces textual extraction only (no face detection).
-func (e *LocalScriptOCREngine) ExtractText(ctx context.Context, filePath string) (*models.OCRResultData, error) {
-	if _, err := os.Stat(filePath); err != nil {
-		return nil, fmt.Errorf("file not found: %w", err)
+// ExtractText executes the localized CLI script passing imageBytes via stdin.
+// Strictly enforces textual extraction only (no face detection, no disk writes).
+func (e *LocalScriptOCREngine) ExtractText(ctx context.Context, imageBytes []byte) (*models.OCRResultData, error) {
+	if len(imageBytes) == 0 {
+		return nil, fmt.Errorf("empty image bytes")
 	}
 
-	cmdArgs := append(e.args, filePath)
-	cmd := exec.CommandContext(ctx, e.commandPath, cmdArgs...)
+	cmd := exec.CommandContext(ctx, e.commandPath, e.args...)
+	cmd.Stdin = bytes.NewReader(imageBytes)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("local ocr execution error: %v (output: %s)", err, string(out))
@@ -341,10 +399,10 @@ type MockOCREngine struct {
 	Err    error
 }
 
-// ExtractText returns mock data or error.
-func (m *MockOCREngine) ExtractText(_ context.Context, filePath string) (*models.OCRResultData, error) {
-	if _, err := os.Stat(filePath); err != nil {
-		return nil, fmt.Errorf("file not found: %w", err)
+// ExtractText returns synthetic mock data or error from in-memory imageBytes.
+func (m *MockOCREngine) ExtractText(_ context.Context, imageBytes []byte) (*models.OCRResultData, error) {
+	if len(imageBytes) == 0 {
+		return nil, fmt.Errorf("empty image bytes")
 	}
 	if m.Err != nil {
 		return nil, m.Err
@@ -353,9 +411,9 @@ func (m *MockOCREngine) ExtractText(_ context.Context, filePath string) (*models
 		return m.Result, nil
 	}
 	return &models.OCRResultData{
-		IDNumber: "040203012345",
-		FullName: "NGUYỄN VĂN AN",
-		DOB:      "15/03/2003",
+		IDNumber: "001099000001",
+		FullName: "NGUYỄN VĂN A",
+		DOB:      "15/03/1999",
 		Address:  "Xã Nghi Phú, TP Vinh, Nghệ An",
 		HomeTown: "Nghệ An",
 	}, nil
@@ -445,7 +503,18 @@ func StandardizeOCRResult(res *models.OCRResultData) *models.OCRResultData {
 			res.AddressWard,
 			res.AddressDetail,
 		)
-		if resolved.Matched {
+		res.AddressResolutionStatus = resolved.Status
+		if resolved.Status == matcher.StatusRequiresConfirmation {
+			res.AddressCandidates = resolved.Candidates
+			if resolved.ProvinceName != "" {
+				res.AddressProvince = resolved.ProvinceName
+			}
+			if resolved.ProvinceID > 0 {
+				pID := resolved.ProvinceID
+				res.ProvinceID = &pID
+			}
+			res.WardID = nil
+		} else if resolved.Matched {
 			if res.AddressProvince == "" || resolved.LegacyProvince != "" {
 				if resolved.ProvinceName != "" {
 					res.AddressProvince = resolved.ProvinceName

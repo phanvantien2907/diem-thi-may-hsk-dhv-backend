@@ -13,15 +13,15 @@ func TestIsValidIDNumber_9And12Digits(t *testing.T) {
 		input string
 		want  bool
 	}{
-		{"valid 9-digit legacy CMND", "187654321", true},
-		{"valid 12-digit modern CCCD", "038099012345", true},
-		{"valid 9-digit with surrounding spaces", " 187654321 ", true},
+		{"valid 9-digit legacy CMND", "123456789", true},
+		{"valid 12-digit modern CCCD", "001099000001", true},
+		{"valid 9-digit with surrounding spaces", " 123456789 ", true},
 		{"invalid 8 digits", "12345678", false},
 		{"invalid 10 digits", "0123456789", false},
 		{"invalid 11 digits", "01234567891", false},
 		{"invalid 13 digits", "0123456789123", false},
-		{"invalid alphanumeric 9 chars", "18765432A", false},
-		{"invalid alphanumeric 12 chars", "03809901234B", false},
+		{"invalid alphanumeric 9 chars", "12345678A", false},
+		{"invalid alphanumeric 12 chars", "00109900000B", false},
 		{"empty string", "", false},
 	}
 
@@ -40,8 +40,8 @@ func TestValidateLoginIdentifier(t *testing.T) {
 		identifier string
 		want       bool
 	}{
-		{"valid 9-digit CMND", "187654321", true},
-		{"valid 12-digit CCCD", "038099012345", true},
+		{"valid 9-digit CMND", "123456789", true},
+		{"valid 12-digit CCCD", "001099000001", true},
 		{"valid email address", "candidate@example.com", true},
 		{"valid admin username", "admin_vinh", true},
 		{"invalid 10-digit numeric string", "0123456789", false},
@@ -61,9 +61,9 @@ func TestValidateLoginIdentifier(t *testing.T) {
 
 func TestRegisterRequestDTO_ValidatorTag(t *testing.T) {
 	valid9 := request.RegisterRequestDTO{
-		Cccd:     "187654321",
+		Cccd:     "123456789",
 		Phone:    "0987654321",
-		FullName: "Nguyen Van A",
+		FullName: "NGUYỄN VĂN A",
 		Email:    "a@example.com",
 		Password: "Password@123",
 	}
@@ -72,7 +72,7 @@ func TestRegisterRequestDTO_ValidatorTag(t *testing.T) {
 	}
 
 	valid12 := valid9
-	valid12.Cccd = "038099012345"
+	valid12.Cccd = "001099000001"
 	if err := utils.Validate.Struct(valid12); err != nil {
 		t.Errorf("expected 12-digit CCCD RegisterRequestDTO to pass validation, got: %v", err)
 	}

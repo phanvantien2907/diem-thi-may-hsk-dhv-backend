@@ -5025,7 +5025,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tiếp nhận ảnh CCCD mặt trước/mặt sau từ ổ đĩa cục bộ của người dùng. Kiểm tra nhanh định dạng và kích thước, lưu vào phân vùng tạm an toàn, tạo task_id và trả về 202 Accepted ngay lập tức. Kết quả trích xuất dạng chữ (không có sinh trắc học/khuôn mặt) được đẩy qua WebSocket.",
+                "description": "Tiếp nhận ảnh CCCD mặt trước/mặt sau qua multipart/form-data. Kiểm tra magic-byte (512 bytes đầu + image.DecodeConfig), xử lý hoàn toàn trong RAM (không ghi xuống đĩa theo Nghị định 13/2023/NĐ-CP), tạo task_id và trả về 202 Accepted ngay lập tức. Kết quả trích xuất dạng chữ (không có sinh trắc học/khuôn mặt) được đẩy qua WebSocket.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -5035,11 +5035,11 @@
                 "tags": [
                     "CCCD OCR"
                 ],
-                "summary": "Tải lên ảnh CCCD xử lý bất đồng bộ siêu tốc (\u003c 50ms)",
+                "summary": "Tải lên ảnh CCCD xử lý bất đồng bộ siêu tốc trong bộ nhớ (\u003c 50ms, Zero-Disk)",
                 "parameters": [
                     {
                         "type": "file",
-                        "description": "Ảnh CCCD/CMND (.jpg, .jpeg, .png)",
+                        "description": "Ảnh CCCD/CMND (.jpg, .jpeg, .png, .gif)",
                         "name": "image",
                         "in": "formData",
                         "required": true
@@ -5054,7 +5054,7 @@
                         }
                     },
                     "400": {
-                        "description": "File không hợp lệ hoặc quá dung lượng",
+                        "description": "File giả mạo, không hợp lệ hoặc quá dung lượng",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

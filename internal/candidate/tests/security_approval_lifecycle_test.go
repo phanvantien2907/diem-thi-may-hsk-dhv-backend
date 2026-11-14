@@ -76,7 +76,7 @@ func mockAdminGetCandidateQueries(mock sqlmock.Sqlmock, candidateID int64) {
 			"candidate_document_verification_status", "candidate_document_rejection_reason",
 			"candidate_document_ward_id", "candidate_document_province_id", "candidate_document_address_detail",
 		}).AddRow(
-			int64(500), candidateID, "cccd", "040123456060", dob, "Cục CSQLHC",
+			int64(500), candidateID, "cccd", "001099000001", dob, "Cục CSQLHC",
 			"https://cdn.example.com/front.jpg", "https://cdn.example.com/back.jpg",
 			"https://cdn.example.com/portrait.jpg", "pending", nil, nil, nil, nil,
 		))
@@ -84,8 +84,8 @@ func mockAdminGetCandidateQueries(mock sqlmock.Sqlmock, candidateID int64) {
 
 // 1. Decree 13/2023 PII Masking & Audit Trail Tests
 func TestMaskPII_Decree13Compliance(t *testing.T) {
-	if got := candidate.MaskDocumentNumber("040123456060"); got != "040***060" {
-		t.Fatalf("MaskDocumentNumber(040123456060) = %q, want 040***060", got)
+	if got := candidate.MaskDocumentNumber("001099000001"); got != "001***001" {
+		t.Fatalf("MaskDocumentNumber(001099000001) = %q, want 001***001", got)
 	}
 	if got := candidate.MaskPhoneNumber("0901234567"); got != "090***567" {
 		t.Fatalf("MaskPhoneNumber(0901234567) = %q, want 090***567", got)
@@ -115,8 +115,8 @@ func TestAdminGetCandidate_WritesViewPIIAuditLogAndAcquiresSoftLock(t *testing.T
 	if dto.Phone == nil || *dto.Phone != "0901234567" {
 		t.Fatalf("expected unmasked phone 0901234567 in detail endpoint, got %v", dto.Phone)
 	}
-	if dto.LatestDocument == nil || dto.LatestDocument.DocNumber != "040123456060" {
-		t.Fatalf("expected unmasked doc_number 040123456060 in detail endpoint, got %+v", dto.LatestDocument)
+	if dto.LatestDocument == nil || dto.LatestDocument.DocNumber != "001099000001" {
+		t.Fatalf("expected unmasked doc_number 001099000001 in detail endpoint, got %+v", dto.LatestDocument)
 	}
 	if dto.ReviewLock == nil || dto.ReviewLock.LockedByAccountID != 99 || dto.ReviewLock.IsLockedByOther {
 		t.Fatalf("expected soft lock owned by admin 99, got %+v", dto.ReviewLock)
@@ -167,12 +167,12 @@ func TestAdminApproveDocument_BlocksDuplicateID(t *testing.T) {
 			"candidate_document_front_image_url", "candidate_document_back_image_url",
 			"candidate_document_portrait_image_url", "candidate_document_verification_status",
 		}).AddRow(
-			int64(500), "cccd", "040123456060",
+			int64(500), "cccd", "001099000001",
 			"https://cdn.example.com/front.jpg", "https://cdn.example.com/back.jpg",
 			"https://cdn.example.com/portrait.jpg", "pending",
 		))
 	mock.ExpectQuery(`SELECT EXISTS`).
-		WithArgs("040123456060", int64(10)).
+		WithArgs("001099000001", int64(10)).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectRollback()
 
@@ -204,7 +204,7 @@ func TestAdminApproveDocument_ForbidsDirectReApproveOnRejectedProfile(t *testing
 			"candidate_document_front_image_url", "candidate_document_back_image_url",
 			"candidate_document_portrait_image_url", "candidate_document_verification_status",
 		}).AddRow(
-			int64(500), "cccd", "040123456060",
+			int64(500), "cccd", "001099000001",
 			"https://cdn.example.com/front.jpg", "https://cdn.example.com/back.jpg",
 			"https://cdn.example.com/portrait.jpg", "rejected",
 		))

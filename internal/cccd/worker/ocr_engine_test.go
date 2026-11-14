@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -36,24 +34,13 @@ func (m *mockRedisPublisher) getMessages() []models.OCREventPayload {
 	return cp
 }
 
-func TestWorkerPool_StateTransitionsAndFileCleanup(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ocr_worker_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	filePath := filepath.Join(tempDir, "sample_cccd.jpg")
-	if err := os.WriteFile(filePath, []byte("fake-image-data"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
+func TestWorkerPool_StateTransitionsAndZeroPIIRedis(t *testing.T) {
 	mockPub := &mockRedisPublisher{}
 	mockEngine := &worker.MockOCREngine{
 		Result: &models.OCRResultData{
-			IDNumber: "040203012345",
-			FullName: "NGUYỄN VĂN AN",
-			DOB:      "15/03/2003",
+			IDNumber: "001099000001",
+			FullName: "NGUYỄN VĂN A",
+			DOB:      "15/03/1999",
 			Address:  "Xã Nghi Phú, TP Vinh, Nghệ An",
 		},
 	}
@@ -71,11 +58,12 @@ func TestWorkerPool_StateTransitionsAndFileCleanup(t *testing.T) {
 	defer cancel()
 	wp.Start(ctx)
 
+	imageBuf := []byte("in-memory-cccd-jpeg-bytes")
 	task := models.OCRTask{
-		TaskID:    "task-uuid-1",
-		UserID:    202,
-		FilePath:  filePath,
-		CreatedAt: time.Now().UTC(),
+		TaskID:     "task-uuid-1",
+		UserID:     202,
+		ImageBytes: imageBuf,
+		CreatedAt:  time.Now().UTC(),
 	}
 
 	if err := wp.Enqueue(task); err != nil {
@@ -119,25 +107,37 @@ func TestWorkerPool_StateTransitionsAndFileCleanup(t *testing.T) {
 		t.Errorf("expected 3rd event COMPLETED(100), got %s(%d)", msgs[2].Status, msgs[2].Progress)
 	}
 
-	// 2. Verify Output Data (Textual only, NO biometrics)
-	data := msgs[2].Data
-	if data == nil || data.IDNumber != "040203012345" || data.FullName != "NGUYỄN VĂN AN" {
-		t.Errorf("unexpected extracted text data: %+v", data)
+	// 2. Verify Zero-PII Redis Pub/Sub (Decree 13/2023): Redis payload MUST NOT contain raw PII Data
+	if msgs[2].Data != nil {
+		t.Errorf("expected Redis Pub/Sub payload Data to be nil (Zero-PII policy), got %+v", msgs[2].Data)
 	}
 
-	// 3. Verify Temp File was Cleaned Up
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Errorf("expected temp file %s to be deleted after processing, but it still exists", filePath)
+	// 3. Verify targeted WebSocket dispatcher received the full PII data
+	mu.Lock()
+	var wsCompleted *models.OCREventPayload
+	for i := range directEvents {
+		if directEvents[i].TaskID == "task-uuid-1" && directEvents[i].Status == models.StatusCompleted {
+			cp := directEvents[i]
+			wsCompleted = &cp
+			break
+		}
+	}
+	mu.Unlock()
+	if wsCompleted == nil || wsCompleted.Data == nil || wsCompleted.Data.IDNumber != "001099000001" || wsCompleted.Data.FullName != "NGUYỄN VĂN A" {
+		t.Errorf("expected targeted WebSocket dispatcher to receive full extracted data, got %+v", wsCompleted)
+	}
+
+	// 4. Verify single-read ephemeral store auto-purges completed PII upon read
+	ephemeralRec, ok := wp.GetTaskStatus("task-uuid-1", 202)
+	if !ok || ephemeralRec.Data == nil || ephemeralRec.Data.IDNumber != "001099000001" {
+		t.Fatalf("expected first GetTaskStatus to return completed payload, got ok=%v rec=%+v", ok, ephemeralRec)
+	}
+	if _, okSecond := wp.GetTaskStatus("task-uuid-1", 202); okSecond {
+		t.Errorf("expected completed PII payload to be auto-purged after single read")
 	}
 }
 
 func TestWorkerPool_FailureState(t *testing.T) {
-	tempDir, _ := os.MkdirTemp("", "ocr_fail_test_*")
-	defer os.RemoveAll(tempDir)
-
-	filePath := filepath.Join(tempDir, "corrupted.jpg")
-	_ = os.WriteFile(filePath, []byte("corrupted"), 0600)
-
 	mockPub := &mockRedisPublisher{}
 	mockEngine := &worker.MockOCREngine{
 		Err: errors.New("cannot read text from blurry document"),
@@ -149,9 +149,9 @@ func TestWorkerPool_FailureState(t *testing.T) {
 	wp.Start(ctx)
 
 	_ = wp.Enqueue(models.OCRTask{
-		TaskID:   "task-fail-1",
-		UserID:   202,
-		FilePath: filePath,
+		TaskID:     "task-fail-1",
+		UserID:     202,
+		ImageBytes: []byte("corrupted-in-memory-image"),
 	})
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -175,22 +175,17 @@ func TestWorkerPool_FailureState(t *testing.T) {
 	if !failed {
 		t.Fatalf("worker did not emit FAILED event; messages: %+v", mockPub.getMessages())
 	}
-
-	// Verify temp file is cleaned up even on failure
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Errorf("expected temp file %s to be deleted on failure, but it still exists", filePath)
-	}
 }
 
 func TestStandardizeOCRResult_9And12DigitSupport(t *testing.T) {
 	// 1. Valid 9-digit legacy CMND
 	cmndRes := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber: " 187654321 ",
+		IDNumber: " 123456789 ",
 		FullName: " trần thị b ",
 		DOB:      " 20/10/1995 ",
 	})
-	if cmndRes.IDNumber != "187654321" {
-		t.Errorf("expected 9-digit CMND '187654321', got %q", cmndRes.IDNumber)
+	if cmndRes.IDNumber != "123456789" {
+		t.Errorf("expected 9-digit CMND '123456789', got %q", cmndRes.IDNumber)
 	}
 	if cmndRes.FullName != "TRẦN THỊ B" {
 		t.Errorf("expected uppercase FullName 'TRẦN THỊ B', got %q", cmndRes.FullName)
@@ -198,11 +193,11 @@ func TestStandardizeOCRResult_9And12DigitSupport(t *testing.T) {
 
 	// 2. Valid 12-digit modern CCCD
 	cccdRes := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber: "038099012345",
+		IDNumber: "001099000001",
 		FullName: "Lê Văn C",
 	})
-	if cccdRes.IDNumber != "038099012345" {
-		t.Errorf("expected 12-digit CCCD '038099012345', got %q", cccdRes.IDNumber)
+	if cccdRes.IDNumber != "001099000001" {
+		t.Errorf("expected 12-digit CCCD '001099000001', got %q", cccdRes.IDNumber)
 	}
 
 	// 3. Invalid 10-digit noise is stripped
@@ -216,8 +211,8 @@ func TestStandardizeOCRResult_9And12DigitSupport(t *testing.T) {
 
 func TestStandardizeOCRResult_AddressSplitAndGender(t *testing.T) {
 	res := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber:     "040203012345",
-		FullName:     "Phan Văn Tiến",
+		IDNumber:     "040203000001",
+		FullName:     "Nguyễn Văn A",
 		DOB:          "29/07/2003",
 		Address:      "Số 12 Lê Lợi, P. Hà Huy Tập, TP. Vinh, Nghệ An",
 		PlaceOfIssue: "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI",
@@ -243,17 +238,6 @@ func TestStandardizeOCRResult_AddressSplitAndGender(t *testing.T) {
 }
 
 func TestWorkerPool_BackSideEmitsOCRBackCompleted(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ocr_back_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	filePath := filepath.Join(tempDir, "cccd_back.jpg")
-	if err := os.WriteFile(filePath, []byte("fake-back-image"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
 	mockPub := &mockRedisPublisher{}
 	mockEngine := &worker.MockOCREngine{
 		Result: &models.OCRResultData{
@@ -263,17 +247,23 @@ func TestWorkerPool_BackSideEmitsOCRBackCompleted(t *testing.T) {
 		},
 	}
 
-	wp := worker.NewWorkerPool(mockEngine, 1, 10, mockPub, nil)
+	var directEvents []models.OCREventPayload
+	var mu sync.Mutex
+	wp := worker.NewWorkerPool(mockEngine, 1, 10, mockPub, func(p models.OCREventPayload) {
+		mu.Lock()
+		directEvents = append(directEvents, p)
+		mu.Unlock()
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wp.Start(ctx)
 
 	if err := wp.Enqueue(models.OCRTask{
-		TaskID:    "task-back-1",
-		UserID:    303,
-		Side:      "back",
-		FilePath:  filePath,
-		CreatedAt: time.Now().UTC(),
+		TaskID:     "task-back-1",
+		UserID:     303,
+		Side:       "back",
+		ImageBytes: []byte("fake-back-image"),
+		CreatedAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("enqueue back task failed: %v", err)
 	}
@@ -281,13 +271,15 @@ func TestWorkerPool_BackSideEmitsOCRBackCompleted(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var completedMsg *models.OCREventPayload
 	for time.Now().Before(deadline) {
-		for _, m := range mockPub.getMessages() {
+		mu.Lock()
+		for _, m := range directEvents {
 			if m.TaskID == "task-back-1" && m.Status == models.StatusCompleted {
 				cp := m
 				completedMsg = &cp
 				break
 			}
 		}
+		mu.Unlock()
 		if completedMsg != nil {
 			break
 		}
@@ -308,8 +300,8 @@ func TestWorkerPool_BackSideEmitsOCRBackCompleted(t *testing.T) {
 func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
 	// 9-digit CMND: missing gender, prefixes on ethnicity & religion
 	cmnd := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber:  "188020231",
-		FullName:  "hoàng minh trung",
+		IDNumber:  "123456789",
+		FullName:  "nguyễn văn a",
 		DOB:       "24/09/1987",
 		Gender:    "",
 		Ethnicity: "Dân tộc: Kinh",
@@ -352,7 +344,7 @@ func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
 
 	// Verify 12-digit CCCD with empty gender derives gender from digit 3
 	cccd12Male := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber: "038090012345", // digit 3 is 0 -> Nam
+		IDNumber: "001099000001", // digit 3 is 0 -> Nam
 		FullName: "NGUYEN VAN A",
 	})
 	if cccd12Male.Gender != "Nam" || cccd12Male.Sex != "Nam" {
@@ -360,7 +352,7 @@ func TestStandardizeOCRResult_9DigitCMNDAnd12DigitCCCDJSONKeys(t *testing.T) {
 	}
 
 	cccd12Female := worker.StandardizeOCRResult(&models.OCRResultData{
-		IDNumber: "038195012345", // digit 3 is 1 -> Nữ
+		IDNumber: "001195000002", // digit 3 is 1 -> Nữ
 		FullName: "TRAN THI B",
 	})
 	if cccd12Female.Gender != "Nữ" || cccd12Female.Sex != "Nữ" {
@@ -372,24 +364,17 @@ type blockingCancelEngine struct {
 	started chan struct{}
 }
 
-func (b *blockingCancelEngine) ExtractText(ctx context.Context, _ string) (*models.OCRResultData, error) {
-	close(b.started)
+func (b *blockingCancelEngine) ExtractText(ctx context.Context, _ []byte) (*models.OCRResultData, error) {
+	select {
+	case <-b.started:
+	default:
+		close(b.started)
+	}
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
 func TestWorkerPool_ContextCancellationAbortsProcessing(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ocr_cancel_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	filePath := filepath.Join(tempDir, "cancel_test.jpg")
-	if err := os.WriteFile(filePath, []byte("cancel-test-bytes"), 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
 	mockPub := &mockRedisPublisher{}
 	engine := &blockingCancelEngine{started: make(chan struct{})}
 
@@ -400,12 +385,12 @@ func TestWorkerPool_ContextCancellationAbortsProcessing(t *testing.T) {
 
 	taskCtx, taskCancel := context.WithCancel(context.Background())
 	task := models.OCRTask{
-		TaskID:    "task-cancel-1",
-		UserID:    505,
-		FilePath:  filePath,
-		Ctx:       taskCtx,
-		Cancel:    taskCancel,
-		CreatedAt: time.Now().UTC(),
+		TaskID:     "task-cancel-1",
+		UserID:     505,
+		ImageBytes: []byte("cancel-test-bytes"),
+		Ctx:        taskCtx,
+		Cancel:     taskCancel,
+		CreatedAt:  time.Now().UTC(),
 	}
 
 	if err := wp.Enqueue(task); err != nil {
@@ -419,16 +404,11 @@ func TestWorkerPool_ContextCancellationAbortsProcessing(t *testing.T) {
 		t.Fatalf("timed out waiting for engine to start")
 	}
 
-	// Simulate client disconnection / tab closure by cancelling task
-	wp.CancelTask("task-cancel-1")
+	// Simulate client disconnection / tab closure by cancelling user's tasks
+	wp.CancelUserTasks(505)
 
 	// Wait for processing cleanup
 	time.Sleep(100 * time.Millisecond)
-
-	// Verify temp file was cleaned up
-	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
-		t.Fatalf("expected temp file to be removed after cancellation, but it exists")
-	}
 
 	// Verify no COMPLETED event was emitted
 	for _, m := range mockPub.getMessages() {

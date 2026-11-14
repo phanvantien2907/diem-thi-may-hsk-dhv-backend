@@ -20,7 +20,7 @@ func TestMaskPII(t *testing.T) {
 		{"3 chars", "abc", "a***c"},
 		{"6 chars", "123456", "1***6"},
 		{"7 chars", "1234567", "123***567"},
-		{"CCCD 12 chars", "040204017040", "040***040"},
+		{"CCCD 12 chars", "001099000001", "001***001"},
 		{"Phone 10 chars", "0901234567", "090***567"},
 	}
 
@@ -33,13 +33,13 @@ func TestMaskPII(t *testing.T) {
 }
 
 func TestMaskDocumentNumber(t *testing.T) {
-	assert.Equal(t, "040***040", utils.MaskDocumentNumber("040204017040"))
+	assert.Equal(t, "001***001", utils.MaskDocumentNumber("001099000001"))
 	assert.Equal(t, "B12***789", utils.MaskDocumentNumber("B123456789"))
 }
 
 func TestMaskPhoneNumber(t *testing.T) {
-	assert.Equal(t, "092***923", utils.MaskPhoneNumber("0928123923"))
-	assert.Equal(t, "090***019", utils.MaskPhoneNumber("0908765019"))
+	assert.Equal(t, "090***567", utils.MaskPhoneNumber("0901234567"))
+	assert.Equal(t, "090***001", utils.MaskPhoneNumber("0900000001"))
 }
 
 func TestMaskEmail(t *testing.T) {
@@ -49,8 +49,8 @@ func TestMaskEmail(t *testing.T) {
 		expected string
 	}{
 		{"empty", "", ""},
-		{"standard email", "phamminhtrung@gmail.com", "ph***ng@gmail.com"},
-		{"student email", "040204017040@vinhuni.edu.vn", "04***40@vinhuni.edu.vn"},
+		{"standard email", "nguyenvana@example.com", "ng***na@example.com"},
+		{"student email", "001099000001@vinhuni.edu.vn", "00***01@vinhuni.edu.vn"},
 		{"short username 4 chars", "john@example.com", "jo***n@example.com"},
 		{"short username 2 chars", "me@domain.com", "m***@domain.com"},
 		{"single char username", "a@domain.com", "***@domain.com"},

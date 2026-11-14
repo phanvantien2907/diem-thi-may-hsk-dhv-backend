@@ -18,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hskvinh/backend/internal/cccd"
 	"github.com/hskvinh/backend/internal/cccd/entities"
-	"github.com/hskvinh/backend/internal/cccd/enum"
 	"github.com/hskvinh/backend/internal/middleware"
 	"github.com/hskvinh/backend/internal/ws"
 )
@@ -258,34 +257,9 @@ func TestHandler_ExtractAsync_Returns202AndPushesWebSocket(t *testing.T) {
 		t.Fatalf("expected non-empty request_id in 202 response, got %+v", acceptedEnv)
 	}
 
-	// Wait for background worker to finish processing the job
+	// Wait for background worker to finish processing the job via polling endpoint
+	// (Note: while status is "queued" or "processing", GetJob does not purge; once "completed", single-read auto-purge removes it!)
 	deadline := time.Now().Add(2 * time.Second)
-	var completedJob *entities.AsyncJobRecord
-	for time.Now().Before(deadline) {
-		job, ok := svc.GetJob(acceptedEnv.Data.RequestID, 777)
-		if ok && job.Status == enum.JobStatusCompleted && job.Result != nil {
-			completedJob = job
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if completedJob == nil {
-		t.Fatalf("timed out waiting for async job %s to complete", acceptedEnv.Data.RequestID)
-	}
-	if completedJob.ErrorCode != 0 || completedJob.Result.Data.ID.Value == nil {
-		t.Fatalf("unexpected job result: %+v", completedJob)
-	}
-	if *completedJob.Result.Data.ID.Value != "040203012345" {
-		t.Fatalf("expected extracted ID '040203012345', got %v", *completedJob.Result.Data.ID.Value)
-	}
-
-	// Polling endpoint must return the mapped DTO with FPT-compatible payload
-	pollReq := httptest.NewRequest(http.MethodGet, "/api/v1/cccd/jobs/"+acceptedEnv.Data.RequestID, nil)
-	pw := httptest.NewRecorder()
-	r.ServeHTTP(pw, pollReq)
-	if pw.Code != http.StatusOK {
-		t.Fatalf("expected 200 from GET /cccd/jobs/:id, got %d: %s", pw.Code, pw.Body.String())
-	}
 	var pollEnv struct {
 		Success bool `json:"success"`
 		Data    struct {
@@ -293,21 +267,53 @@ func TestHandler_ExtractAsync_Returns202AndPushesWebSocket(t *testing.T) {
 			Data   struct {
 				ErrorCode int `json:"errorCode"`
 				Data      []struct {
+					ID struct {
+						Value string `json:"value"`
+					} `json:"id"`
 					Decision string `json:"decision"`
 				} `json:"data"`
 			} `json:"data"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(pw.Body.Bytes(), &pollEnv); err != nil {
-		t.Fatalf("unmarshal poll response failed: %v", err)
-	}
-	if pollEnv.Data.Status != "completed" || pollEnv.Data.Data.ErrorCode != 0 || len(pollEnv.Data.Data.Data) != 1 {
-		t.Fatalf("unexpected poll payload: %s", pw.Body.String())
-	}
 
-	// Another user must not see this job
+	// Another user must not see this job while it's in flight or completed
 	if _, ok := svc.GetJob(acceptedEnv.Data.RequestID, 778); ok {
 		t.Fatalf("expected job to be hidden from a different account")
+	}
+
+	completed := false
+	for time.Now().Before(deadline) {
+		pollReq := httptest.NewRequest(http.MethodGet, "/api/v1/cccd/jobs/"+acceptedEnv.Data.RequestID, nil)
+		pw := httptest.NewRecorder()
+		r.ServeHTTP(pw, pollReq)
+		if pw.Code != http.StatusOK {
+			t.Fatalf("expected 200 from GET /cccd/jobs/:id, got %d: %s", pw.Code, pw.Body.String())
+		}
+		if err := json.Unmarshal(pw.Body.Bytes(), &pollEnv); err != nil {
+			t.Fatalf("unmarshal poll response failed: %v", err)
+		}
+		if pollEnv.Data.Status == "completed" {
+			completed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatalf("timed out waiting for async job %s to complete", acceptedEnv.Data.RequestID)
+	}
+	if pollEnv.Data.Data.ErrorCode != 0 || len(pollEnv.Data.Data.Data) != 1 {
+		t.Fatalf("unexpected poll payload: %+v", pollEnv)
+	}
+	if pollEnv.Data.Data.Data[0].ID.Value != "040203000001" {
+		t.Fatalf("expected extracted ID '040203000001', got %q", pollEnv.Data.Data.Data[0].ID.Value)
+	}
+
+	// Single-read auto-purge: reading a completed job a second time must return 404 Not Found
+	secondPollReq := httptest.NewRequest(http.MethodGet, "/api/v1/cccd/jobs/"+acceptedEnv.Data.RequestID, nil)
+	pw2 := httptest.NewRecorder()
+	r.ServeHTTP(pw2, secondPollReq)
+	if pw2.Code != http.StatusNotFound {
+		t.Fatalf("expected single-read auto-purge to return 404 on second read of completed job, got %d", pw2.Code)
 	}
 }
 
@@ -400,7 +406,7 @@ func TestGeminiExtractor_FallbackOn404ToWorkingModel(t *testing.T) {
 								"text": "Analyzing Vietnamese ID card..."
 							},
 							{
-								"text": "~~~json\n{\"is_id_card\":true,\"all_corners_visible\":true,\"side\":\"front\",\"card_title\":\"CĂN CƯỚC CÔNG DÂN\",\"id\":\"040203012345\",\"name\":\"PHAN VĂN TIẾN\",\"dob\":\"29/07/2003\",\"sex\":\"Nam\",\"nationality\":\"Việt Nam\"}\n~~~"
+								"text": "~~~json\n{\"is_id_card\":true,\"all_corners_visible\":true,\"side\":\"front\",\"card_title\":\"CĂN CƯỚC CÔNG DÂN\",\"id\":\"040203000001\",\"name\":\"NGUYỄN VĂN A\",\"dob\":\"29/07/2003\",\"sex\":\"Nam\",\"nationality\":\"Việt Nam\"}\n~~~"
 							}
 						]
 					}
@@ -430,7 +436,7 @@ func TestGeminiExtractor_FallbackOn404ToWorkingModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected fallback model to succeed after 404, got err: %v", err)
 	}
-	if !raw.IsIDCard || raw.ID == nil || *raw.ID != "040203012345" {
+	if !raw.IsIDCard || raw.ID == nil || *raw.ID != "040203000001" {
 		t.Fatalf("unexpected extracted payload: %+v", raw)
 	}
 
@@ -468,7 +474,7 @@ func TestGeminiExtractor_AutoUpgradesRetiredModelsToGemini3Flash(t *testing.T) {
 				"candidates": [{
 					"content": {
 						"parts": [{
-							"text": "{\"is_id_card\":true,\"all_corners_visible\":true,\"side\":\"front\",\"card_title\":\"CĂN CƯỚC CÔNG DÂN\",\"id\":\"040203012345\",\"name\":\"PHAN VĂN TIẾN\",\"dob\":\"29/07/2003\",\"sex\":\"Nam\",\"nationality\":\"Việt Nam\",\"uncertain_fields\":[]}"
+							"text": "{\"is_id_card\":true,\"all_corners_visible\":true,\"side\":\"front\",\"card_title\":\"CĂN CƯỚC CÔNG DÂN\",\"id\":\"040203000001\",\"name\":\"NGUYỄN VĂN A\",\"dob\":\"29/07/2003\",\"sex\":\"Nam\",\"nationality\":\"Việt Nam\",\"uncertain_fields\":[]}"
 						}]
 					}
 				}]
@@ -519,6 +525,102 @@ func TestPipeline_SHA256DeduplicationSavesTokens(t *testing.T) {
 	}
 }
 
+func TestCacheKey_IncludesModelAndPromptVersion(t *testing.T) {
+	imgBytes := makeJPEGBytes(t, 600, 400)
+	baseKey := cccd.ComputeCacheKey(imgBytes, "gemini-3-flash-preview", cccd.PromptVersionHash(), true)
+
+	// 1. Different model name must produce a distinct cache key
+	diffModelKey := cccd.ComputeCacheKey(imgBytes, "gemini-2.5-pro", cccd.PromptVersionHash(), true)
+	if baseKey == diffModelKey {
+		t.Fatalf("expected different model name to produce a different cache key, got identical %s", baseKey)
+	}
+
+	// 2. Different prompt version hash must produce a distinct cache key
+	diffPromptKey := cccd.ComputeCacheKey(imgBytes, "gemini-3-flash-preview", "prompt-v2-modified", true)
+	if baseKey == diffPromptKey {
+		t.Fatalf("expected different prompt version hash to produce a different cache key, got identical %s", baseKey)
+	}
+
+	// 3. Different second_pass_flag must produce a distinct cache key
+	diffSecondPassKey := cccd.ComputeCacheKey(imgBytes, "gemini-3-flash-preview", cccd.PromptVersionHash(), false)
+	if baseKey == diffSecondPassKey {
+		t.Fatalf("expected different second_pass_flag to produce a different cache key, got identical %s", baseKey)
+	}
+
+	// 4. Deterministic: identical parameters must produce identical cache key
+	sameKey := cccd.ComputeCacheKey(imgBytes, "gemini-3-flash-preview", cccd.PromptVersionHash(), true)
+	if baseKey != sameKey {
+		t.Fatalf("expected deterministic cache key %s, got %s", baseKey, sameKey)
+	}
+}
+
+type blockingExtractor struct {
+	started   chan struct{}
+	cancelled chan error
+}
+
+func (b *blockingExtractor) Extract(ctx context.Context, _ entities.PreparedImage, _ []string) (entities.RawExtraction, error) {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	select {
+	case b.cancelled <- ctx.Err():
+	default:
+	}
+	return entities.RawExtraction{}, ctx.Err()
+}
+
+func TestWSDisconnect_CancelsOCRTask(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hub := ws.NewHub()
+	go hub.Run()
+
+	blockExt := &blockingExtractor{
+		started:   make(chan struct{}, 1),
+		cancelled: make(chan error, 1),
+	}
+	cfg := testConfig()
+	svc := cccd.NewService(blockExt, cfg, func() time.Time { return testToday })
+	svc.SetHub(hub)
+	svc.StartWorkers(ctx)
+
+	hub.AddOnUserDisconnected(func(userID int64) {
+		svc.CancelUserTasks(userID)
+	})
+
+	targetUserID := int64(777)
+	client := ws.NewClient(hub, nil, targetUserID, "candidate")
+	time.Sleep(20 * time.Millisecond)
+
+	if _, err := svc.EnqueueAsync(targetUserID, makeJPEGBytes(t, 600, 400), ""); err != nil {
+		t.Fatalf("EnqueueAsync failed: %v", err)
+	}
+
+	// Wait for worker to start executing Extract
+	select {
+	case <-blockExt.started:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for worker to begin OCR extraction")
+	}
+
+	// Disconnect the user's last WebSocket connection
+	hub.UnregisterClient(client)
+
+	// Verify the in-flight OCR context is immediately cancelled
+	select {
+	case err := <-blockExt.cancelled:
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled on WS disconnect, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected in-flight OCR task to be cancelled when user's WebSocket disconnected")
+	}
+}
+
 func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) {
 	// 1. Mock 9-digit CMND response: missing gender (null), includes ethnicity & religion with prefixes
 	cmndJSON := `{
@@ -526,8 +628,8 @@ func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) 
 		"all_corners_visible": true,
 		"side": "front",
 		"card_title": "GIẤY CHỨNG MINH NHÂN DÂN",
-		"id_number": "188020231",
-		"full_name": "HOÀNG MINH TRUNG",
+		"id_number": "123456789",
+		"full_name": "TRẦN THỊ B",
 		"dob": "24/09/1987",
 		"gender": null,
 		"ethnicity": "Dân tộc: Kinh",
@@ -544,8 +646,8 @@ func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ParseRawExtractionJSON for 9-digit CMND failed: %v", err)
 	}
-	if rawCMND.ID == nil || *rawCMND.ID != "188020231" {
-		t.Fatalf("expected coalesced ID='188020231', got %v", rawCMND.ID)
+	if rawCMND.ID == nil || *rawCMND.ID != "123456789" {
+		t.Fatalf("expected coalesced ID='123456789', got %v", rawCMND.ID)
 	}
 	if rawCMND.Sex != nil || rawCMND.Gender != nil {
 		t.Fatalf("expected nil gender/sex for 9-digit CMND, got sex=%v gender=%v", rawCMND.Sex, rawCMND.Gender)
@@ -571,8 +673,8 @@ func TestGeminiExtractor_9DigitCMNDAnd12DigitCCCDExhaustiveSchema(t *testing.T) 
 		"all_corners_visible": true,
 		"side": "front",
 		"card_title": "CĂN CƯỚC CÔNG DÂN",
-		"id_number": "040087001234",
-		"full_name": "HOÀNG MINH TRUNG",
+		"id_number": "040087000001",
+		"full_name": "LÊ VĂN C",
 		"dob": "24/09/1987",
 		"gender": "Nam",
 		"ethnicity": "Kinh",

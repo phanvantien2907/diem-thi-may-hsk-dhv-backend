@@ -26,6 +26,11 @@ type IdCardExtractor interface {
 	Extract(ctx context.Context, image entities.PreparedImage, hints []string) (entities.RawExtraction, error)
 }
 
+// ModelNamedExtractor is an optional interface implemented by extractors that expose their active model identifier.
+type ModelNamedExtractor interface {
+	ModelName() string
+}
+
 var retryableHTTPStatuses = map[int]bool{
 	http.StatusTooManyRequests:     true, // 429
 	http.StatusInternalServerError: true, // 500
@@ -152,6 +157,13 @@ func (g *GeminiExtractor) SetHTTPClient(client *http.Client) {
 	g.mu.Lock()
 	g.httpClient = client
 	g.mu.Unlock()
+}
+
+// ModelName returns the active Gemini model name used by this extractor.
+func (g *GeminiExtractor) ModelName() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.model
 }
 
 func (g *GeminiExtractor) getCandidateModels() []string {

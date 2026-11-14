@@ -26,8 +26,8 @@ func TestHub_OCRCompleted_DeliveredToSpecificUser(t *testing.T) {
 		"task_id": "task-uuid-abc-123",
 		"status":  "COMPLETED",
 		"data": map[string]interface{}{
-			"id_number":  "040203012345",
-			"full_name":  "NGUYỄN VĂN AN",
+			"id_number":  "040203000001",
+			"full_name":  "NGUYỄN VĂN A",
 			"dob":        "15/03/2003",
 			"address":    "Xã Nghi Phú, TP Vinh, Nghệ An",
 			"home_town":  "Nghệ An",
@@ -64,7 +64,7 @@ func TestHub_OCRCompleted_DeliveredToSpecificUser(t *testing.T) {
 		if env.Payload.TaskID != "task-uuid-abc-123" {
 			t.Errorf("expected task_id task-uuid-abc-123, got %s", env.Payload.TaskID)
 		}
-		if env.Payload.Data.IDNumber != "040203012345" || env.Payload.Data.FullName != "NGUYỄN VĂN AN" {
+		if env.Payload.Data.IDNumber != "040203000001" || env.Payload.Data.FullName != "NGUYỄN VĂN A" {
 			t.Errorf("unexpected extracted text data: %+v", env.Payload.Data)
 		}
 	case <-time.After(1 * time.Second):

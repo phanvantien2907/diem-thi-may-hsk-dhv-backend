@@ -22,8 +22,8 @@ func rawCCCDFront(mutate ...func(*entities.RawExtraction)) entities.RawExtractio
 		IsBlurryOrGlare:   false,
 		CardTitle:         strPtr("CĂN CƯỚC CÔNG DÂN"),
 		Side:              strPtr("front"),
-		ID:                strPtr("040203012345"),
-		Name:              strPtr("NGUYỄN VĂN AN"),
+		ID:                strPtr("040203000001"),
+		Name:              strPtr("NGUYỄN VĂN A"),
 		DOB:               strPtr("15/03/2003"),
 		Sex:               strPtr("Nam"),
 		Nationality:       strPtr("Việt Nam"),
@@ -50,8 +50,8 @@ func rawCanCuocFront(mutate ...func(*entities.RawExtraction)) entities.RawExtrac
 		AllCornersVisible: true,
 		CardTitle:         strPtr("CĂN CƯỚC"),
 		Side:              strPtr("front"),
-		ID:                strPtr("040087034824"),
-		Name:              strPtr("HOÀNG MINH TRUNG"),
+		ID:                strPtr("040087000001"),
+		Name:              strPtr("LÊ VĂN C"),
 		DOB:               strPtr("24/09/1987"),
 		Sex:               strPtr("Nam"),
 		Nationality:       strPtr("Việt Nam"),
@@ -93,8 +93,8 @@ func rawCMNDFront(mutate ...func(*entities.RawExtraction)) entities.RawExtractio
 		AllCornersVisible: true,
 		CardTitle:         strPtr("CHỨNG MINH NHÂN DÂN"),
 		Side:              strPtr("front"),
-		ID:                strPtr("187654321"),
-		Name:              strPtr("TRẦN THỊ BÌNH"),
+		ID:                strPtr("123456789"),
+		Name:              strPtr("TRẦN THỊ B"),
 		DOB:               strPtr("02/09/1995"),
 		Home:              strPtr("Diễn Châu, Nghệ An"),
 		Address:           strPtr("Khối 5, P. Hưng Dũng, TP Vinh, Nghệ An"),
@@ -212,7 +212,7 @@ func TestEvaluator_DOEMilestoneMismatch(t *testing.T) {
 func TestEvaluator_ExpiredCardForcesReviewWithWarning(t *testing.T) {
 	r := mustBuild(t, rawCCCDFront(func(raw *entities.RawExtraction) {
 		raw.DOB = strPtr("15/03/1999")
-		raw.ID = strPtr("040099012345")
+		raw.ID = strPtr("040099000001")
 		raw.DOE = strPtr("15/03/2024")
 	}))
 	if r.Data.Decision != cccd.DecisionReview {
@@ -241,7 +241,7 @@ func TestEvaluator_FutureDOBIsInvalid(t *testing.T) {
 
 func TestEvaluator_BadIDLengthInvalid(t *testing.T) {
 	r := mustBuild(t, rawCCCDFront(func(raw *entities.RawExtraction) {
-		raw.ID = strPtr("04020301234")
+		raw.ID = strPtr("04020300001")
 	}))
 	if r.Data.ID.Status != cccd.StatusInvalid {
 		t.Fatalf("expected id invalid, got %s", r.Data.ID.Status)
@@ -250,7 +250,7 @@ func TestEvaluator_BadIDLengthInvalid(t *testing.T) {
 
 func TestEvaluator_UnknownProvinceCodeReview(t *testing.T) {
 	r := mustBuild(t, rawCCCDFront(func(raw *entities.RawExtraction) {
-		raw.ID = strPtr("999203012345")
+		raw.ID = strPtr("999203000001")
 	}))
 	if r.Data.ID.Status != cccd.StatusReview {
 		t.Fatalf("expected id review for unknown province code, got %s", r.Data.ID.Status)

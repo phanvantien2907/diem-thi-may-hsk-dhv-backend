@@ -190,6 +190,7 @@ func main() {
 	)
 	cccdUploadH := cccdhandlers.NewUploadHandler(cccdWorkerPool, "")
 	cccdHandler.SetUploadHandler(cccdUploadH)
+	hub.AddOnUserDisconnected(cccdWorkerPool.CancelUserTasks)
 
 	// ── Middleware ────────────────────────────────────────────────────────
 	limiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)

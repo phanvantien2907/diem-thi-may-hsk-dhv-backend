@@ -196,9 +196,9 @@ func TestListSlotRegistrations_MasksPII_DetectsMultiSlot_AndBuildsShortcuts(t *t
 			int64(501), int64(101), int64(10),
 			int64(1001), "A01", "booked",
 			"confirmed", regAt, false,
-			int64(77), int64(88), "Nguyễn Văn An", "阮文安",
+			int64(77), int64(88), "NGUYỄN VĂN A", "阮文A",
 			dob, "nam", "0912345678", "an@example.com",
-			int64(301), "cccd", "040202001234", "verified", nil,
+			int64(301), "cccd", "001099000001", "verified", nil,
 			true, true,
 			int64(901), "success", int64(750000),
 			2, pq.Array([]int64{101, 102}),
@@ -208,9 +208,9 @@ func TestListSlotRegistrations_MasksPII_DetectsMultiSlot_AndBuildsShortcuts(t *t
 			int64(502), int64(101), int64(10),
 			int64(1002), "A02", "held",
 			"pending_payment", regAt, false,
-			int64(78), int64(89), "Trần Thị Bình", nil,
+			int64(78), int64(89), "TRẦN THỊ B", nil,
 			dob, "nữ", "0987654321", "binh@example.com",
-			int64(302), "cccd", "038199009876", "rejected", rejReason,
+			int64(302), "cccd", "001099000002", "rejected", rejReason,
 			true, true,
 			int64(902), "pending", int64(750000),
 			1, pq.Array([]int64{101}),
@@ -237,8 +237,8 @@ func TestListSlotRegistrations_MasksPII_DetectsMultiSlot_AndBuildsShortcuts(t *t
 	if c1.MaskedPhone != "091***678" {
 		t.Errorf("c1 MaskedPhone = %q, want 091***678", c1.MaskedPhone)
 	}
-	if c1.MaskedDocNumber != "040***234" {
-		t.Errorf("c1 MaskedDocNumber = %q, want 040***234", c1.MaskedDocNumber)
+	if c1.MaskedDocNumber != "001***001" {
+		t.Errorf("c1 MaskedDocNumber = %q, want 001***001", c1.MaskedDocNumber)
 	}
 	if !c1.IsMultiSlot || c1.RegisteredSlotCount != 2 || len(c1.RegisteredSessionIDs) != 2 {
 		t.Errorf("c1 multi-slot = %v count=%d sessions=%v", c1.IsMultiSlot, c1.RegisteredSlotCount, c1.RegisteredSessionIDs)
@@ -439,8 +439,8 @@ func TestAdminListWaitlist_ReturnsQueuePositionAndMasksPII(t *testing.T) {
 			"candidate_id", "candidate_account_id", "candidate_full_name", "candidate_dob", "candidate_gender",
 			"account_phone", "account_email", "doc_number", "verification_status", "slot_count",
 		}).
-			AddRow(int64(1), int64(101), 1, joined1, int64(81), int64(91), "Lê Văn C", dob, "nam", "0901112233", "c@example.com", "040111222333", "verified", 0).
-			AddRow(int64(2), int64(101), 2, joined2, int64(82), int64(92), "Phạm Thị D", dob, "nữ", "0904445566", "d@example.com", "040444555666", "pending", 2))
+			AddRow(int64(1), int64(101), 1, joined1, int64(81), int64(91), "LÊ VĂN C", dob, "nam", "0901112233", "c@example.com", "001099000001", "verified", 0).
+			AddRow(int64(2), int64(101), 2, joined2, int64(82), int64(92), "TRẦN THỊ B", dob, "nữ", "0904445566", "d@example.com", "001099000002", "pending", 2))
 
 	svc := registration.NewService(db, &fakeAudit{})
 	list, meta, err := svc.AdminListWaitlist(context.Background(), 101, request.AdminListWaitlistRequestDTO{Page: 1, Limit: 20})
@@ -453,7 +453,7 @@ func TestAdminListWaitlist_ReturnsQueuePositionAndMasksPII(t *testing.T) {
 	if list[0].QueuePosition != 1 || list[1].QueuePosition != 2 {
 		t.Errorf("queue positions = %d, %d; want 1, 2", list[0].QueuePosition, list[1].QueuePosition)
 	}
-	if list[0].MaskedPhone != "090***233" || list[0].MaskedDocNumber != "040***333" {
+	if list[0].MaskedPhone != "090***233" || list[0].MaskedDocNumber != "001***001" {
 		t.Errorf("PII not masked: phone=%q doc=%q", list[0].MaskedPhone, list[0].MaskedDocNumber)
 	}
 	if !list[1].IsMultiSlot {
@@ -539,8 +539,8 @@ func TestAdminExportRegistrations_FormatsAndDynamicFilename(t *testing.T) {
 			}).AddRow(
 				int64(501), "Đợt thi tháng 11", int64(101), "HSK Cấp 3",
 				"2026-11-15", "Sáng", "Phòng A1", "A01",
-				"Nguyễn Văn An", "阮文安", dob, "nam",
-				"0912345678", "an@example.com", "cccd", "040202001234",
+				"NGUYỄN VĂN A", "阮文A", dob, "nam",
+				"0912345678", "an@example.com", "cccd", "001099000001",
 				"verified", "", true, true,
 				"confirmed", "success", 2, regAt,
 			)
@@ -593,7 +593,7 @@ func TestAdminExportRegistrations_FormatsAndDynamicFilename(t *testing.T) {
 					t.Errorf("got filename=%q, want %s", filename, expectedFilenamePrefix+"txt")
 				}
 				jsonStr := string(data)
-				if !strings.Contains(jsonStr, "091***678") || !strings.Contains(jsonStr, "040***234") {
+				if !strings.Contains(jsonStr, "091***678") || !strings.Contains(jsonStr, "001***001") {
 					t.Errorf("expected masked PII in JSON output, got: %s", jsonStr)
 				}
 			}
@@ -671,12 +671,12 @@ func TestAdminStreamExportRegistrations_ContextCancellation(t *testing.T) {
 	}).
 		AddRow(
 			int64(501), "Đợt 1", int64(101), "HSK 3", "2026-11-15", "Sáng", "P1", "A01",
-			"A", "", dob, "nam", "0912345678", "a@example.com", "cccd", "040202001234",
+			"A", "", dob, "nam", "0912345678", "a@example.com", "cccd", "001099000001",
 			"verified", "", true, true, "confirmed", "success", 1, regAt,
 		).
 		AddRow(
 			int64(502), "Đợt 1", int64(101), "HSK 3", "2026-11-15", "Sáng", "P1", "A02",
-			"B", "", dob, "nam", "0912345679", "b@example.com", "cccd", "040202001235",
+			"B", "", dob, "nam", "0912345679", "b@example.com", "cccd", "001099000002",
 			"verified", "", true, true, "confirmed", "success", 1, regAt,
 		)
 

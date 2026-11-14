@@ -79,11 +79,12 @@ type Hub struct {
 	register    chan *Client
 	unregister  chan *Client
 
-	throttleMu         sync.Mutex
-	throttleQueue      map[string]throttledItem
-	throttleWindow     time.Duration
-	tickets            *TicketStore
-	onUserDisconnected func(userID int64)
+	throttleMu          sync.Mutex
+	throttleQueue       map[string]throttledItem
+	throttleWindow      time.Duration
+	tickets             *TicketStore
+	onUserDisconnected  func(userID int64)
+	disconnectListeners []func(userID int64)
 }
 
 // SetOnUserDisconnected registers a callback invoked when all WebSocket connections for a user are closed.
@@ -91,6 +92,16 @@ func (h *Hub) SetOnUserDisconnected(fn func(userID int64)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.onUserDisconnected = fn
+}
+
+// AddOnUserDisconnected appends an additional disconnect callback invoked when a user's last WebSocket connection closes.
+func (h *Hub) AddOnUserDisconnected(fn func(userID int64)) {
+	if fn == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.disconnectListeners = append(h.disconnectListeners, fn)
 }
 
 // NewHub creates and initializes a new Hub with a built-in TicketStore and throttle buffer.
@@ -170,7 +181,8 @@ func (h *Hub) RegisterClient(client *Client) {
 	log.Printf("[ws] client connected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
 }
 
-// UnregisterClient removes a Client from the Hub safely.
+// UnregisterClient removes a Client from the Hub safely and triggers user disconnect hooks
+// when the user's last active WebSocket connection closes.
 func (h *Hub) UnregisterClient(client *Client) {
 	if client == nil {
 		return
@@ -178,9 +190,14 @@ func (h *Hub) UnregisterClient(client *Client) {
 	h.mu.Lock()
 	removed := h.removeClientLocked(client)
 	var onDisconnect func(userID int64)
+	var listeners []func(userID int64)
 	userID := client.UserID
 	if removed && userID > 0 && len(h.userClients[userID]) == 0 {
 		onDisconnect = h.onUserDisconnected
+		if len(h.disconnectListeners) > 0 {
+			listeners = make([]func(userID int64), len(h.disconnectListeners))
+			copy(listeners, h.disconnectListeners)
+		}
 	}
 	total := len(h.clients)
 	h.mu.Unlock()
@@ -188,6 +205,11 @@ func (h *Hub) UnregisterClient(client *Client) {
 		log.Printf("[ws] client disconnected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
 		if onDisconnect != nil {
 			onDisconnect(userID)
+		}
+		for _, fn := range listeners {
+			if fn != nil {
+				fn(userID)
+			}
 		}
 	}
 }
@@ -497,6 +519,21 @@ func (h *Hub) DisconnectUser(userID int64, closeCode int, reason string) int {
 
 	for _, client := range snapshot {
 		client.CloseWithCode(closeCode, reason)
+	}
+
+	h.mu.RLock()
+	onDisconnect := h.onUserDisconnected
+	listeners := make([]func(userID int64), len(h.disconnectListeners))
+	copy(listeners, h.disconnectListeners)
+	h.mu.RUnlock()
+
+	if onDisconnect != nil {
+		onDisconnect(userID)
+	}
+	for _, fn := range listeners {
+		if fn != nil {
+			fn(userID)
+		}
 	}
 	return len(snapshot)
 }

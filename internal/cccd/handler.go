@@ -83,6 +83,19 @@ func (h *Handler) Extract(c *gin.Context) {
 		utils.BadRequest(c, "Không thể đọc dữ liệu file ảnh")
 		return
 	}
+	if len(rawBytes) > maxBytes {
+		utils.BadRequest(c, "Kích thước file vượt quá giới hạn tối đa")
+		return
+	}
+	if _, _, magicErr := ValidateImageMagicBytes(rawBytes); magicErr != nil {
+		var pErr *PipelineError
+		if errors.As(magicErr, &pErr) {
+			utils.BadRequest(c, pErr.Message)
+			return
+		}
+		utils.BadRequest(c, magicErr.Error())
+		return
+	}
 
 	requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
 

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -94,6 +95,38 @@ func (rl *RateLimiter) RateLimit() gin.HandlerFunc {
 				"meta":    nil,
 			})
 			return
+		}
+		c.Next()
+	}
+}
+
+// RateLimitByAccountAndIP enforces rate limiting per client IP AND per authenticated account ID
+// (when ContextKeyUserID is present) to protect expensive upstream APIs such as Gemini Vision OCR.
+func (rl *RateLimiter) RateLimitByAccountAndIP() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ipKey := "ip:" + c.ClientIP()
+		if !rl.allow(ipKey) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error":   "too many requests from this IP, please slow down",
+				"data":    nil,
+				"meta":    nil,
+			})
+			return
+		}
+		if uidVal, exists := c.Get(ContextKeyUserID); exists {
+			if uid, ok := uidVal.(int64); ok && uid > 0 {
+				acctKey := fmt.Sprintf("acct:%d", uid)
+				if !rl.allow(acctKey) {
+					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+						"success": false,
+						"error":   "too many OCR requests for this account, please wait a moment",
+						"data":    nil,
+						"meta":    nil,
+					})
+					return
+				}
+			}
 		}
 		c.Next()
 	}

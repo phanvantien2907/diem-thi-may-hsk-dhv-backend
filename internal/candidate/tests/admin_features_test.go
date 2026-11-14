@@ -49,9 +49,9 @@ func TestService_AdminListCandidatesFiltered(t *testing.T) {
 			"candidate_document_portrait_image_url", "status", "candidate_document_rejection_reason",
 			"candidate_document_ward_id", "province_id", "candidate_document_address_detail",
 		}).AddRow(
-			int64(10), int64(20), "潘文进", "潘文进", dob, "male", nil, nil, nil,
+			int64(10), int64(20), "阮文A", "阮文A", dob, "male", nil, nil, nil,
 			"Việt Nam", nil, nil, "0901234567", "candidate@example.com", "HSK 3",
-			int64(30), int64(10), "cccd", "012345678901", dob, "公安机关",
+			int64(30), int64(10), "cccd", "001099000001", dob, "公安机关",
 			"front", nil, "portrait", "verified", nil, nil, nil, nil,
 		))
 
@@ -59,14 +59,14 @@ func TestService_AdminListCandidatesFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdminListCandidatesFiltered() error = %v", err)
 	}
-	if len(items) != 1 || items[0].FullName != "潘文进" ||
-		items[0].FullNameCN == nil || *items[0].FullNameCN != "潘文进" {
+	if len(items) != 1 || items[0].FullName != "阮文A" ||
+		items[0].FullNameCN == nil || *items[0].FullNameCN != "阮文A" {
 		t.Fatalf("unexpected items: %+v", items)
 	}
 	if items[0].Phone == nil || *items[0].Phone != "090***567" ||
 		items[0].ExamLevel == nil || *items[0].ExamLevel != "HSK 3" ||
 		items[0].TargetExamLevel == nil || *items[0].TargetExamLevel != "HSK 3" ||
-		items[0].LatestDocument == nil || items[0].LatestDocument.DocNumber != "012***901" ||
+		items[0].LatestDocument == nil || items[0].LatestDocument.DocNumber != "001***001" ||
 		items[0].LatestDocument.BackImageURL != nil {
 		t.Fatalf("unexpected enriched candidate fields: %+v", items[0])
 	}
@@ -74,7 +74,7 @@ func TestService_AdminListCandidatesFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
-	for _, field := range []string{`"full_name_cn":"潘文进"`, `"birthplace":null`, `"back_image_url":null`} {
+	for _, field := range []string{`"full_name_cn":"阮文A"`, `"birthplace":null`, `"back_image_url":null`} {
 		if !strings.Contains(string(payload), field) {
 			t.Fatalf("expected explicit null field %s in %s", field, payload)
 		}
@@ -129,7 +129,7 @@ func TestService_AdminExportCandidatesByExamDate(t *testing.T) {
 			"candidate_full_name", "candidate_dob", "candidate_document_number",
 			"exam_type_name", "exam_registration_registered_at", "status",
 			"candidate_document_rejection_reason",
-		}).AddRow("Nguyen Van A", dob, "012345678901", "HSK 3", registeredAt, "rejected", "Ảnh CCCD bị mờ"))
+		}).AddRow("NGUYỄN VĂN A", dob, "001099000001", "HSK 3", registeredAt, "rejected", "Ảnh CCCD bị mờ"))
 
 	pdf, err := svc.AdminExportCandidates(context.Background(), request.AdminListCandidatesRequestDTO{
 		ExamDate: examDate,

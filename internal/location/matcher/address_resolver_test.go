@@ -111,3 +111,61 @@ func TestNormalizationAndSimilarity(t *testing.T) {
 	assert.Equal(t, 1.0, SimilarityScore("nam dan", "nam dan"))
 }
 
+func TestAddressResolver_AmbiguousDiacritics(t *testing.T) {
+	v2ProvJSON := []byte(`[
+		{"code": 40, "name": "Tỉnh Nghệ An", "codename": "tinh_nghe_an"}
+	]`)
+	v2WardJSON := []byte(`[
+		{"code": 20001, "name": "Xã Thạnh Bình", "division_type": "xã", "codename": "xa_thanh_binh_1", "province_code": 40},
+		{"code": 20002, "name": "Xã Thanh Bình", "division_type": "xã", "codename": "xa_thanh_binh_2", "province_code": 40}
+	]`)
+
+	r, err := NewAddressResolverFromSnapshots(nil, v2ProvJSON, v2WardJSON)
+	require.NoError(t, err)
+	r.BindDBMappings(
+		[]DBProvinceBinding{{ID: 40, Code: "V2-40", Name: "Tỉnh Nghệ An"}},
+		[]DBWardBinding{
+			{ID: 101, ProvinceID: 40, Code: "V2-20001", Name: "Xã Thạnh Bình", WardType: "xa", Version: "v2"},
+			{ID: 102, ProvinceID: 40, Code: "V2-20002", Name: "Xã Thanh Bình", WardType: "xa", Version: "v2"},
+		},
+	)
+
+	// 1. Exact diacritic match for "Thạnh" strictly outranks "Thanh"
+	resThanhDot := r.Resolve("Xóm 1, Xã Thạnh Bình, Tỉnh Nghệ An", "Tỉnh Nghệ An", "", "Xã Thạnh Bình", "Xóm 1")
+	assert.True(t, resThanhDot.Matched)
+	assert.Equal(t, StatusResolved, resThanhDot.Status)
+	assert.Equal(t, "Xã Thạnh Bình", resThanhDot.WardName)
+	assert.Equal(t, 20001, resThanhDot.WardCode)
+	assert.Equal(t, int64(101), resThanhDot.WardID)
+	assert.Empty(t, resThanhDot.Candidates)
+
+	// 2. Exact diacritic match for "Thanh" strictly outranks "Thạnh"
+	resThanhPlain := r.Resolve("Xóm 1, Xã Thanh Bình, Tỉnh Nghệ An", "Tỉnh Nghệ An", "", "Xã Thanh Bình", "Xóm 1")
+	assert.True(t, resThanhPlain.Matched)
+	assert.Equal(t, StatusResolved, resThanhPlain.Status)
+	assert.Equal(t, "Xã Thanh Bình", resThanhPlain.WardName)
+	assert.Equal(t, 20002, resThanhPlain.WardCode)
+	assert.Equal(t, int64(102), resThanhPlain.WardID)
+	assert.Empty(t, resThanhPlain.Candidates)
+
+	// 3. Stripped ASCII input ("Xa Thanh Binh, Tinh Nghe An") ties within < 0.05 delta -> requires_confirmation
+	resStripped := r.Resolve("Xom 1, Xa Thanh Binh, Tinh Nghe An", "Tinh Nghe An", "", "Xa Thanh Binh", "Xom 1")
+	assert.False(t, resStripped.Matched)
+	assert.Equal(t, StatusRequiresConfirmation, resStripped.Status)
+	assert.Empty(t, resStripped.WardName)
+	assert.Equal(t, int64(0), resStripped.WardID)
+	require.Len(t, resStripped.Candidates, 2)
+	assert.ElementsMatch(t,
+		[]string{"Xã Thạnh Bình", "Xã Thanh Bình"},
+		[]string{resStripped.Candidates[0].Name, resStripped.Candidates[1].Name},
+	)
+
+	// 4. Conflicting tone ("Xã Thành Bình" when only "Thạnh Bình" and "Thanh Bình" exist) -> requires_confirmation
+	resConflictingTone := r.Resolve("Xóm 1, Xã Thành Bình, Tỉnh Nghệ An", "Tỉnh Nghệ An", "", "Xã Thành Bình", "Xóm 1")
+	assert.False(t, resConflictingTone.Matched)
+	assert.Equal(t, StatusRequiresConfirmation, resConflictingTone.Status)
+	assert.Empty(t, resConflictingTone.WardName)
+	require.Len(t, resConflictingTone.Candidates, 2)
+}
+
+

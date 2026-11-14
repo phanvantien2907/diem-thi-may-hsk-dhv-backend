@@ -52,7 +52,7 @@ func TestToDocumentResponseDTO(t *testing.T) {
 		CandidateDocumentID:                 10,
 		CandidateDocumentCandidateID:        1,
 		CandidateDocumentType:               enum.DocumentTypeCCCD,
-		CandidateDocumentNumber:             "012345678900",
+		CandidateDocumentNumber:             "001099000001",
 		CandidateDocumentIssueDate:          issueDate,
 		CandidateDocumentVerificationStatus: enum.DocVerificationRejected,
 		CandidateDocumentRejectionReason:    &rejectReason,

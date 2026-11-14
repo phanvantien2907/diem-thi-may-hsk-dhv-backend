@@ -28,11 +28,11 @@ func TestCleanText_PlaceholdersAndWhitespace(t *testing.T) {
 }
 
 func TestNormalizeName(t *testing.T) {
-	if got := cccd.NormalizeName(strPtr("nguyễn  văn an")); got == nil || *got != "NGUYỄN VĂN AN" {
-		t.Fatalf("expected 'NGUYỄN VĂN AN', got %v", got)
+	if got := cccd.NormalizeName(strPtr("nguyễn  văn a")); got == nil || *got != "NGUYỄN VĂN A" {
+		t.Fatalf("expected 'NGUYỄN VĂN A', got %v", got)
 	}
-	if got := cccd.NormalizeName(strPtr("NGUYEN VAN 4N")); got == nil || *got != "NGUYEN VAN N" {
-		t.Fatalf("expected 'NGUYEN VAN N', got %v", got)
+	if got := cccd.NormalizeName(strPtr("NGUYEN VAN 4A")); got == nil || *got != "NGUYEN VAN A" {
+		t.Fatalf("expected 'NGUYEN VAN A', got %v", got)
 	}
 	if got := cccd.NormalizeName(strPtr("  ")); got != nil {
 		t.Fatalf("expected nil for blank string, got %v", *got)
@@ -40,19 +40,19 @@ func TestNormalizeName(t *testing.T) {
 }
 
 func TestNormalizeID_FixesConfusablesAndLabels(t *testing.T) {
-	val, notes := cccd.NormalizeID(strPtr("040 203 012 345"))
-	if val == nil || *val != "040203012345" || len(notes) != 0 {
-		t.Fatalf("expected ('040203012345', []), got (%v, %v)", val, notes)
+	val, notes := cccd.NormalizeID(strPtr("040 203 000 001"))
+	if val == nil || *val != "040203000001" || len(notes) != 0 {
+		t.Fatalf("expected ('040203000001', []), got (%v, %v)", val, notes)
 	}
 
-	val, notes = cccd.NormalizeID(strPtr("O4O2O3O12345"))
-	if val == nil || *val != "040203012345" || len(notes) == 0 {
-		t.Fatalf("expected ('040203012345', non-empty notes), got (%v, %v)", val, notes)
+	val, notes = cccd.NormalizeID(strPtr("O4O2O3OOOOO1"))
+	if val == nil || *val != "040203000001" || len(notes) == 0 {
+		t.Fatalf("expected ('040203000001', non-empty notes), got (%v, %v)", val, notes)
 	}
 
-	val, notes = cccd.NormalizeID(strPtr("Số: 187654321"))
-	if val == nil || *val != "187654321" || len(notes) != 0 {
-		t.Fatalf("expected ('187654321', []), got (%v, %v)", val, notes)
+	val, notes = cccd.NormalizeID(strPtr("Số: 123456789"))
+	if val == nil || *val != "123456789" || len(notes) != 0 {
+		t.Fatalf("expected ('123456789', []), got (%v, %v)", val, notes)
 	}
 }
 

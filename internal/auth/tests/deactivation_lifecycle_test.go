@@ -46,7 +46,7 @@ func TestDeactivateAccountByAdmin_ConfirmationSessionRevocationCascadeAndReactiv
 	// 1. Mismatched confirmation identity must be rejected immediately
 	err = svc.SoftDeleteAccountByAdmin(context.Background(), 1, 50, request.DeactivateAccountByAdminRequestDTO{
 		ConfirmAccountID: 999, // wrong ID
-		ConfirmIdentity:  "040123456060",
+		ConfirmIdentity:  "001099000001",
 		Reason:           "Vi phạm quy chế thi",
 	})
 	if !errors.Is(err, auth.ErrDeactivationConfirmationMismatch) {
@@ -59,7 +59,7 @@ func TestDeactivateAccountByAdmin_ConfirmationSessionRevocationCascadeAndReactiv
 		WithArgs(int64(50)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"account_username", "account_email", "account_full_name", "candidate_id", "candidate_full_name", "doc_number",
-		}).AddRow("040123456060", "cand50@example.com", "Nguyễn Văn B", int64(500), "Nguyễn Văn B", "040123456060"))
+		}).AddRow("001099000001", "cand50@example.com", "TRẦN THỊ B", int64(500), "TRẦN THỊ B", "001099000001"))
 
 	mock.ExpectQuery(`SELECT er\.exam_registration_id, er\.exam_registration_exam_seat_id, er\.exam_registration_status FROM exam_registrations er`).
 		WithArgs(int64(500)).
@@ -93,7 +93,7 @@ func TestDeactivateAccountByAdmin_ConfirmationSessionRevocationCascadeAndReactiv
 
 	err = svc.SoftDeleteAccountByAdmin(context.Background(), 1, 50, request.DeactivateAccountByAdminRequestDTO{
 		ConfirmAccountID: 50,
-		ConfirmIdentity:  "Nguyễn Văn B",
+		ConfirmIdentity:  "TRẦN THỊ B",
 		Reason:           "Tài khoản trùng lặp theo yêu cầu thí sinh",
 	})
 	if err != nil {
@@ -181,7 +181,7 @@ func TestLogin_DeactivatedAccount(t *testing.T) {
 
 	// Simulate account that has been soft-deleted / deactivated by admin (account_status = 'disabled' / 'deactivated')
 	mock.ExpectQuery(`SELECT account_id, account_password_hash`).
-		WithArgs("040123456060").
+		WithArgs("001099000001").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"account_id", "account_password_hash", "account_status",
 			"account_failed_login_count", "account_locked_until", "account_must_change_password",
@@ -189,7 +189,7 @@ func TestLogin_DeactivatedAccount(t *testing.T) {
 			int64(50), "$2a$10$dummyhash", "deactivated", 0, nil, false,
 		))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"040123456060","password":"Password123!"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"identifier":"001099000001","password":"Password123!"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -262,7 +262,7 @@ func TestDeactivateAccount_ForceLogout(t *testing.T) {
 		WithArgs(int64(50)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"account_username", "account_email", "account_full_name", "candidate_id", "candidate_full_name", "doc_number",
-		}).AddRow("040123456060", "cand50@example.com", "Nguyễn Văn B", int64(500), "Nguyễn Văn B", "040123456060"))
+		}).AddRow("001099000001", "cand50@example.com", "TRẦN THỊ B", int64(500), "TRẦN THỊ B", "001099000001"))
 
 	mock.ExpectQuery(`SELECT er\.exam_registration_id, er\.exam_registration_exam_seat_id, er\.exam_registration_status FROM exam_registrations er`).
 		WithArgs(int64(500)).
@@ -281,7 +281,7 @@ func TestDeactivateAccount_ForceLogout(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	body := `{"confirm_account_id":50,"confirm_identity":"040123456060","reason":"Vi phạm quy chế thi nghiêm trọng"}`
+	body := `{"confirm_account_id":50,"confirm_identity":"001099000001","reason":"Vi phạm quy chế thi nghiêm trọng"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/candidates/500/deactivate", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

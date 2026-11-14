@@ -10,11 +10,53 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"math"
+	"net/http"
 
 	"github.com/hskvinh/backend/internal/cccd/entities"
 )
 
-// PrepareImage validates image size, resolution, sharpness, and brightness in memory,
+var allowedMagicMimes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/gif":  true,
+}
+
+// ValidateImageMagicBytes inspects the first 512 bytes via http.DetectContentType
+// and validates structural image headers via image.DecodeConfig.
+// Strictly permits image/jpeg, image/png, and image/gif; rejects spoofed extensions.
+func ValidateImageMagicBytes(raw []byte) (string, image.Config, error) {
+	if len(raw) == 0 {
+		return "", image.Config{}, NewPipelineError(ErrCodeInvalidParams, "Thiếu file ảnh trong request")
+	}
+	sniffLen := len(raw)
+	if sniffLen > 512 {
+		sniffLen = 512
+	}
+	detectedMime := http.DetectContentType(raw[:sniffLen])
+	if !allowedMagicMimes[detectedMime] {
+		return "", image.Config{}, NewPipelineError(
+			ErrCodeInvalidImage,
+			fmt.Sprintf("File gửi lên không phải là ảnh hợp lệ (magic-byte MIME: %s); chỉ chấp nhận JPEG, PNG, GIF", detectedMime),
+		)
+	}
+
+	imgCfg, formatName, cfgErr := image.DecodeConfig(bytes.NewReader(raw))
+	if cfgErr != nil {
+		if errors.Is(cfgErr, image.ErrFormat) {
+			return "", image.Config{}, NewPipelineError(ErrCodeInvalidImage, "File gửi lên không phải là file ảnh", cfgErr)
+		}
+		return "", image.Config{}, NewPipelineError(ErrCodeBadImageData, "File ảnh bị hỏng hoặc định dạng không được hỗ trợ", cfgErr)
+	}
+	if formatName != "jpeg" && formatName != "png" && formatName != "gif" {
+		return "", image.Config{}, NewPipelineError(ErrCodeInvalidImage, "Định dạng ảnh không được hỗ trợ")
+	}
+	if imgCfg.Width <= 0 || imgCfg.Height <= 0 || int64(imgCfg.Width)*int64(imgCfg.Height) > 40_000_000 {
+		return "", image.Config{}, NewPipelineError(ErrCodeBadImageData, "File ảnh bị hỏng hoặc kích thước vượt ngưỡng an toàn")
+	}
+	return detectedMime, imgCfg, nil
+}
+
+// PrepareImage validates image size, magic bytes, resolution, sharpness, and brightness in memory,
 // downscales if the longest edge exceeds cfg.MaxImageEdge, and encodes as JPEG (quality 90).
 func PrepareImage(raw []byte, cfg Config) (entities.PreparedImage, error) {
 	if len(raw) == 0 {
@@ -25,16 +67,8 @@ func PrepareImage(raw []byte, cfg Config) (entities.PreparedImage, error) {
 		return entities.PreparedImage{}, NewPipelineError(ErrCodeFileTooLarge, fmt.Sprintf("Ảnh vượt quá %g MB", mb))
 	}
 
-	// Quick config check to guard against decompression bombs before full decode
-	imgCfg, _, cfgErr := image.DecodeConfig(bytes.NewReader(raw))
-	if cfgErr != nil {
-		if errors.Is(cfgErr, image.ErrFormat) {
-			return entities.PreparedImage{}, NewPipelineError(ErrCodeInvalidImage, "File gửi lên không phải là file ảnh", cfgErr)
-		}
-		return entities.PreparedImage{}, NewPipelineError(ErrCodeBadImageData, "File ảnh bị hỏng hoặc định dạng không được hỗ trợ", cfgErr)
-	}
-	if int64(imgCfg.Width)*int64(imgCfg.Height) > 40_000_000 {
-		return entities.PreparedImage{}, NewPipelineError(ErrCodeBadImageData, "File ảnh bị hỏng hoặc định dạng không được hỗ trợ")
+	if _, _, err := ValidateImageMagicBytes(raw); err != nil {
+		return entities.PreparedImage{}, err
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(raw))

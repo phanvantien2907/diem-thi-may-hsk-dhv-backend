@@ -1,9 +1,19 @@
 package cccd
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 // PromptVersion tracks the version of the extraction prompt for accuracy evaluation gates.
-const PromptVersion = "2026-10-28.1"
+const PromptVersion = "2026-11-14.2"
+
+// PromptVersionHash returns a deterministic SHA-256 hex digest of the active prompt version and system instructions.
+func PromptVersionHash() string {
+	h := sha256.Sum256([]byte(PromptVersion + "|" + SystemPrompt + "|" + SystemPromptBack))
+	return hex.EncodeToString(h[:])
+}
 
 // AgentGoldenRules documents the core operational & privacy rules migrated from
 // .agents/skills/ and CLAUDE.md of the cccd_ai_service repository.

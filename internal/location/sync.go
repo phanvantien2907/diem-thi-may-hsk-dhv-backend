@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	DefaultV1APIURL          = "https://provinces.open-api.vn/api/?depth=3"
-	DefaultV2ProvincesAPIURL = "https://provinces.open-api.vn/api/v2/p/?depth=3"
-	DefaultV2WardsAPIURL     = "https://provinces.open-api.vn/api/v2/w/"
-	MinExpectedSyncedWards   = 3000
-	MinExpectedProvinces     = 34
+	DefaultV1APIURL            = "https://provinces.open-api.vn/api/?depth=3"
+	DefaultV2ProvincesAPIURL   = "https://provinces.open-api.vn/api/v2/p/?depth=3"
+	DefaultV2WardsAPIURL       = "https://provinces.open-api.vn/api/v2/w/"
+	MinExpectedSyncedWards     = 3000
+	MinExpectedProvinces       = 34
+	MaxGeospatialResponseBytes = 15 * 1024 * 1024 // 15 MB bounded response limit
 )
 
 // GeospatialSyncOptions configures external API endpoints, HTTP client, and retry backoff.
@@ -116,10 +117,12 @@ func FetchOpenAPIPayloadWithRetry(ctx context.Context, client *http.Client, url 
 		if err != nil {
 			lastErr = err
 		} else {
-			body, readErr := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxGeospatialResponseBytes+1))
 			resp.Body.Close()
 			if readErr != nil {
 				lastErr = readErr
+			} else if int64(len(body)) > MaxGeospatialResponseBytes {
+				lastErr = fmt.Errorf("response from %s exceeded %d bytes safety limit", url, MaxGeospatialResponseBytes)
 			} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				if json.Valid(body) {
 					return body, nil

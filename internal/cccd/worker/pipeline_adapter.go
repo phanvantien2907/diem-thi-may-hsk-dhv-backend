@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/hskvinh/backend/internal/cccd/dto/response"
@@ -16,7 +15,7 @@ type PipelineProcessor interface {
 }
 
 // PipelineOCREngine adapts the internal CCCD pipeline into the worker OCREngine interface.
-// Strictly extracts textual fields. NO BIOMETRICS / NO FACIAL RECOGNITION.
+// Strictly extracts textual fields in memory (zero disk writes). NO BIOMETRICS / NO FACIAL RECOGNITION.
 type PipelineOCREngine struct {
 	processor PipelineProcessor
 }
@@ -26,14 +25,13 @@ func NewPipelineOCREngine(processor PipelineProcessor) *PipelineOCREngine {
 	return &PipelineOCREngine{processor: processor}
 }
 
-// ExtractText loads image from filePath and runs textual extraction.
-func (e *PipelineOCREngine) ExtractText(ctx context.Context, filePath string) (*models.OCRResultData, error) {
-	bytes, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("read image file: %w", err)
+// ExtractText runs textual extraction directly on the in-memory imageBytes slice.
+func (e *PipelineOCREngine) ExtractText(ctx context.Context, imageBytes []byte) (*models.OCRResultData, error) {
+	if len(imageBytes) == 0 {
+		return nil, fmt.Errorf("empty image buffer")
 	}
 
-	resp := e.processor.Process(ctx, bytes, "")
+	resp := e.processor.Process(ctx, imageBytes, "")
 	if resp.ErrorCode != 0 {
 		msg := resp.ErrorMessage
 		if msg == "" {

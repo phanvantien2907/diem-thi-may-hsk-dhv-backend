@@ -33,22 +33,22 @@ func TestService_PatchMyProfile_SavesChineseName(t *testing.T) {
 	dob := time.Date(2000, 5, 15, 0, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`UPDATE candidates[\s\S]*candidate_full_name_cn[\s\S]*RETURNING`).
-		WithArgs("", "潘文进", "", "", "", (*int16)(nil), int64(10)).
+		WithArgs("", "阮文A", "", "", "", (*int16)(nil), int64(10)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"candidate_id", "candidate_account_id", "candidate_full_name", "candidate_full_name_cn",
 			"candidate_dob", "candidate_gender", "candidate_ethnicity", "candidate_religion",
 			"candidate_birthplace", "candidate_nationality", "candidate_mother_tongue",
 			"candidate_chinese_study_years",
-		}).AddRow(10, 1, "Nguyễn Văn A", "潘文进", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
+		}).AddRow(10, 1, "Nguyễn Văn A", "阮文A", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
 	mock.ExpectExec(`UPDATE candidate_documents`).WithArgs(int64(10)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
-	got, err := svc.PatchMyProfile(context.Background(), 1, request.PatchProfileRequestDTO{FullNameCN: "潘文进"})
+	got, err := svc.PatchMyProfile(context.Background(), 1, request.PatchProfileRequestDTO{FullNameCN: "阮文A"})
 	if err != nil {
 		t.Fatalf("PatchMyProfile() error = %v", err)
 	}
-	if got.FullNameCN == nil || *got.FullNameCN != "潘文进" {
-		t.Fatalf("FullNameCN = %v, want 潘文进", got.FullNameCN)
+	if got.FullNameCN == nil || *got.FullNameCN != "阮文A" {
+		t.Fatalf("FullNameCN = %v, want 阮文A", got.FullNameCN)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -73,24 +73,24 @@ func TestService_PatchMyProfile_RemovesAccidentalJSONQuotesFromChineseName(t *te
 	dob := time.Date(2000, 5, 15, 0, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`UPDATE candidates[\s\S]*candidate_full_name_cn[\s\S]*RETURNING`).
-		WithArgs("", "潘文进", "", "", "", (*int16)(nil), int64(10)).
+		WithArgs("", "阮文A", "", "", "", (*int16)(nil), int64(10)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"candidate_id", "candidate_account_id", "candidate_full_name", "candidate_full_name_cn",
 			"candidate_dob", "candidate_gender", "candidate_ethnicity", "candidate_religion",
 			"candidate_birthplace", "candidate_nationality", "candidate_mother_tongue",
 			"candidate_chinese_study_years",
-		}).AddRow(10, 1, "Nguyễn Văn A", "潘文进", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
+		}).AddRow(10, 1, "Nguyễn Văn A", "阮文A", dob, "male", nil, nil, nil, "Việt Nam", nil, nil))
 	mock.ExpectExec(`UPDATE candidate_documents`).WithArgs(int64(10)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
 	got, err := svc.PatchMyProfile(context.Background(), 1, request.PatchProfileRequestDTO{
-		FullNameCN: `"潘文进"`,
+		FullNameCN: `"阮文A"`,
 	})
 	if err != nil {
 		t.Fatalf("PatchMyProfile() error = %v", err)
 	}
-	if got.FullNameCN == nil || *got.FullNameCN != "潘文进" {
-		t.Fatalf("FullNameCN = %v, want 潘文进", got.FullNameCN)
+	if got.FullNameCN == nil || *got.FullNameCN != "阮文A" {
+		t.Fatalf("FullNameCN = %v, want 阮文A", got.FullNameCN)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
@@ -223,8 +223,8 @@ func TestService_GetMyDocuments_Success(t *testing.T) {
 	mock.ExpectQuery(`SELECT .+ FROM candidate_documents`).
 		WithArgs(int64(10)).
 		WillReturnRows(sqlmock.NewRows(docCols).
-			AddRow(2, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front2.jpg", nil, "http://img/portrait2.jpg", "verified", nil, nil, nil, nil).
-			AddRow(1, 10, "cccd", "012345678901", issueDate, "Police", "http://img/front1.jpg", nil, "http://img/portrait1.jpg", "pending", nil, nil, nil, nil))
+			AddRow(2, 10, "cccd", "001099000001", issueDate, "Police", "http://img/front2.jpg", nil, "http://img/portrait2.jpg", "verified", nil, nil, nil, nil).
+			AddRow(1, 10, "cccd", "001099000001", issueDate, "Police", "http://img/front1.jpg", nil, "http://img/portrait1.jpg", "pending", nil, nil, nil, nil))
 
 	docs, err := svc.GetMyDocuments(context.Background(), int64(1))
 	if err != nil {
