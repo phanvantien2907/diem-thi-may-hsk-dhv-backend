@@ -14,6 +14,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 		loc.GET("/provinces", h.ListProvinces)
 		loc.GET("/provinces/:id/wards", h.ListWards)
 		loc.GET("/wards/:id/delivery-coverage", h.GetWardDeliveryCoverage)
+		loc.POST("/resolve-address", h.ResolveAddress)
 		loc.POST("/clear-cache", h.ClearCache)
 	}
 
@@ -23,6 +24,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, jwtSecret string) {
 	{
 		admin.GET("/stats/candidates-by-province", h.StatsCandidatesByProvince)
 		admin.POST("/wards/:id/merge", h.MergeWard)
+		admin.POST("/sync", h.SyncGeospatial)
 		admin.POST("/clear-cache", h.ClearCache)
 	}
 }

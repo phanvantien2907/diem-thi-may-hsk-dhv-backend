@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hskvinh/backend/internal/cccd/models"
+	"github.com/hskvinh/backend/internal/location/matcher"
 )
 
 const (
@@ -433,6 +434,48 @@ func StandardizeOCRResult(res *models.OCRResultData) *models.OCRResultData {
 		}
 		if res.AddressDetail == "" {
 			res.AddressDetail = fbDetail
+		}
+	}
+
+	if res.Address != "" || res.AddressProvince != "" || res.AddressWard != "" {
+		resolved := matcher.DefaultResolver().Resolve(
+			res.Address,
+			res.AddressProvince,
+			res.AddressDistrict,
+			res.AddressWard,
+			res.AddressDetail,
+		)
+		if resolved.Matched {
+			if res.AddressProvince == "" || resolved.LegacyProvince != "" {
+				if resolved.ProvinceName != "" {
+					res.AddressProvince = resolved.ProvinceName
+				}
+			}
+			if resolved.DistrictName != "" && res.AddressDistrict == "" {
+				res.AddressDistrict = resolved.DistrictName
+			}
+			if res.AddressWard == "" || resolved.MatchSource == "legacy_to_v2" {
+				if resolved.WardName != "" {
+					res.AddressWard = resolved.WardName
+				}
+			}
+			if res.AddressDetail == "" && resolved.AddressDetail != "" {
+				res.AddressDetail = resolved.AddressDetail
+			}
+			if resolved.ProvinceID > 0 {
+				pID := resolved.ProvinceID
+				res.ProvinceID = &pID
+			}
+			if resolved.DistrictID > 0 {
+				dID := resolved.DistrictID
+				res.DistrictID = &dID
+			}
+			if resolved.WardID > 0 {
+				wID := resolved.WardID
+				res.WardID = &wID
+			}
+			res.IsLegacyAddress = resolved.IsLegacyAddress
+			res.LegacyWardName = resolved.LegacyWardName
 		}
 	}
 

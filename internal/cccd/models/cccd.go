@@ -36,6 +36,11 @@ type OCRResultData struct {
 	AddressDistrict string `json:"address_district"`
 	AddressWard     string `json:"address_ward"`
 	AddressDetail   string `json:"address_detail"`
+	ProvinceID      *int64 `json:"province_id,omitempty"`
+	DistrictID      *int64 `json:"district_id,omitempty"`
+	WardID          *int64 `json:"ward_id,omitempty"`
+	IsLegacyAddress bool   `json:"is_legacy_address,omitempty"`
+	LegacyWardName  string `json:"legacy_ward_name,omitempty"`
 	HomeTown        string `json:"home_town,omitempty"`
 	IssueDate       string `json:"issue_date,omitempty"`
 	PlaceOfIssue    string `json:"place_of_issue,omitempty"`
