@@ -189,6 +189,7 @@ func main() {
 	)
 	cccdUploadH := cccdhandlers.NewUploadHandler(cccdWorkerPool, "")
 	cccdHandler.SetUploadHandler(cccdUploadH)
+	hub.SetDisconnectGracePeriod(cfg.WSDisconnectGrace)
 	hub.AddOnUserDisconnected(cccdWorkerPool.CancelUserTasks)
 
 	// ── Middleware ────────────────────────────────────────────────────────

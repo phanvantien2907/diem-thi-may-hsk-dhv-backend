@@ -59,7 +59,7 @@ internal/
 ├── result/                 # Exam results and recheck requests
 ├── utils/                  # Shared HTTP response helpers, validation, password hashing, param parsing
 ├── worker/                 # Background workers (PayOS expired transaction sync, seat cleanup, geospatial sync cron)
-└── ws/                     # WebSocket hub, one-time tickets (user & guest), and real-time event delivery
+└── ws/                     # WebSocket hub, one-time tickets, and real-time event delivery
 
 migrations/
 ├── 000001_schema.up.sql          # Full DB schema (applied first)
@@ -339,7 +339,7 @@ All API routes are mounted under `/api/v1`.
 | location | POST | `/admin/locations/wards/:id/merge` | JWT + admin |
 | location | POST | `/admin/locations/clear-cache` | JWT + admin |
 | location | POST | `/admin/locations/sync` | JWT + admin |
-| cccd | POST | `/cccd/upload` | JWT or Guest Ticket |
+| cccd | POST | `/cccd/upload` | JWT |
 | cccd | POST | `/cccd/extract` | JWT |
 | cccd | GET | `/cccd/jobs/:id` | JWT |
 | audit | GET | `/admin/audit-logs` | JWT + admin |
@@ -355,7 +355,6 @@ All API routes are mounted under `/api/v1`.
 | dashboard | POST | `/admin/system/clear-cache` | JWT + admin |
 | dashboard | GET | `/admin/users/me/audit-log` | JWT + admin |
 | ws | POST | `/ws/ticket` | JWT |
-| ws | POST | `/ws/guest-ticket` | public (rate-limited) |
 | ws | GET | `/ws/dashboard` | JWT + admin |
 
 ### Response envelope
@@ -675,7 +674,6 @@ func ToSomeResponseDTO(e SomeEntity) response.SomeResponseDTO {
 | `limiter.RateLimit()` | `ratelimit.go` | Per-IP token bucket. Responds 429. Background cleanup every 5 min (stopped via `limiter.Stop()`). |
 | `limiter.RateLimitByAccountAndIP()` | `ratelimit.go` | Dual token bucket enforcing both per-IP and per-`user_id` limits (e.g., 3 req/min, burst 5 on `/cccd/upload` and `/cccd/extract`). |
 | `JWTAuth(secret)` | `auth.go` | Validates Bearer token; sets `user_id` (int64) and `user_role` (string) on Gin context. |
-| `JWTAuthOrGuestTicket(secret, ticketMgr)` | `auth.go` | Accepts either a valid Bearer JWT or an `X-Guest-Ticket` / `guest_ticket` token (negative `user_id`) for guest-first OCR onboarding. |
 | `RequireRole(roles...)` | `auth.go` | Enforces role membership; must follow `JWTAuth`. |
 
 Global middleware order (in `main.go`): `CORS → Logger → Recovery → RateLimit`.
@@ -780,7 +778,7 @@ exceptions (`EXAM_SESSION_NOT_FOUND`, `EXAM_SESSION_CANCELLED`,
 
 ### In-memory rate limiter
 
-`RateLimiter` is a `sync.Mutex`-protected token bucket keyed by client IP (`RateLimit()`) or by both client IP and authenticated/guest account ID (`RateLimitByAccountAndIP()`). It is process-local (not distributed). A background cleanup goroutine removes stale entries every 5 minutes — started in `NewRateLimiter` and cleanly terminated via `limiter.Stop()`.
+`RateLimiter` is a `sync.Mutex`-protected token bucket keyed by client IP (`RateLimit()`) or by both client IP and authenticated account ID (`RateLimitByAccountAndIP()`). It is process-local (not distributed). A background cleanup goroutine removes stale entries every 5 minutes — started in `NewRateLimiter` and cleanly terminated via `limiter.Stop()`.
 
 ### Rules for new goroutines
 
@@ -1209,6 +1207,7 @@ CCCD/CMND OCR, WebSocket Hub, Geospatial Address Resolution, and Rate Limiter re
 - `internal/ws/tests/hub_ocr_test.go`, `internal/ws/tests/hub_resilience_test.go`
 - `internal/location/matcher/address_resolver_test.go`, `internal/location/sync_test.go`, `internal/location/tests/service_test.go`
 - `internal/middleware/tests/ratelimit_test.go`
+- `internal/config/tests/config_test.go`
 
 ---
 
@@ -1394,8 +1393,8 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 
 1. **Architecture & One-Time Ticket Handshake:**
    - `ws.Hub` maintains active WebSocket connections mapped per `userID` (`map[int64]map[*Client]bool`, max 5 concurrent connections per user; oldest connection evicted with close code `4002` when a 6th tab opens).
-   - Authenticated users exchange their JWT at `POST /api/v1/ws/ticket` for a 30-second one-time ticket (`?ticket=<id>`); unauthenticated guests on the registration page obtain a scoped negative-userID ticket at `POST /api/v1/ws/guest-ticket`. Passing raw `?token=<jwt>` in the query string is rejected with HTTP 401.
-   - Mounted at `GET /ws` (all authenticated/guest users) and `GET /api/v1/ws/dashboard` (admin).
+   - Authenticated users exchange their JWT at `POST /api/v1/ws/ticket` for a 30-second one-time ticket (`?ticket=<id>`). Passing raw `?token=<jwt>` in the query string is rejected with HTTP 401.
+   - Mounted at `GET /ws` (authenticated users) and `GET /api/v1/ws/dashboard` (admin).
    - Thread-safe registration, unregistration, broadcast, and clean shutdown via `Hub.Stop()`.
 
 2. **Supported Events & Delivery Guarantees:**
@@ -1403,7 +1402,7 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
    - Candidate & Account events: `NOTIFICATION_PAYLOAD`, `notification_read`, `PROFILE_STATUS_UPDATED`, `SHIFT_CHANGED`, `FORCE_LOGOUT`.
    - Real-time OCR events: `ocr_progress` (`QUEUED` 10%, `PROCESSING` 55%), `ocr_completed` (`side: "front"`), `ocr_back_completed` (`side: "back"`), `ocr_failed`, and `CCCD_EXTRACTED`.
    - **Redis Pub/Sub Deduplication & Null-Data Guard:** `SendToUser` records locally dispatched OCR events (`recordLocalOCRDispatch` with a 5s TTL window) so `ListenRedisPubSub` on the same instance never delivers duplicate frames to local clients, and `ListenRedisPubSub` drops `ocr_completed` / `ocr_back_completed` frames whose `Data` is empty or `null` (preventing Redis status-only broadcasts from clobbering extracted OCR payloads).
-   - **Disconnect & Slow-Client Eviction Callbacks:** `Hub.AddOnUserDisconnected` fires when a user's last active connection closes — both on normal unregister and when a slow client (`Send` buffer full) is evicted in `dispatchBroadcastBytes`, `SendToUser`, `SendToUsers`, or `SendToRole` (`notifyDisconnectedUsers`).
+   - **Disconnect Grace Period & Slow-Client Eviction (`H-06b`):** `Hub.AddOnUserDisconnected` waits `disconnectGrace` (configured via `WS_DISCONNECT_GRACE_MS`, default `3000` ms, wired with `Hub.SetDisconnectGracePeriod`; `0` disables) when a user's last active connection closes — both on normal unregister and when a slow client (`Send` buffer full) is evicted in `dispatchBroadcastBytes`, `SendToUser`, `SendToUsers`, or `SendToRole` (`notifyDisconnectedUsers`). If the user reconnects before the grace timer fires, `RegisterClient` cancels the pending timer so in-flight OCR jobs continue uninterrupted; forced disconnects via `DisconnectUser` (logout / account deactivation) clear pending timers and fire callbacks immediately.
 
 ---
 
@@ -1462,8 +1461,8 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 1. **Strict Monotonic WebSocket Event Ordering (`internal/cccd/worker/ocr_engine.go`):**
    - `WorkerPool.Enqueue` reserves capacity via `queueSlots chan struct{}`, initializes the task status record, and emits `StatusQueued (10%)` **before** sending the task to `wp.queue`.
    - `emitEvent` enforces a monotonic rank check (`statusOrderRank`: `QUEUED (1) < PROCESSING (2) < COMPLETED/FAILED (3)`) so an out-of-order late event can never regress task state.
-2. **Zero-Disk In-Memory Processing, Magic-Byte Validation & Decree 13/2023 Privacy:**
-   - All image uploads (`/api/v1/cccd/upload` and `/api/v1/cccd/extract`) inspect the first 512 bytes via `ValidateImageMagicBytes` (`http.DetectContentType` + JPEG/PNG/GIF magic signatures) and `image.DecodeConfig` (`maxAllowedImagePixels = 40,000,000` decompression-bomb guard), bounded by `io.LimitReader`.
+2. **Zero-Disk In-Memory Processing, `.jpg`/`.JPG` MIME Normalization, Magic-Byte Validation & Decree 13/2023 Privacy:**
+   - All image uploads (`/api/v1/cccd/upload` and `/api/v1/cccd/extract`) accept case-insensitive `.jpg`, `.jpeg`, `.png` (and `.gif` where applicable), inspect the first 512 bytes via `ValidateImageMagicBytes` (`http.DetectContentType` + JPEG/PNG/GIF magic signatures) and `image.DecodeConfig` (`maxAllowedImagePixels = 40,000,000` decompression-bomb guard) bounded by `io.LimitReader`, and normalize JPEG/JPG variants (`"image/jpg"`, `"image/pjpeg"`, `".jpg"`, empty MIME) to canonical `"image/jpeg"` via `NormalizeImageMimeType` before calling Gemini Vision API.
    - Sensitive identity images are processed strictly in RAM (`[]byte`) and are **never** written to `/tmp/cccd_uploads` or disk.
    - Cache keys are versioned (`ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)`), expire after **3 minutes** via O(1) lazy checks + a 60s background eviction ticker, and are purged immediately after the first completed read (**Single-Read Auto-Purge**).
    - Redis Pub/Sub (`cccd:ocr_events`) carries `Data: nil` (zero PII on Redis); extracted PII is delivered exclusively over the user's direct WebSocket connection.
@@ -1471,7 +1470,7 @@ Trong các đợt thi nóng (hàng chục ngàn người online), Backend có th
 3. **Strict Job Ownership, Collision Guard & Blast-Radius Isolation:**
    - `Service.GetJob(requestID, userID)` and `WorkerPool.GetTaskStatus(requestID, userID)` reject `userID <= 0 || rec.UserID <= 0 || rec.UserID != userID`.
    - `Service.EnqueueAsync` regenerates `requestID` on collision so a client-supplied `X-Request-ID` can never overwrite or hijack another user's job, and deletes `s.jobs[requestID]` if `s.jobQueue` is full.
-   - `CancelUserTasks(userID)` ignores `userID <= 0` (`if userID <= 0 { return }`), registers task cancel functions at `Enqueue` time so queued tasks are also cancelled before calling Gemini if the user disconnects, and only cancels tasks belonging to that exact `userID`.
+   - `CancelUserTasks(userID)` ignores `userID <= 0` (`if userID <= 0 { return }`), registers task cancel functions at `Enqueue` time so queued tasks are also cancelled before calling Gemini if the user disconnects past `WS_DISCONNECT_GRACE_MS` (default `3000` ms), and only cancels tasks belonging to that exact `userID`.
 4. **No Fabricated Fields & Invalid-Status Omission:**
    - `StandardizeOCRResult` never fabricates `Gender`/`Sex` from the 4th digit of a 12-digit CCCD (nor for a 9-digit CMND) when the OCR engine did not read the sex field.
    - `PipelineOCREngine.ExtractText` filters all fields through `validFieldString`, omitting any field whose `Status == enum.StatusInvalid` (e.g., a year-only DOB `"1999"`) so invalid partial values do not fail the entire card extraction.

@@ -59,6 +59,7 @@ type Config struct {
 	GeminiModel        string
 	GeminiTimeoutSec   float64
 	CCCDMaxConcurrency int
+	WSDisconnectGrace  time.Duration
 }
 
 // Load reads configuration from the .env file and environment variables.
@@ -70,16 +71,16 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppPort:                  getEnv("APP_PORT", "8080"),
-		AppEnv:                   getEnv("APP_ENV", "production"),
-		DatabaseURL:              mustGetEnv("DATABASE_URL"),
-		JWTSecret:                mustGetEnv("JWT_SECRET"),
-		CloudinaryURL:            mustGetEnv("CLOUDINARY_URL"),
-		WebhookSecret:            getEnv("WEBHOOK_SECRET", ""),
-		PayOSClientID:            getEnv("PAY_OS_CLIENT_ID", ""),
-		PayOSApiKey:              getEnv("PAY_OS_API_KEY", ""),
-		PayOSChecksumKey:         getEnv("PAY_OS_CHECKSUM_KEY", ""),
-		CORSAllowedOrigins:       strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
+		AppPort:                    getEnv("APP_PORT", "8080"),
+		AppEnv:                     getEnv("APP_ENV", "production"),
+		DatabaseURL:                mustGetEnv("DATABASE_URL"),
+		JWTSecret:                  mustGetEnv("JWT_SECRET"),
+		CloudinaryURL:              mustGetEnv("CLOUDINARY_URL"),
+		WebhookSecret:              getEnv("WEBHOOK_SECRET", ""),
+		PayOSClientID:              getEnv("PAY_OS_CLIENT_ID", ""),
+		PayOSApiKey:                getEnv("PAY_OS_API_KEY", ""),
+		PayOSChecksumKey:           getEnv("PAY_OS_CHECKSUM_KEY", ""),
+		CORSAllowedOrigins:         strings.Split(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173"), ","),
 		GoogleCloudCredentialsPath: getEnv("GOOGLE_CLOUD_CREDENTIALS_PATH", ""),
 		GeminiAPIKey:               getEnv("GEMINI_API_KEY", ""),
 		GeminiModel:                getEnv("GEMINI_MODEL", "gemini-3-flash-preview"),
@@ -97,6 +98,12 @@ func Load() (*Config, error) {
 	if cfg.CCCDMaxConcurrency <= 0 {
 		cfg.CCCDMaxConcurrency = 4
 	}
+
+	wsGraceMS, err := strconv.Atoi(getEnv("WS_DISCONNECT_GRACE_MS", "3000"))
+	if err != nil || wsGraceMS < 0 {
+		return nil, fmt.Errorf("invalid WS_DISCONNECT_GRACE_MS: %v", err)
+	}
+	cfg.WSDisconnectGrace = time.Duration(wsGraceMS) * time.Millisecond
 
 	cfg.RedisDB, _ = strconv.Atoi(getEnv("REDIS_DB", "0"))
 

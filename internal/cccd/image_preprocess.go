@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"math"
 	"net/http"
+	"strings"
 
 	"github.com/hskvinh/backend/internal/cccd/entities"
 )
@@ -19,6 +20,22 @@ var allowedMagicMimes = map[string]bool{
 	"image/jpeg": true,
 	"image/png":  true,
 	"image/gif":  true,
+}
+
+// NormalizeImageMimeType maps non-standard or extension-like JPEG MIME strings
+// (such as "image/jpg", "image/pjpeg", ".jpg", ".jpeg", or empty strings) to the standard "image/jpeg".
+func NormalizeImageMimeType(mime string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(mime))
+	switch trimmed {
+	case "", "image/jpeg", "image/jpg", "image/pjpeg", ".jpg", ".jpeg", "jpg", "jpeg":
+		return "image/jpeg"
+	case "image/png", ".png", "png":
+		return "image/png"
+	case "image/gif", ".gif", "gif":
+		return "image/gif"
+	default:
+		return trimmed
+	}
 }
 
 // ValidateImageMagicBytes inspects the first 512 bytes via http.DetectContentType

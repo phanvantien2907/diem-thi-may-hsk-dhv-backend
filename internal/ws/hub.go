@@ -85,10 +85,24 @@ type Hub struct {
 	tickets             *TicketStore
 	onUserDisconnected  func(userID int64)
 	disconnectListeners []func(userID int64)
+	disconnectGrace     time.Duration
+	pendingDisconnect   map[int64]*time.Timer
 	stopCh              chan struct{}
 	stopOnce            sync.Once
 	recentOCRDispMu     sync.Mutex
 	recentOCRDispatched map[string]time.Time
+}
+
+// SetDisconnectGracePeriod configures an optional grace window (e.g., 3s for mobile 4G reconnects)
+// before firing user-disconnect callbacks when a user's last WebSocket connection closes.
+// Setting d <= 0 keeps immediate disconnect callback execution.
+func (h *Hub) SetDisconnectGracePeriod(d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if d < 0 {
+		d = 0
+	}
+	h.disconnectGrace = d
 }
 
 // SetOnUserDisconnected registers a callback invoked when all WebSocket connections for a user are closed.
@@ -120,15 +134,24 @@ func NewHub() *Hub {
 		throttleQueue:       make(map[string]throttledItem),
 		throttleWindow:      DefaultThrottleWindow,
 		tickets:             NewTicketStore(),
+		pendingDisconnect:   make(map[int64]*time.Timer),
 		stopCh:              make(chan struct{}),
 		recentOCRDispatched: make(map[string]time.Time),
 	}
 }
 
-// Stop signals the Hub's Run loop to exit cleanly.
+// Stop signals the Hub's Run loop to exit cleanly and cancels any pending disconnect timers.
 func (h *Hub) Stop() {
 	h.stopOnce.Do(func() {
 		close(h.stopCh)
+		h.mu.Lock()
+		for uid, timer := range h.pendingDisconnect {
+			if timer != nil {
+				timer.Stop()
+			}
+			delete(h.pendingDisconnect, uid)
+		}
+		h.mu.Unlock()
 	})
 }
 
@@ -156,6 +179,13 @@ func (h *Hub) RegisterClient(client *Client) {
 
 	h.mu.Lock()
 	if client.UserID > 0 {
+		if pendingTimer, ok := h.pendingDisconnect[client.UserID]; ok {
+			if pendingTimer != nil {
+				pendingTimer.Stop()
+			}
+			delete(h.pendingDisconnect, client.UserID)
+			log.Printf("[ws] user %d reconnected within grace period; in-flight OCR tasks preserved", client.UserID)
+		}
 		conns := h.userClients[client.UserID]
 		for len(conns) >= MaxConnectionsPerUser {
 			oldest := conns[0]
@@ -195,36 +225,89 @@ func (h *Hub) RegisterClient(client *Client) {
 }
 
 // UnregisterClient removes a Client from the Hub safely and triggers user disconnect hooks
-// when the user's last active WebSocket connection closes.
+// when the user's last active WebSocket connection closes (honoring disconnectGrace if > 0).
 func (h *Hub) UnregisterClient(client *Client) {
 	if client == nil {
 		return
 	}
 	h.mu.Lock()
 	removed := h.removeClientLocked(client)
-	var onDisconnect func(userID int64)
-	var listeners []func(userID int64)
 	userID := client.UserID
-	if removed && userID > 0 && len(h.userClients[userID]) == 0 {
-		onDisconnect = h.onUserDisconnected
-		if len(h.disconnectListeners) > 0 {
-			listeners = make([]func(userID int64), len(h.disconnectListeners))
-			copy(listeners, h.disconnectListeners)
-		}
-	}
+	lastConnClosed := removed && userID > 0 && len(h.userClients[userID]) == 0
 	total := len(h.clients)
 	h.mu.Unlock()
 	if removed {
 		log.Printf("[ws] client disconnected (user_id=%d, role=%s, total=%d)", client.UserID, client.Role, total)
-		if onDisconnect != nil {
-			onDisconnect(userID)
-		}
-		for _, fn := range listeners {
-			if fn != nil {
-				fn(userID)
-			}
+		if lastConnClosed {
+			h.scheduleUserDisconnect(userID)
 		}
 	}
+}
+
+func (h *Hub) fireDisconnectListeners(userID int64) {
+	if userID <= 0 {
+		return
+	}
+	h.mu.RLock()
+	onDisconnect := h.onUserDisconnected
+	var listeners []func(userID int64)
+	if len(h.disconnectListeners) > 0 {
+		listeners = make([]func(userID int64), len(h.disconnectListeners))
+		copy(listeners, h.disconnectListeners)
+	}
+	h.mu.RUnlock()
+
+	if onDisconnect != nil {
+		onDisconnect(userID)
+	}
+	for _, fn := range listeners {
+		if fn != nil {
+			fn(userID)
+		}
+	}
+}
+
+func (h *Hub) scheduleUserDisconnect(userID int64) {
+	if userID <= 0 {
+		return
+	}
+	h.mu.Lock()
+	grace := h.disconnectGrace
+	if grace <= 0 {
+		if prev := h.pendingDisconnect[userID]; prev != nil {
+			prev.Stop()
+			delete(h.pendingDisconnect, userID)
+		}
+		h.mu.Unlock()
+		h.fireDisconnectListeners(userID)
+		return
+	}
+	if prev := h.pendingDisconnect[userID]; prev != nil {
+		prev.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(grace, func() {
+		h.mu.Lock()
+		current, ok := h.pendingDisconnect[userID]
+		if !ok || current != timer {
+			h.mu.Unlock()
+			return
+		}
+		delete(h.pendingDisconnect, userID)
+		stillOffline := len(h.userClients[userID]) == 0
+		select {
+		case <-h.stopCh:
+			h.mu.Unlock()
+			return
+		default:
+		}
+		h.mu.Unlock()
+		if stillOffline {
+			h.fireDisconnectListeners(userID)
+		}
+	})
+	h.pendingDisconnect[userID] = timer
+	h.mu.Unlock()
 }
 
 func (h *Hub) removeClientLocked(client *Client) bool {
@@ -297,27 +380,11 @@ func (h *Hub) notifyDisconnectedUsers(userIDs []int64) {
 	if len(userIDs) == 0 {
 		return
 	}
-	h.mu.RLock()
-	onDisconnect := h.onUserDisconnected
-	var listeners []func(userID int64)
-	if len(h.disconnectListeners) > 0 {
-		listeners = make([]func(userID int64), len(h.disconnectListeners))
-		copy(listeners, h.disconnectListeners)
-	}
-	h.mu.RUnlock()
-
 	for _, uid := range userIDs {
 		if uid <= 0 {
 			continue
 		}
-		if onDisconnect != nil {
-			onDisconnect(uid)
-		}
-		for _, fn := range listeners {
-			if fn != nil {
-				fn(uid)
-			}
-		}
+		h.scheduleUserDisconnect(uid)
 	}
 }
 
@@ -557,9 +624,20 @@ func (h *Hub) DisconnectUser(userID int64, closeCode int, reason string) int {
 	}
 
 	h.mu.Lock()
+	hadPendingTimer := false
+	if pendingTimer, ok := h.pendingDisconnect[userID]; ok {
+		hadPendingTimer = true
+		if pendingTimer != nil {
+			pendingTimer.Stop()
+		}
+		delete(h.pendingDisconnect, userID)
+	}
 	conns := h.userClients[userID]
 	if len(conns) == 0 {
 		h.mu.Unlock()
+		if hadPendingTimer {
+			h.fireDisconnectListeners(userID)
+		}
 		return 0
 	}
 	snapshot := make([]*Client, len(conns))

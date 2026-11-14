@@ -932,3 +932,132 @@ func TestService_H10_ProcessRespectsContextWhenSemaphoreFull(t *testing.T) {
 		t.Fatal("Service.Process blocked on s.sem ignoring ctx.Done()!")
 	}
 }
+
+func TestGeminiExtractor_JPGUpload_NormalizesMimeTypeToImageJPEG(t *testing.T) {
+	var capturedMimes []string
+	var mu sync.Mutex
+
+	mockClient := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("failed to decode Gemini request payload: %v", err)
+			}
+			if contents, ok := body["contents"].([]any); ok && len(contents) > 0 {
+				if firstContent, ok := contents[0].(map[string]any); ok {
+					if parts, ok := firstContent["parts"].([]any); ok && len(parts) > 0 {
+						if firstPart, ok := parts[0].(map[string]any); ok {
+							if inlineData, ok := firstPart["inline_data"].(map[string]any); ok {
+								if m, ok := inlineData["mime_type"].(string); ok {
+									mu.Lock()
+									capturedMimes = append(capturedMimes, m)
+									mu.Unlock()
+								}
+							}
+						}
+					}
+				}
+			}
+
+			rec := httptest.NewRecorder()
+			rec.Header().Set("Content-Type", "application/json")
+			rec.WriteHeader(http.StatusOK)
+			_, _ = rec.WriteString(`{
+				"candidates": [{
+					"content": {
+						"parts": [{
+							"text": "{\"is_id_card\":true,\"all_corners_visible\":true,\"side\":\"front\",\"card_title\":\"CĂN CƯỚC CÔNG DÂN\",\"id\":\"040203000001\",\"name\":\"NGUYỄN VĂN A\",\"dob\":\"29/07/2003\",\"sex\":\"Nam\",\"nationality\":\"Việt Nam\",\"uncertain_fields\":[]}"
+						}]
+					}
+				}]
+			}`)
+			return rec.Result(), nil
+		}),
+	}
+
+	cfg := cccd.DefaultConfig()
+	cfg.GeminiAPIKey = "AIzaSySyntheticTestKeyForJPGMimeCheck"
+	cfg.GeminiMaxRetries = 0
+
+	ext, err := cccd.NewGeminiExtractor(cfg)
+	if err != nil {
+		t.Fatalf("NewGeminiExtractor failed: %v", err)
+	}
+	ext.SetHTTPClient(mockClient)
+
+	// 1. PrepareImage from valid .JPG bytes must output Mime = "image/jpeg"
+	rawJPG := makeJPEGBytes(t, 640, 420)
+	prepared, err := cccd.PrepareImage(rawJPG, cfg)
+	if err != nil {
+		t.Fatalf("PrepareImage failed on .JPG bytes: %v", err)
+	}
+	if prepared.Mime != "image/jpeg" {
+		t.Fatalf("expected PrepareImage Mime to be 'image/jpeg', got %q", prepared.Mime)
+	}
+
+	if _, err := ext.Extract(context.Background(), prepared, nil); err != nil {
+		t.Fatalf("GeminiExtractor.Extract failed on prepared .JPG: %v", err)
+	}
+
+	// 2. Even if PreparedImage has non-standard Mime ("image/jpg" or ".JPG"), Gemini payload must normalize to "image/jpeg"
+	for _, nonStdMime := range []string{"image/jpg", "image/pjpeg", ".JPG", ".jpg", ""} {
+		customPrepared := prepared
+		customPrepared.Mime = nonStdMime
+		if _, err := ext.Extract(context.Background(), customPrepared, nil); err != nil {
+			t.Fatalf("GeminiExtractor.Extract failed with Mime=%q: %v", nonStdMime, err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(capturedMimes) != 6 {
+		t.Fatalf("expected 6 Gemini API calls, got %d", len(capturedMimes))
+	}
+	for i, m := range capturedMimes {
+		if m != "image/jpeg" {
+			t.Fatalf("call %d: expected Gemini inline_data.mime_type to be 'image/jpeg', got %q", i, m)
+		}
+	}
+}
+
+func TestHandler_ExtractEndpoint_AcceptsUppercaseJPG(t *testing.T) {
+	svc, _ := makeService(testConfig(), rawCCCDFront())
+	h := cccd.NewHandler(svc)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/api/v1/cccd/extract", func(c *gin.Context) {
+		c.Set("user_id", int64(501))
+		c.Next()
+	}, h.Extract)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("image", "CCCD_FRONT.JPG")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	_, _ = part.Write(makeJPEGBytes(t, 640, 420))
+	_ = mw.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/cccd/extract?sync=true", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for .JPG extract?sync=true, got %d: %s", w.Code, w.Body.String())
+	}
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ErrorCode int `json:"errorCode"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if !env.Success || env.Data.ErrorCode != 0 {
+		t.Fatalf("expected success with errorCode=0 for .JPG extract, got %s", w.Body.String())
+	}
+}

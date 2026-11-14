@@ -267,3 +267,110 @@ func TestHub_H06_SlowClientEvictionAndMultiTabDisconnect(t *testing.T) {
 			disconnectCount.Load(), lastDisconnectedUser.Load())
 	}
 }
+
+// H-06b: Verify WebSocket disconnect grace period preserves in-flight OCR tasks on brief 4G reconnects,
+// fires once if the user remains offline past the grace window, fires immediately on forced DisconnectUser,
+// and cleans up pending timers on Hub.Stop().
+func TestHub_H06b_DisconnectGracePeriodAndReconnect(t *testing.T) {
+	hub := ws.NewHub()
+	hub.SetDisconnectGracePeriod(150 * time.Millisecond)
+	go hub.Run()
+	defer hub.Stop()
+
+	var disconnectCount atomic.Int32
+	var lastDisconnectedUser atomic.Int64
+	hub.AddOnUserDisconnected(func(userID int64) {
+		disconnectCount.Add(1)
+		lastDisconnectedUser.Store(userID)
+	})
+
+	// 1. Brief disconnect + reconnect within grace period (40ms < 150ms) -> callback MUST NOT fire
+	c1 := ws.NewClient(hub, nil, 801, "candidate")
+	hub.UnregisterClient(c1)
+	if disconnectCount.Load() != 0 {
+		t.Fatalf("expected disconnect callback to wait for grace period, but fired immediately")
+	}
+	time.Sleep(40 * time.Millisecond)
+	c1Reconnected := ws.NewClient(hub, nil, 801, "candidate")
+	time.Sleep(180 * time.Millisecond)
+	if disconnectCount.Load() != 0 {
+		t.Fatalf("expected reconnect within grace period to cancel timer, got count=%d", disconnectCount.Load())
+	}
+
+	// 2. Final disconnect with no reconnect -> callback fires once after grace period
+	hub.UnregisterClient(c1Reconnected)
+	time.Sleep(50 * time.Millisecond)
+	if disconnectCount.Load() != 0 {
+		t.Fatalf("expected callback not to fire at 50ms (< 150ms grace), got count=%d", disconnectCount.Load())
+	}
+	time.Sleep(160 * time.Millisecond)
+	if disconnectCount.Load() != 1 || lastDisconnectedUser.Load() != 801 {
+		t.Fatalf("expected disconnect callback to fire once for user 801 after grace period, got count=%d user=%d",
+			disconnectCount.Load(), lastDisconnectedUser.Load())
+	}
+
+	// 3. Forced DisconnectUser (logout / account deactivation) -> fires immediately despite grace period
+	_ = ws.NewClient(hub, nil, 802, "candidate")
+	evicted := hub.DisconnectUser(802, ws.CloseCodeSessionTerminated, "Account deactivated")
+	if evicted != 1 {
+		t.Fatalf("expected 1 evicted connection for user 802, got %d", evicted)
+	}
+	if disconnectCount.Load() != 2 || lastDisconnectedUser.Load() != 802 {
+		t.Fatalf("expected forced DisconnectUser to fire callback immediately for user 802, got count=%d user=%d",
+			disconnectCount.Load(), lastDisconnectedUser.Load())
+	}
+
+	// 4. Flapping (disconnect -> reconnect -> disconnect) restarts the grace window
+	var flapCount atomic.Int32
+	flapHub := ws.NewHub()
+	flapHub.SetDisconnectGracePeriod(160 * time.Millisecond)
+	go flapHub.Run()
+	defer flapHub.Stop()
+	flapHub.AddOnUserDisconnected(func(userID int64) {
+		if userID == 804 {
+			flapCount.Add(1)
+		}
+	})
+	f1 := ws.NewClient(flapHub, nil, 804, "candidate")
+	flapHub.UnregisterClient(f1)
+	time.Sleep(100 * time.Millisecond)
+	f2 := ws.NewClient(flapHub, nil, 804, "candidate")
+	// Even 100ms after f2 connects (200ms after first disconnect), callback must NOT fire because reconnect cancelled old timer
+	time.Sleep(100 * time.Millisecond)
+	if flapCount.Load() != 0 {
+		t.Fatalf("expected flapping reconnect to cancel first timer, got count=%d", flapCount.Load())
+	}
+	flapHub.UnregisterClient(f2)
+	// Must still wait a fresh 160ms grace window from f2 disconnect
+	time.Sleep(80 * time.Millisecond)
+	if flapCount.Load() != 0 {
+		t.Fatalf("expected fresh 160ms grace window from second disconnect, fired early at 80ms")
+	}
+	time.Sleep(140 * time.Millisecond)
+	if flapCount.Load() != 1 {
+		t.Fatalf("expected callback to fire exactly once after restarted grace window, got %d", flapCount.Load())
+	}
+
+	// 5. Slow-client eviction followed by reconnect within grace period cancels pending disconnect
+	slow805 := ws.NewClient(hub, nil, 805, "candidate")
+	_ = slow805
+	for i := 0; i <= ws.ClientSendBufferSize+2; i++ {
+		hub.SendToUser(805, ws.EventOCRProgress, map[string]any{"seq": i})
+	}
+	time.Sleep(40 * time.Millisecond)
+	_ = ws.NewClient(hub, nil, 805, "candidate")
+	time.Sleep(180 * time.Millisecond)
+	if disconnectCount.Load() != 2 {
+		t.Fatalf("expected reconnect within grace after slow-client eviction to preserve tasks, got count=%d lastUser=%d",
+			disconnectCount.Load(), lastDisconnectedUser.Load())
+	}
+
+	// 6. Hub.Stop() cancels any pending disconnect timer so it never fires after shutdown
+	c3 := ws.NewClient(hub, nil, 803, "candidate")
+	hub.UnregisterClient(c3)
+	hub.Stop()
+	time.Sleep(200 * time.Millisecond)
+	if disconnectCount.Load() != 2 {
+		t.Fatalf("expected Hub.Stop() to cancel pending timer for user 803, got count=%d", disconnectCount.Load())
+	}
+}

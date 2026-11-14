@@ -221,3 +221,54 @@ func TestUpload_InvalidExtension_Returns400(t *testing.T) {
 		t.Fatalf("expected 400 Bad Request for pdf, got %d", w.Code)
 	}
 }
+
+func TestUpload_JPGCaseInsensitiveAndMagicBytesToImageJPEG(t *testing.T) {
+	wp := worker.NewWorkerPool(&worker.MockOCREngine{}, 2, 100, nil, nil)
+	r := setupUploadRouter(wp, "")
+
+	jpgBytes := makeValidJPEGBytes(t)
+	pngBytes := makeValidPNGBytes(t)
+
+	cases := []struct {
+		name         string
+		filename     string
+		payload      []byte
+		expectedMime string
+	}{
+		{name: "lowercase .jpg", filename: "cccd_front.jpg", payload: jpgBytes, expectedMime: "image/jpeg"},
+		{name: "uppercase .JPG", filename: "CCCD_FRONT.JPG", payload: jpgBytes, expectedMime: "image/jpeg"},
+		{name: "mixed-case .JpG", filename: "cccd_back.JpG", payload: jpgBytes, expectedMime: "image/jpeg"},
+		{name: "uppercase .JPEG", filename: "CCCD_BACK.JPEG", payload: jpgBytes, expectedMime: "image/jpeg"},
+		{name: "lowercase .png", filename: "portrait_3x4.png", payload: pngBytes, expectedMime: "image/png"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			detectedMime, err := handlers.ValidateUploadedImageBytes(tc.payload)
+			if err != nil {
+				t.Fatalf("ValidateUploadedImageBytes failed for %s: %v", tc.filename, err)
+			}
+			if detectedMime != tc.expectedMime {
+				t.Fatalf("expected standard MIME %q (never image/jpg), got %q", tc.expectedMime, detectedMime)
+			}
+
+			var body bytes.Buffer
+			mw := multipart.NewWriter(&body)
+			part, err := mw.CreateFormFile("image", tc.filename)
+			if err != nil {
+				t.Fatalf("CreateFormFile: %v", err)
+			}
+			_, _ = part.Write(tc.payload)
+			_ = mw.Close()
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/cccd/upload", &body)
+			req.Header.Set("Content-Type", mw.FormDataContentType())
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("expected 202 Accepted for %s, got %d: %s", tc.filename, w.Code, w.Body.String())
+			}
+		})
+	}
+}

@@ -419,6 +419,7 @@ func rawExtractionResponseSchema() map[string]any {
 
 func (g *GeminiExtractor) buildRequestBody(image entities.PreparedImage, hints []string) ([]byte, error) {
 	b64 := base64.StdEncoding.EncodeToString(image.Data)
+	mimeType := NormalizeImageMimeType(image.Mime)
 	payload := map[string]any{
 		"system_instruction": map[string]any{
 			"parts": []map[string]any{
@@ -431,7 +432,7 @@ func (g *GeminiExtractor) buildRequestBody(image entities.PreparedImage, hints [
 				"parts": []map[string]any{
 					{
 						"inline_data": map[string]any{
-							"mime_type": image.Mime,
+							"mime_type": mimeType,
 							"data":      b64,
 						},
 					},
@@ -454,6 +455,7 @@ func (g *GeminiExtractor) buildRequestBody(image entities.PreparedImage, hints [
 // without top-level system_instruction in case an older endpoint rejects system_instruction.
 func (g *GeminiExtractor) buildCompatibleRequestBody(image entities.PreparedImage, hints []string) ([]byte, error) {
 	b64 := base64.StdEncoding.EncodeToString(image.Data)
+	mimeType := NormalizeImageMimeType(image.Mime)
 	combinedPrompt := SystemPrompt + "\n\n" + BuildUserPrompt(hints)
 	payload := map[string]any{
 		"contents": []map[string]any{
@@ -461,7 +463,7 @@ func (g *GeminiExtractor) buildCompatibleRequestBody(image entities.PreparedImag
 				"parts": []map[string]any{
 					{
 						"inline_data": map[string]any{
-							"mime_type": image.Mime,
+							"mime_type": mimeType,
 							"data":      b64,
 						},
 					},

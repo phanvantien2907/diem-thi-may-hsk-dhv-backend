@@ -3,10 +3,18 @@
 > **Base URL:** `http://<host>:<port>/api/v1`
 > **Content-Type:** `application/json`
 > **Ngôn ngữ lỗi:** Tiếng Việt (tất cả thông báo lỗi trả về bằng Tiếng Việt)
-> **Phiên bản:** v1.2.12
+> **Phiên bản:** v1.2.13
 > **Cập nhật lần cuối:** 2026-11-14
 
 ## Changelog
+
+### v1.2.13 (2026-11-14)
+- 📡 **H-06b — WebSocket Disconnect Grace Period & Auto-Recovery (`WS_DISCONNECT_GRACE_MS = 3000`)**:
+  - **Backend (`internal/ws/hub.go`, `internal/config/config.go`, `cmd/api/main.go`):** Khi kết nối WebSocket cuối cùng của thí sinh bị đóng đột ngột (ví dụ rớt mạng 4G 1–2 giây trên điện thoại), `ws.Hub` chờ qua khoảng `disconnectGrace` có thể cấu hình qua `WS_DISCONNECT_GRACE_MS` (mặc định **`3000` ms**; `0` để hủy ngay) rồi mới kiểm tra `UserConnectionCount(userID) == 0` trước khi gọi `CancelUserTasks`. Nếu thí sinh kết nối lại kịp trong cửa sổ grace period, timer hủy bị gỡ bỏ (`RegisterClient`) và tiến trình Gemini OCR đang chạy vẫn tiếp tục bình thường; ngược lại, lệnh đá kết nối cưỡng bức (`DisconnectUser` khi đăng xuất/khóa tài khoản) vẫn thực thi ngay lập tức.
+  - **Frontend (`app/hooks/useOCRScanner.ts`):** Khi WebSocket kết nối lại (`ws.onopen` với `reconnectAttemptsRef > 0`) trong lúc trạng thái cục bộ vẫn là `QUEUED` hoặc `PROCESSING`, hệ thống tự động gọi ngay `syncOCRJobOnWebSocketOpen` $\rightarrow$ `GET /api/v1/cccd/jobs/:id` để khôi phục lập tức kết quả OCR đã hoàn tất trong khoảng thời gian mất kết nối.
+- 🖼️ **Hỗ trợ Toàn diện Định dạng Ảnh `.jpg` / `.JPG` End-to-End (Full-Stack)**:
+  - **Frontend (`app/lib/imageFile.ts`, `IdUploadDropzone.tsx`, `ImageDropzone.tsx`, `cloudinary.ts`, `useOCRScanner.ts`, trang quản lý giao dịch thanh toán):** Chuẩn hóa thuộc tính `<input accept=".jpg,.jpeg,.png,..." />`; kiểm tra đồng thời `file.type` (bao gồm `"image/jpeg"`, `"image/jpg"`, `"image/pjpeg"`, `"image/png"`, và `"image/webp"` khi bật) lẫn phần mở rộng `.jpg`/`.JPG`/`.jpeg`/`.png` không phân biệt hoa/thường (khắc phục lỗi trình duyệt/HĐH báo MIME rỗng `""` hoặc `"application/octet-stream"` đối với tệp `.jpg`); và luôn bảo đảm tên tệp hợp lệ (`.jpg`/`.png`/`.gif`) qua `ensureImageFilename` khi đóng gói `FormData` kể cả với `Blob`.
+  - **Backend (`internal/cccd/handlers/cccd_upload.go`, `internal/cccd/image_preprocess.go`, `internal/cccd/extractor.go`):** Chấp nhận đồng nhất `.jpg`, `.JPG`, `.jpeg`, `.png`, `.gif` (xác thực Magic Bytes 512 byte đầu + `image.DecodeConfig`) và bổ sung `NormalizeImageMimeType` chuẩn hóa mọi biến thể JPEG/JPG (`"image/jpg"`, `"image/pjpeg"`, `".jpg"`, chuỗi rỗng) sang MIME chuẩn **`"image/jpeg"`** trước khi gửi Gemini Vision API.
 
 ### v1.2.12 (2026-11-14)
 - 🛡️ **CCCD/CMND OCR Pipeline Bug-Hunt, Concurrency Hardening & Geospatial Precision (`H-01` → `H-10`)**:
@@ -6277,8 +6285,9 @@ sequenceDiagram
 - Khóa bộ nhớ đệm SHA-256 có phân tách phiên bản: `ComputeCacheKey(imageBytes, modelName, promptVersionHash, secondPass)` đảm bảo thay đổi model hoặc prompt sẽ vô hiệu hóa cache cũ ngay lập tức.
 - **Rate Limiting kép (Per-Account & Per-IP):** Các endpoint `/api/v1/cccd/upload` và `/api/v1/cccd/extract` được bảo vệ bởi `RateLimitByAccountAndIP` (tối đa **3 yêu cầu/phút**, burst **5** trên mỗi tài khoản và mỗi IP) nhằm ngăn chặn tấn công vét cạn hạn ngạch Gemini API.
 - **Thứ tự sự kiện WebSocket đơn điệu nghiêm ngặt (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`):** `WorkerPool.Enqueue` giữ chỗ hàng đợi qua `queueSlots` và phát `ocr_progress (QUEUED, 10%)` **trước** khi đẩy tác vụ vào `wp.queue`; đồng thời `emitEvent` kiểm tra thứ bậc `statusOrderRank` và `ws.Hub` chống nhân đôi sự kiện từ Redis Pub/Sub (`recordLocalOCRDispatch`) cũng như chặn các gói tin Redis có `data: null` ghi đè kết quả.
-- **Tự động hủy tác vụ khi ngắt WebSocket hoặc Slow-Client Eviction:** Khi kết nối WebSocket cuối cùng của người dùng đóng (kể cả khi bị trục xuất do đầy bộ đệm `Send` channel), hệ thống lập tức gọi `CancelUserTasks(userID)` (chỉ tác động lên `userID > 0` của chính người dùng đó) để hủy cả tác vụ đang xếp hàng trong `wp.queue` lẫn tác vụ đang gọi Gemini Vision.
-- **Cô lập quyền sở hữu tác vụ & Chống va chạm `X-Request-ID`:** Chỉ **chủ sở hữu** (`userID > 0` và khớp tuyệt đối `rec.UserID == userID`, hoặc Guest ID hợp lệ) mới tra cứu được tác vụ tại `GET /api/v1/cccd/jobs/:id` và `GetTaskStatus`; mọi truy vấn với `userID <= 0` đều bị từ chối. Nếu `X-Request-ID` gửi lên bị trùng với tác vụ đang tồn tại, server tự động sinh lại UUID mới để chống ghi đè/đọc trộm kết quả.
+- **Tự động hủy tác vụ khi ngắt WebSocket quá Grace Period (`H-06b`) hoặc Slow-Client Eviction:** Khi kết nối WebSocket cuối cùng của người dùng đóng (kể cả khi bị trục xuất do đầy bộ đệm `Send` channel), `ws.Hub` chờ `WS_DISCONNECT_GRACE_MS` (mặc định **`3000` ms**; `0` để hủy ngay; riêng `DisconnectUser` cưỡng bức khi đăng xuất hủy tức thì). Nếu người dùng chưa kết nối lại (`UserConnectionCount == 0`) sau khi hết hạn timer, hệ thống mới gọi `CancelUserTasks(userID)` (chỉ tác động lên `userID > 0` của chính người dùng đó) để hủy tác vụ trong hàng đợi hoặc đang gọi Gemini Vision. Khi WebSocket kết nối lại trong lúc FE vẫn hiển thị `QUEUED`/`PROCESSING`, FE tự động gọi `GET /api/v1/cccd/jobs/:id` ngay lập tức để lấy kết quả đã hoàn thành trong thời gian rớt mạng.
+- **Cô lập quyền sở hữu tác vụ & Chống va chạm `X-Request-ID`:** Chỉ **chủ sở hữu** (`userID > 0` và khớp tuyệt đối `rec.UserID == userID`) mới tra cứu được tác vụ tại `GET /api/v1/cccd/jobs/:id` và `GetTaskStatus`; mọi truy vấn với `userID <= 0` đều bị từ chối. Nếu `X-Request-ID` gửi lên bị trùng với tác vụ đang tồn tại, server tự động sinh lại UUID mới để chống ghi đè/đọc trộm kết quả.
+- **Chuẩn hóa định dạng `.jpg` / `.JPG` sang MIME `"image/jpeg"`:** Backend (`ValidateImageMagicBytes`, `ValidateUploadedImageBytes`, `NormalizeImageMimeType`) chấp nhận không phân biệt hoa/thường `.jpg`, `.JPG`, `.jpeg`, `.png`, `.gif` dựa trên kiểm tra Magic Bytes thực tế và luôn chuẩn hóa mọi biến thể JPEG/JPG (`"image/jpg"`, `"image/pjpeg"`, `".jpg"`, MIME rỗng) về `"image/jpeg"` khi gọi Gemini Vision API.
 - **Không tự suy diễn dữ liệu & Loại bỏ trường `invalid`:** Khi thẻ CCCD 12 số hoặc CMND 9 số bị mờ mục Giới tính, hệ thống giữ nguyên chuỗi rỗng `""` (tuyệt đối không tự suy đoán giới tính từ chữ số thứ 4 của mã CCCD 12 số). Các trường bị đánh dấu `Status == "invalid"` (ví dụ ngày sinh chỉ đọc được năm `"1999"`) được tự động lược bỏ qua `validFieldString` để không làm lỗi toàn bộ các trường hợp lệ còn lại.
 - **Quyền riêng tư (Nghị định 13/2023/NĐ-CP) & Bảo mật Khóa AI:**
   - Khóa `GEMINI_API_KEY` chỉ được truyền qua HTTP header `x-goog-api-key` (không gắn `?key=...` lên URL) để tránh lộ khóa trong `*url.Error` khi timeout.
@@ -6288,13 +6297,13 @@ sequenceDiagram
 
 ### 19.2. `POST /api/v1/cccd/upload` — Tải ảnh CCCD xử lý bất đồng bộ siêu tốc (< 50ms)
 
-Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy cục bộ của người dùng, kiểm tra **Magic Bytes** (512 byte đầu qua `http.DetectContentType` kết hợp `image.DecodeConfig`, chỉ chấp nhận `image/jpeg`, `image/png`, `image/gif`; từ chối ngay với `HTTP 400` nếu tệp thực thi/HTML giả mạo đuôi `.jpg`/`.png`), giữ mảng byte ảnh trong RAM (Zero-Disk), sinh `task_id` (UUID v4), đẩy vào Go Worker Pool và trả về ngay `202 Accepted`. Tiến trình xử lý (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`) được đẩy thời gian thực qua WebSocket Hub.
+Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh (`.jpg`, `.JPG`, `.jpeg`, `.png`, `.gif` — không phân biệt hoa/thường) từ máy cục bộ của người dùng, kiểm tra **Magic Bytes** (512 byte đầu qua `http.DetectContentType` kết hợp `image.DecodeConfig`, chuẩn hóa mọi biến thể JPG/JPEG sang `"image/jpeg"`, chỉ chấp nhận `"image/jpeg"`, `"image/png"`, `"image/gif"`; từ chối ngay với `HTTP 400` nếu tệp thực thi/HTML giả mạo đuôi `.jpg`/`.png`), giữ mảng byte ảnh trong RAM (Zero-Disk), sinh `task_id` (UUID v4), đẩy vào Go Worker Pool và trả về ngay `202 Accepted`. Tiến trình xử lý (`QUEUED` → `PROCESSING` → `COMPLETED`/`FAILED`) được đẩy thời gian thực qua WebSocket Hub (có cơ chế `WS_DISCONNECT_GRACE_MS = 3000` giữ tác vụ khi mạng chập chờn và FE tự động đồng bộ lại qua `GET /api/v1/cccd/jobs/:id` ngay khi WS reconnect).
 
 **Request** — `Content-Type: multipart/form-data`
 
 | Thành phần | Vị trí | Bắt buộc | Mô tả |
 |---|---|---|---|
-| `image` (hoặc `file`) | form-data | ✅ | File ảnh CCCD thực sự (`image/jpeg`, `image/png`, `image/gif` xác thực qua magic bytes), ≤ 5 MB |
+| `image` (hoặc `file`) | form-data | ✅ | File ảnh CCCD thực sự (`.jpg`, `.JPG`, `.jpeg`, `.png`, `.gif` — xác thực magic bytes `image/jpeg`/`image/png`/`image/gif`), ≤ 5 MB |
 | `side` | form-data / query | ❌ | Mặt thẻ cần quét: `"front"` (mặc định, mặt trước) hoặc `"back"` (mặt sau) |
 
 **Response 202 Accepted** (Phản hồi tức thì < 50ms)
@@ -6379,7 +6388,7 @@ Endpoint Ingestion tốc độ cao (< 50ms), tiếp nhận file ảnh từ máy 
 
 | Thành phần | Vị trí | Bắt buộc | Mô tả |
 |---|---|---|---|
-| `image` (hoặc `file`) | form-data | ✅ | Ảnh 1 mặt thẻ (JPEG/PNG/GIF), ≤ 5 MB, tối thiểu 640×480 |
+| `image` (hoặc `file`) | form-data | ✅ | Ảnh 1 mặt thẻ (`.jpg`, `.JPG`, `.jpeg`, `.png`, `.gif` — xác thực magic bytes `image/jpeg`/`image/png`/`image/gif`), ≤ 5 MB |
 | `sync` | query | ❌ | `true` để chờ kết quả đồng bộ (chỉ dùng cho debug/kiểm thử; có thể bị cắt bởi WriteTimeout) |
 | `X-Request-ID` | header | ❌ | Mã tác vụ do client tự sinh; nếu bỏ trống server tự sinh 12 ký tự hex |
 
@@ -6525,5 +6534,6 @@ Gửi đích danh (`SendToUser`) tới mọi tab của `account_id` đã gửi �
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Model Gemini dùng để trích xuất |
 | `GEMINI_TIMEOUT_S` | `45` | Timeout mỗi lần gọi Gemini (giây). Timeout tổng của 1 tác vụ = `max(60, 2×GEMINI_TIMEOUT_S + 20)` |
 | `CCCD_MAX_CONCURRENCY` | `4` | Số worker nền và số lời gọi Gemini đồng thời tối đa |
+| `WS_DISCONNECT_GRACE_MS` | `3000` | Thời gian chờ (ms) trước khi gọi `CancelUserTasks` khi kết nối WebSocket cuối cùng của user ngắt kết nối (`0` để hủy ngay) |
 
-Ngưỡng ảnh cố định trong `cccd.DefaultConfig()`: tối đa 5 MB, tối thiểu 640×480, resize cạnh dài ≤ 1600px, retry Gemini 2 lần (backoff 1s/2s, 3s/6s khi gặp HTTP 429), bật Pass 2 khi mâu thuẫn.
+Ngưỡng ảnh cố định trong `cccd.DefaultConfig()`: tối đa 5 MB, gỡ bỏ giới hạn độ phân giải tối thiểu (`MinImageWidth: 0`, `MinImageHeight: 0`), resize cạnh dài ≤ 1600px, retry Gemini 2 lần (backoff 1s/2s, 3s/6s khi gặp HTTP 429), bật Pass 2 khi mâu thuẫn.
